@@ -433,7 +433,8 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 		ID: id, Unit: "wargo-upgrade-" + id, Log: filepath.Join(s.dataDir, id+".log"),
 		Backend: s.be.Name(), Packages: pending, StartedAt: now, Fake: s.fake,
 	}
-	lf, err := os.OpenFile(host.Path(rec.Log), os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND, 0o640)
+	// O_EXCL never follows a symlink at the final component.
+	lf, err := os.OpenFile(host.Path(rec.Log), os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND|syscall.O_NOFOLLOW, 0o640)
 	if err != nil {
 		return httpx.Errorf(http.StatusConflict, "upgrade_running", "An upgrade was just started")
 	}
@@ -557,7 +558,7 @@ func (s *Service) attach(rec *RunRecord) *jobs.Job {
 const maxLineLen = 2000
 
 func (s *Service) follow(ctx context.Context, rec *RunRecord, j *jobs.Job) {
-	f, err := os.Open(host.Path(rec.Log))
+	f, err := openLog(host.Path(rec.Log))
 	if err != nil {
 		s.finish(rec, j, nil, fmt.Errorf("cannot read upgrade log: %w", err), ProgressState{})
 		return
@@ -776,8 +777,14 @@ func (s *Service) handleLog(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// openLog opens an upgrade log for reading without following a symlink
+// planted in its place (in container mode Wargo reads it as root).
+func openLog(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+}
+
 func tailLines(path string, limit int64) ([]string, error) {
-	f, err := os.Open(path)
+	f, err := openLog(path)
 	if err != nil {
 		return nil, err
 	}

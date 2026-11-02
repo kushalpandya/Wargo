@@ -4,10 +4,14 @@ package pkg
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"syscall"
 
 	"github.com/kushalpandya/wargo/internal/host"
 )
@@ -48,8 +52,19 @@ func enrichPacman(ctx context.Context, run Runner, ups []Update, dbpath string) 
 	if dbpath != "" {
 		argv = append(argv, "--dbpath", dbpath)
 	}
+	// Names come from parsed command output (ultimately the sync
+	// databases); only pass ones that look like package names, after "--",
+	// so nothing can be read as an option.
+	argv = append(argv, "--")
+	n := 0
 	for _, u := range ups {
-		argv = append(argv, u.Name)
+		if validPkgName(u.Name) {
+			argv = append(argv, u.Name)
+			n++
+		}
+	}
+	if n == 0 {
+		return
 	}
 	out, _, code, err := run(ctx, argv...)
 	if err != nil || code != 0 {
@@ -115,6 +130,9 @@ func (b *pacmanBackend) Check(ctx context.Context, run Runner) ([]Update, []Upda
 		// The command runs as the admin on the host, so the private database
 		// copy is the admin's (the same path natively).
 		db := filepath.Join(checkTempDir(), fmt.Sprintf("wargo-checkup-db-%d", host.AdminUID()))
+		if err := prepareCheckDB(db); err != nil {
+			return nil, nil, err
+		}
 		out, stderr, code, err := run(ctx, "env", "CHECKUPDATES_DB="+db, "checkupdates", "--nocolor")
 		if err != nil {
 			return nil, nil, err
@@ -358,6 +376,42 @@ func checkFlatpak(ctx context.Context, run Runner) []Update {
 		cur = ParseFlatpakList(l)
 	}
 	return ParseFlatpakUpdates(out, cur)
+}
+
+// pkgNameRe matches pacman package names (alpm: [a-z0-9@._+-], not
+// starting with '-' or '.'; upper case is tolerated).
+var pkgNameRe = regexp.MustCompile(`^[a-zA-Z0-9@_+][a-zA-Z0-9@._+-]{0,255}$`)
+
+func validPkgName(s string) bool { return pkgNameRe.MatchString(s) }
+
+// prepareCheckDB makes sure checkupdates' private database directory is a
+// real directory owned by the admin user and writable only by them. It
+// lives in the shared /tmp under a predictable name, so another local user
+// could otherwise pre-create it (or a symlink in its place) to feed
+// checkupdates a database of their choosing or redirect its writes.
+func prepareCheckDB(db string) error {
+	p := host.Path(db)
+	err := os.Mkdir(p, 0o700)
+	if err == nil && host.Container() {
+		// Created by root on the host's /tmp; hand it to the admin, who
+		// runs checkupdates.
+		if a := host.Admin(); a != nil {
+			if err := os.Lchown(p, a.UID, a.GID); err != nil {
+				return err
+			}
+		}
+	}
+	if err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	var st syscall.Stat_t
+	if err := syscall.Lstat(p, &st); err != nil {
+		return err
+	}
+	if st.Mode&syscall.S_IFMT != syscall.S_IFDIR || int(st.Uid) != host.AdminUID() || st.Mode&0o022 != 0 {
+		return fmt.Errorf("refusing to use %s for checkupdates: it is not a private directory owned by you (remove it and retry)", db)
+	}
+	return nil
 }
 
 // checkTempDir is the temp directory for update checks (the host's /tmp
