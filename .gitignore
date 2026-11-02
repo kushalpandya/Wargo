@@ -15,3 +15,4 @@ web/test-results/
 /data/
 .env
 .DS_Store
+web/*.tsbuildinfo
