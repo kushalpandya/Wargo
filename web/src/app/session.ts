@@ -39,7 +39,7 @@ export interface Capabilities {
   transmission?: { available: boolean; configured: boolean; version?: string; error?: string };
   launcher?: { enabled: boolean; placement: "overview" | "page" };
   pkg?: { backend: string; available: boolean; distro: string };
-  files?: { roots: { name: string; path: string }[] };
+  files?: { roots: { id?: number; name: string; path: string }[]; trash?: boolean; maxEditSize?: number; chunkSize?: number };
   terminal?: { available: boolean; shell: string; tmux: boolean; sudo?: boolean; docker?: boolean; maxSessions?: number };
 }
 

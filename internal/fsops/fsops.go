@@ -5,6 +5,7 @@
 package fsops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // Clean normalises a client path into a root-relative path. It rejects
@@ -30,20 +32,36 @@ func Clean(p string) string {
 // Progress is called with bytes copied so far.
 type Progress func(done int64, current string)
 
-// Copy copies src to dst (recursively for directories) inside root.
-func Copy(root *os.Root, src, dst string, prog Progress) error {
-	src, dst = Clean(src), Clean(dst)
-	if dst == src || strings.HasPrefix(dst+"/", src+"/") {
-		return errors.New("cannot copy a folder into itself")
-	}
-	if _, err := root.Lstat(dst); err == nil {
-		return fmt.Errorf("%s already exists", dst)
-	}
-	var done int64
-	return copyTree(root, src, dst, &done, prog)
+// ErrIntoSelf is returned when copying or moving a folder into itself.
+var ErrIntoSelf = errors.New("cannot copy or move a folder into itself")
+
+// Inside reports whether p equals dir or lies below it (both cleaned).
+func Inside(p, dir string) bool {
+	return dir == "." || p == dir || strings.HasPrefix(p, dir+"/")
 }
 
-func copyTree(root *os.Root, src, dst string, done *int64, prog Progress) error {
+// Copy copies src to dst (recursively for directories) inside root.
+func Copy(root *os.Root, src, dst string, prog Progress) error {
+	return CopyContext(context.Background(), root, src, dst, prog)
+}
+
+// CopyContext is Copy with cancellation (checked between files and writes).
+func CopyContext(ctx context.Context, root *os.Root, src, dst string, prog Progress) error {
+	src, dst = Clean(src), Clean(dst)
+	if src == "." || Inside(dst, src) {
+		return ErrIntoSelf
+	}
+	if _, err := root.Lstat(dst); err == nil {
+		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
+	}
+	var done int64
+	return copyTree(ctx, root, src, dst, &done, prog)
+}
+
+func copyTree(ctx context.Context, root *os.Root, src, dst string, done *int64, prog Progress) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	st, err := root.Lstat(src)
 	if err != nil {
 		return err
@@ -69,7 +87,7 @@ func copyTree(root *os.Root, src, dst string, done *int64, prog Progress) error 
 			return err
 		}
 		for _, e := range ents {
-			if err := copyTree(root, path.Join(src, e.Name()), path.Join(dst, e.Name()), done, prog); err != nil {
+			if err := copyTree(ctx, root, path.Join(src, e.Name()), path.Join(dst, e.Name()), done, prog); err != nil {
 				return err
 			}
 		}
@@ -84,10 +102,7 @@ func copyTree(root *os.Root, src, dst string, done *int64, prog Progress) error 
 		if err != nil {
 			return err
 		}
-		w := io.Writer(out)
-		if prog != nil {
-			w = &countWriter{w: out, done: done, prog: prog, name: src}
-		}
+		w := &countWriter{ctx: ctx, w: out, done: done, prog: prog, name: src}
 		if _, err := io.Copy(w, in); err != nil {
 			out.Close()
 			return err
@@ -102,6 +117,7 @@ func copyTree(root *os.Root, src, dst string, done *int64, prog Progress) error 
 }
 
 type countWriter struct {
+	ctx  context.Context
 	w    io.Writer
 	done *int64
 	prog Progress
@@ -109,17 +125,31 @@ type countWriter struct {
 }
 
 func (c *countWriter) Write(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
 	n, err := c.w.Write(p)
 	*c.done += int64(n)
-	c.prog(*c.done, c.name)
+	if c.prog != nil {
+		c.prog(*c.done, c.name)
+	}
 	return n, err
 }
 
 // Size returns the total size of regular files under p.
 func Size(root *os.Root, p string) (int64, int, error) {
+	return SizeContext(context.Background(), root, p)
+}
+
+// SizeContext is Size with cancellation; on cancel it returns the partial
+// totals together with ctx.Err().
+func SizeContext(ctx context.Context, root *os.Root, p string) (int64, int, error) {
 	var total int64
 	var count int
 	err := fs.WalkDir(root.FS(), Clean(p), func(_ string, d fs.DirEntry, err error) error {
+		if e := ctx.Err(); e != nil {
+			return e
+		}
 		if err != nil {
 			return nil
 		}
@@ -140,15 +170,14 @@ func Move(root *os.Root, src, dst string) error {
 	if src == "." {
 		return errors.New("cannot move the root")
 	}
-	if strings.HasPrefix(dst+"/", src+"/") {
-		return errors.New("cannot move a folder into itself")
+	if Inside(dst, src) {
+		return ErrIntoSelf
 	}
 	if _, err := root.Lstat(dst); err == nil {
-		return fmt.Errorf("%s already exists", dst)
+		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
 	}
 	err := root.Rename(src, dst)
-	var le *os.LinkError
-	if errors.As(err, &le) && strings.Contains(le.Err.Error(), "cross-device") {
+	if errors.Is(err, syscall.EXDEV) {
 		if err := Copy(root, src, dst, nil); err != nil {
 			return err
 		}
@@ -166,13 +195,24 @@ func Remove(root *os.Root, p string) error {
 	return root.RemoveAll(p)
 }
 
-// ParseMode parses an octal mode like "755" or "0644".
+// ParseMode parses an octal mode like "755" or "4755" into an os.FileMode
+// (setuid/setgid/sticky mapped to Go's mode bits, so Chmod applies them).
 func ParseMode(s string) (os.FileMode, error) {
 	v, err := strconv.ParseUint(s, 8, 32)
-	if err != nil || v > 0o7777 {
+	if err != nil || v > 0o7777 || s == "" {
 		return 0, fmt.Errorf("invalid mode %q", s)
 	}
-	return os.FileMode(v), nil
+	m := os.FileMode(v & 0o777)
+	if v&0o4000 != 0 {
+		m |= os.ModeSetuid
+	}
+	if v&0o2000 != 0 {
+		m |= os.ModeSetgid
+	}
+	if v&0o1000 != 0 {
+		m |= os.ModeSticky
+	}
+	return m, nil
 }
 
 // ParseOwner resolves "user[:group]" (names or ids) to uid/gid (-1 = unchanged).
