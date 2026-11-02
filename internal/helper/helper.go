@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/kushalpandya/wargo/internal/fsops"
@@ -54,6 +55,8 @@ func Main(args []string) int {
 		err = composeUpdate(args[1:])
 	case "privd-trust":
 		err = privdTrust(args[1:])
+	case "pkg-run":
+		return pkgRun(args[1:])
 	default:
 		return fail("unknown operation %q", args[0])
 	}
@@ -168,6 +171,73 @@ func composeUpdate(args []string) error {
 		}
 	}
 	return nil
+}
+
+// PkgExitMarker is printed after a package-manager run so the caller can
+// read the exit status from the log even after systemd collects the unit.
+const PkgExitMarker = "[wargo] exit status "
+
+// PackageManagers may be launched by pkg-run.
+var PackageManagers = []string{"pacman", "pamac", "apt-get", "apt", "dnf", "yum", "zypper", "apk", "flatpak"}
+
+var systemBinDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"}
+
+// ResolvePackageManager returns the absolute path of an allowed package
+// manager binary, or an error.
+func ResolvePackageManager(name string) (string, error) {
+	if !filepath.IsAbs(name) && strings.Contains(name, "/") {
+		return "", fmt.Errorf("%q must be a bare name or absolute path", name)
+	}
+	base := filepath.Base(name)
+	allowed := false
+	for _, pm := range PackageManagers {
+		if pm == base {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return "", fmt.Errorf("%q is not a supported package manager", name)
+	}
+	p := name
+	if !filepath.IsAbs(p) {
+		var err error
+		if p, err = exec.LookPath(base); err != nil {
+			return "", err
+		}
+	}
+	p = filepath.Clean(p)
+	for _, d := range systemBinDirs {
+		if filepath.Dir(p) == d {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%q is not in a system directory", p)
+}
+
+// pkg-run -- <package manager> [args...]: runs the package manager and
+// prints PkgExitMarker with its exit status.
+func pkgRun(args []string) int {
+	if len(args) < 2 || args[0] != "--" {
+		return fail("usage: pkg-run -- <package-manager> [args...]")
+	}
+	bin, err := ResolvePackageManager(args[1])
+	if err != nil {
+		return fail("%v", err)
+	}
+	cmd := exec.Command(bin, args[2:]...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	code := 0
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else {
+			fmt.Fprintln(os.Stderr, "wargo helper:", err)
+			code = 127
+		}
+	}
+	fmt.Printf("\n%s%d\n", PkgExitMarker, code)
+	return code
 }
 
 // PrivdCredentialsPath is where wargo-privd keeps trusted passkeys.

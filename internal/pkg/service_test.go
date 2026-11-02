@@ -39,7 +39,7 @@ func TestSystemdRunArgv(t *testing.T) {
 		}
 	}
 	sep := slices.Index(argv, "--")
-	if sep < 0 || argv[sep+1] != "/bin/sh" || argv[sep+3] != wrapperScript || argv[sep+5] != "apt-get" {
+	if sep < 0 || argv[sep+1] != "wargo" || argv[sep+2] != "helper" || argv[sep+3] != "pkg-run" || argv[sep+4] != "--" || argv[sep+5] != "apt-get" {
 		t.Errorf("command part: %v", argv[sep:])
 	}
 	s.be = &pamacBackend{}

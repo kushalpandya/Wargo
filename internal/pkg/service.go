@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/elevate"
+	"github.com/kushalpandya/wargo/internal/helper"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
 	"github.com/kushalpandya/wargo/internal/server"
@@ -34,7 +35,7 @@ const (
 
 // exitMarker is printed by the wrapper shell after the upgrade command so
 // the result is known even after systemd garbage-collects the unit.
-const exitMarker = "[wargo] exit status "
+const exitMarker = helper.PkgExitMarker
 
 // wrapperScript is a constant: the upgrade argv is passed as positional
 // parameters, never interpolated into the script.
@@ -307,7 +308,7 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 			return s.d.Elevate.ErrRequired("pkg.refresh", "Refresh package databases")
 		}
 		s.publish()
-		if _, err := s.d.Elevate.Run(r, "pkg.refresh", "Refresh package databases", s.be.RefreshArgv(), nil); err != nil {
+		if _, err := s.d.Elevate.Run(r, "pkg.refresh", "Refresh package databases", s.helperArgv(append([]string{"pkg-run", "--"}, s.be.RefreshArgv()...)...), nil); err != nil {
 			return err
 		}
 	} else {
@@ -467,6 +468,15 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// helperArgv runs package managers through `wargo helper pkg-run`, which
+// validates the binary and is accepted by both sudo and wargo-privd.
+func (s *Service) helperArgv(args ...string) []string {
+	if s.d == nil || s.d.Elevate == nil {
+		return append([]string{"wargo", "helper"}, args...)
+	}
+	return s.d.Elevate.Helper(args...)
+}
+
 // systemdRunArgv builds the root command that starts the upgrade unit.
 func (s *Service) systemdRunArgv(rec *RunRecord) []string {
 	argv := []string{"systemd-run",
@@ -484,7 +494,8 @@ func (s *Service) systemdRunArgv(rec *RunRecord) []string {
 			argv = append(argv, "--setenv="+e)
 		}
 	}
-	argv = append(argv, "--", "/bin/sh", "-c", wrapperScript, "wargo-upgrade")
+	argv = append(argv, "--")
+	argv = append(argv, s.helperArgv("pkg-run", "--")...)
 	return append(argv, s.be.UpgradeArgv()...)
 }
 
