@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Tone } from "@/components/ui/misc";
-import { ExternalLink } from "lucide-react";
+import { Badge, type Tone } from "@/components/ui/misc";
+import { ExternalLink, Heart, HeartCrack, HeartPulse } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { Container, Port } from "./types";
 
@@ -96,4 +96,41 @@ export function containerTone(c: Pick<Container, "state" | "health">): Tone {
   if (c.health === "unhealthy") return "crit";
   if (c.health === "starting") return "warn";
   return "ok";
+}
+
+/** Container state only ("Running", "Stopped"…); health is a separate badge. */
+export function stateLabel(c: Pick<Container, "state">): string {
+  switch (c.state) {
+    case "running":
+      return "Running";
+    case "exited":
+      return "Stopped";
+    default:
+      return c.state[0].toUpperCase() + c.state.slice(1);
+  }
+}
+
+/**
+ * Health-check result as a badge. Only containers that define a
+ * HEALTHCHECK have one; the rest show no badge.
+ */
+export function HealthBadge({ c }: { c: Pick<Container, "state" | "health"> }) {
+  if (c.state !== "running" || !c.health) return null;
+  if (c.health === "healthy")
+    return (
+      <Badge tone="ok" title="Health check passing">
+        <Heart className="size-3 fill-current" aria-hidden="true" /> Healthy
+      </Badge>
+    );
+  if (c.health === "unhealthy")
+    return (
+      <Badge tone="crit" title="Health check failing">
+        <HeartCrack className="size-3" aria-hidden="true" /> Unhealthy
+      </Badge>
+    );
+  return (
+    <Badge tone="warn" title="Health check hasn't passed yet">
+      <HeartPulse className="size-3" aria-hidden="true" /> Starting
+    </Badge>
+  );
 }

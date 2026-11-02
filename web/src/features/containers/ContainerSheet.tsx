@@ -9,7 +9,7 @@ import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/dialog";
 import { Badge, EmptyState, ErrorNote, Field, Meter, Skeleton, StatusDot } from "@/components/ui/misc";
-import { containerTone } from "@/features/containers/util";
+import { containerTone, stateLabel } from "@/features/containers/util";
 import { LogsView } from "./LogsView";
 import { ContainerIcon } from "./ContainerIcon";
 import { parseTime, PortLinks, splitImage } from "./util";
@@ -258,7 +258,7 @@ export function ContainerSheet({
       width="max-w-3xl"
       title={
         <span className="flex items-center gap-2">
-          {c && <ContainerIcon c={c} size="sm" status={containerTone(c)} statusLabel={c.health ?? c.state} />}
+          {c && <ContainerIcon c={c} size="sm" status={containerTone(c)} statusLabel={stateLabel(c)} />}
           {c?.name ?? id}
         </span>
       }

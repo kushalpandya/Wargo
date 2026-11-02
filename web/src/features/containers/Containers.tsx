@@ -44,7 +44,9 @@ import {
   PortLinks,
   shortImage,
   splitImage,
+  stateLabel,
   statusText,
+  HealthBadge,
 } from "./util";
 import type { Container, ContainerStats } from "./types";
 
@@ -146,8 +148,7 @@ function Summary({ list, checkedAt }: { list?: Container[]; checkedAt?: number |
 function Badges({ c }: { c: Container }) {
   return (
     <>
-      {c.health === "unhealthy" && <Badge tone="crit">unhealthy</Badge>}
-      {c.health === "starting" && <Badge tone="warn">starting</Badge>}
+      <HealthBadge c={c} />
       {c.updateAvailable && (
         <Badge tone="accent">
           <ArrowUpCircle className="size-3" aria-hidden="true" /> update
@@ -502,7 +503,7 @@ export default function Page() {
                                 <ContainerIcon
                                   c={c}
                                   status={containerTone(c)}
-                                  statusLabel={c.health ?? c.state}
+                                  statusLabel={stateLabel(c)}
                                 />
                                 <div className="min-w-0">
                                   <div className="truncate font-medium">
@@ -594,7 +595,7 @@ export default function Page() {
                               <ContainerIcon
                                 c={c}
                                 status={containerTone(c)}
-                                statusLabel={c.health ?? c.state}
+                                statusLabel={stateLabel(c)}
                                 className="mt-0.5"
                               />
                               <div className="min-w-0 flex-1">

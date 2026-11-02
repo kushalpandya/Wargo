@@ -10,15 +10,7 @@ import { Tooltip } from "@/components/ui/menu";
 import type { Container } from "@/features/containers/types";
 import { useContainers } from "@/features/containers/api";
 import { ContainerIcon } from "@/features/containers/ContainerIcon";
-import { containerTone } from "@/features/containers/util";
-
-function statusLabel(c: Container): string {
-  if (c.state !== "running") return c.state === "exited" ? "Stopped" : c.state[0].toUpperCase() + c.state.slice(1);
-  if (c.health === "unhealthy") return "Unhealthy";
-  if (c.health === "starting") return "Starting";
-  if (c.health === "healthy") return "Healthy";
-  return "Running";
-}
+import { containerTone, HealthBadge, stateLabel } from "@/features/containers/util";
 
 function rank(c: Container): number {
   if (c.health === "unhealthy") return 0;
@@ -83,6 +75,7 @@ export const ContainersCard = memo(function ContainersCard() {
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className="truncate text-[0.8125rem] font-medium">{c.name}</span>
+                      <HealthBadge c={c} />
                       {c.updateAvailable && (
                         <Tooltip content="A newer image is available — see Updates">
                           <span className="inline-flex shrink-0">
@@ -101,7 +94,7 @@ export const ContainersCard = memo(function ContainersCard() {
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5 text-xs">
                     <StatusDot tone={tone} />
-                    <span className={cn(tone === "crit" ? "text-crit" : tone === "warn" ? "text-warn" : tone === "ok" ? "text-fg" : "text-muted")}>{statusLabel(c)}</span>
+                    <span className={cn(c.state === "running" ? "text-fg" : c.state === "restarting" ? "text-warn" : "text-muted")}>{stateLabel(c)}</span>
                   </div>
                 </Link>
               </li>
