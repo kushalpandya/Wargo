@@ -125,6 +125,7 @@ hostname with Cloudflare Access, are in [REVERSE_PROXY.md](REVERSE_PROXY.md).
 | Problem | Fix |
 |---|---|
 | "Invalid username or password" with the right password | Make sure `/etc/pam.d/wargo` exists (the installer adds it) and that your account is in `wheel`/`sudo`. |
+| "421 Misdirected Request" or "This address isn't allowed" | Add the URL you use to `auth.origins` (Docker: `WARGO_ORIGINS`) and restart. Wargo only answers host names it knows, to block DNS-rebinding attacks. |
 | Live charts or the terminal don't load behind a proxy | Add the public URL to `auth.origins`, and make sure the proxy forwards WebSockets. |
 | "Passkeys require HTTPS" | Use the HTTPS address, not `http://<ip>:2207`. |
 | Admin approval says sudo is blocked | Don't add `NoNewPrivileges=yes` to the service; sudo needs it off. |

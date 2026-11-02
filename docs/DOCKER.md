@@ -17,7 +17,7 @@ the host through a few deliberate holes in the container.
 # deploy/docker/compose.yaml
 services:
   wargo:
-    image: ghcr.io/kushalpandya/wargo:latest
+    image: ghcr.io/kushalpandya/wargo:${WARGO_TAG:-latest}
     container_name: wargo
     restart: unless-stopped
     privileged: true
@@ -46,8 +46,9 @@ LAN access set `WARGO_LISTEN=0.0.0.0:2207`, but only behind TLS: passkeys and
 `Secure` cookies need HTTPS anyway.
 
 Sign in with your **host** account's password (then set up TOTP or a
-passkey, as natively). Image tags: `vX.Y.Z[-pre]` per release, `latest` for
-the newest stable release, `edge` for `main`. Images are built for amd64 and
+passkey, as natively). Image tags: `vX.Y.Z[-pre]` per release, `latest` and
+`next` for the newest release (until 1.0, `latest` includes pre-releases),
+`edge` for `main`. Pin a version with `WARGO_TAG=v1.0.0-alpha.1`. Images are built for amd64 and
 arm64.
 
 ## Configuration
@@ -61,7 +62,7 @@ is read when present. Environment variables override the file.
 | `WARGO_HOST_ROOT` | Where the host's `/` is mounted; enables container mode | `/host` (set in the image) |
 | `WARGO_USER` | Host admin account allowed to sign in | first regular member of `wheel`/`sudo`/`admin` |
 | `WARGO_LISTEN` | Listen address | `127.0.0.1:2207` |
-| `WARGO_ORIGINS` | Public URLs (comma-separated) for WebSockets/passkeys | — |
+| `WARGO_ORIGINS` | Public URLs (comma-separated). **Required** for every public hostname you use: other host names are refused (HTTP 421) to block DNS-rebinding attacks. IPs, `localhost`, the machine's hostname and `.local`/`.lan` names work without it | — |
 | `WARGO_TRUSTED_PROXIES` | CIDRs whose forwarded headers are trusted | — |
 | `WARGO_FILES_ROOTS` | File manager places, `Name=/path,Other=/path` (host paths) | the admin's home, plus `/DATA` if present |
 | `WARGO_DATA_DIR` | Database, keys, upload staging | `/data` |

@@ -12,7 +12,7 @@ listen = "127.0.0.1:2207"
 [auth]
 # The single host account allowed to sign in. Defaults to the user Wargo
 # runs as; it must belong to the admin group.
-# user = "kushal"
+# user = "alice"
 # admin_group = "wheel"        # auto-detected: wheel, sudo or admin
 pam_service = "wargo"          # /etc/pam.d/wargo (see deploy/pam/wargo)
 require_totp = true            # force a second factor (TOTP or passkey)
@@ -37,11 +37,11 @@ trusted_proxies = ["127.0.0.1/32", "::1/128"]
 # be bookmarked, and removing a root's bookmark only hides it).
 [[files.roots]]
 name = "Home"
-path = "/home/kushal"
+path = "/home/alice"
 
-[[files.roots]]
-name = "DATA"
-path = "/DATA"
+# [[files.roots]]
+# name = "Media"
+# path = "/srv/media"
 
 # Also list mounted drives and partitions (/, /mnt/*, USB disks, network
 # shares) under "Drives" in the file manager. Individual drives can be

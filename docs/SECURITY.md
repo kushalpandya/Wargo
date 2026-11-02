@@ -19,8 +19,13 @@ for the Docker image.)
   terminal and file manager natural ownership semantics.
 - Listens on `127.0.0.1:2207` by default. Publish it through nginx, Caddy or
   cloudflared (see [REVERSE_PROXY.md](REVERSE_PROXY.md)).
-- Forwarded headers (`X-Forwarded-For`, `CF-Connecting-IP`,
-  `X-Forwarded-Proto`) are honoured **only** from `auth.trusted_proxies`.
+- **Host allow-list (DNS rebinding):** every request must name a known host —
+  an IP address, `localhost`, a single-label or private name (`.local`,
+  `.lan`, `.home.arpa`, `.internal`…), the machine's hostname, or a host in
+  `auth.origins`. Anything else gets HTTP 421, so a malicious web page that
+  re-points its own domain at your server can't talk to Wargo.
+- Forwarded headers are honoured **only** from `auth.trusted_proxies`; the
+  right-most untrusted `X-Forwarded-For` entry is the client.
 - Strict headers on every response: CSP (`default-src 'self'`, no inline
   scripts), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`,
   `Permissions-Policy`, COOP, and HSTS when served over TLS.
@@ -44,9 +49,16 @@ for the Docker image.)
   only `pam_unix` and **not** `pam_faillock`. Distros usually lock the account
   after three failures in `system-auth`; reusing that stack would let anyone
   on the internet lock you out of SSH and sudo. Instead Wargo throttles before
-  PAM is reached: per-IP exponential backoff after three failures (capped at
-  15 minutes), a global budget of 30 failures per minute, uniform response
-  timing and generic error messages.
+  PAM is reached:
+  - exponential backoff per IPv4 address or IPv6 /64 after three failures
+    (capped at 15 minutes), counting attempts that are still in flight;
+  - a global budget of 30 failures per minute — clients that signed in
+    successfully in the last 30 days, and passkey sign-ins, are exempt so an
+    attacker can't lock the owner out;
+  - at most five second-factor guesses per password entry, and a correct
+    password doesn't reset the backoff until sign-in completes;
+  - uniform response timing and generic error messages.
+- Once any second factor exists, a password alone never creates a session.
 - Sessions: 256-bit random tokens stored as SHA-256 hashes;
   `HttpOnly; Secure; SameSite=Strict` cookies; 30 minute idle and 12 hour
   absolute lifetime (configurable). Active sessions can be reviewed and
@@ -76,10 +88,15 @@ ask for approval per request:
   with sudo approval), issues WebAuthn challenges bound to the exact action and
   target, verifies the assertion itself and only then runs an allow-listed
   command. A compromised Wargo web process therefore still cannot obtain root
-  without your authenticator. It verifies the peer UID of every connection.
+  without your authenticator. It verifies the peer UID of every connection,
+  requires its binary, credentials and their parent directories to be
+  root-owned, and opens upgrade log files itself so planted links can't
+  redirect root's output.
 - Root work is done by `wargo helper <op>`, a sub-command of the same binary
   with a closed set of strictly validated operations. It never invokes a
-  shell and confines file operations with `os.Root`.
+  shell, confines file operations with `os.Root`, reads only regular files
+  without blocking, replaces files atomically without following links, and
+  pins signals to the selected process with a pidfd.
 - The root terminal (`sudo -i` in a PTY) asks for the password inside the
   terminal itself; Wargo never sees it.
 
@@ -90,7 +107,10 @@ Every operation goes through Go's `os.Root`, confined to the configured
 chunked and resumable (so they fit Cloudflare's 100 MB body limit), archive
 extraction is size- and count-limited, inline previews are served with
 `Content-Security-Policy: sandbox`, and HTML/SVG is never rendered as active
-content.
+content. Named pipes and devices are never opened for reading, renames never
+replace a file created in the meantime, and new names may not contain control
+characters. Mounted drives (including `/`) can be browsed, subject to normal
+Unix permissions for the signed-in user.
 
 ## Container mode
 
@@ -161,3 +181,47 @@ the elevation method used. See Settings → Audit log.
 - Register a passkey and keep the recovery codes offline.
 - Keep `dev.auth_bypass` off — it is ignored unless Wargo listens on loopback,
   but never enable it on a server you expose.
+
+## Security review (alpha)
+
+Before the first public alpha the whole code base was reviewed with these
+attackers in mind: anyone on the internet without a session; someone who
+knows the password but not a second factor; a hostile web page in the
+admin's browser (CSRF, cross-site WebSockets, DNS rebinding); a malicious
+container image, registry, indexer, file name, archive or torrent; and
+another unprivileged user on the host. Highlights of what was fixed:
+
+- DNS-rebinding protection (host allow-list) and Origin checks on every
+  state-changing request and WebSocket upgrade.
+- No session from a password alone once a second factor exists; tighter,
+  lockout-resistant throttling (see Authentication).
+- Root helper: strict PID parsing (a wrapped value could have meant "every
+  process"), pidfd-pinned signals, non-blocking regular-file reads, atomic
+  link-safe writes, validated compose arguments.
+- wargo-privd: directory-chain ownership checks and descriptor-based upgrade
+  logs.
+- Server-side requests: icon URLs from container labels only reach public
+  addresses (checked at connect time); the Prowlarr API key is never sent
+  across a redirect to another host; compose labels inherited from an image
+  are ignored for updates.
+- Files: FIFO/device hangs, rename races, long-name trash loops, upload and
+  zip caps; config imports open files without following symlinks.
+- Bounded growth: audit log retention (180 days / 50,000 entries), capped
+  fields, event and job buffers.
+- Builds: release binaries need only glibc 2.31 + libpam; CI actions pinned
+  to commit SHAs with least-privilege permissions; releases ship
+  `SHA256SUMS`; `govulncheck` clean with Go 1.26.10.
+
+**Residual risks** we accept for now:
+
+- wargo-privd's guarantee is "no root without a user-verified passkey touch
+  per action". A compromised web process controls what you see, so it could
+  turn one approval into any allow-listed helper operation.
+- Container mode has no privilege boundary between Wargo and the host.
+- Accurate throttling and audit IPs behind a proxy depend on the proxy
+  setting `X-Forwarded-For`.
+- Signed-in users may see internal error text in API errors.
+- PDF previews are served without the `sandbox` CSP directive because
+  browsers' PDF viewers refuse to run sandboxed.
+- Container base images are pinned by Debian release, not digest — rebuild
+  regularly.

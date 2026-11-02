@@ -10,6 +10,17 @@ origins = ["https://wargo.example.com"]
 trusted_proxies = ["127.0.0.1/32", "::1/128"]
 ```
 
+**`origins` is required behind a proxy.** Wargo refuses requests for host
+names it doesn't know (HTTP 421 "Misdirected Request") so that a malicious
+website can't reach it through DNS rebinding. IP addresses, `localhost`,
+the machine's own hostname and private names (`.local`, `.lan`, `.home.arpa`,
+`.internal`) are always accepted; anything else must be listed in `origins`.
+
+The proxy must also pass the original `Host` header and set
+`X-Forwarded-For` (Wargo throttles sign-in attempts per client address), and
+`X-Forwarded-Proto: https` so cookies are marked `Secure`. Cloudflare Tunnel,
+Caddy and the nginx example below do all of this.
+
 Wargo needs **WebSockets** (live metrics, terminal, container logs) and
 unbuffered streaming for downloads. Uploads are sent in 8 MiB chunks, so body
 limits only need to exceed one chunk.
