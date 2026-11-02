@@ -227,6 +227,11 @@ function MobileRow({ row, tree, onOpen }: { row: Row; tree: boolean; onOpen: (pi
 const PAGE = 200;
 
 export default function Page() {
+  return <ProcessesPanel />;
+}
+
+/** Process list; `embedded` renders a section heading instead of a page title (System page). */
+export function ProcessesPanel({ embedded }: { embedded?: boolean }) {
   const qc = useQueryClient();
   const [live, setLive] = useState(true);
   const [q, setQ] = useState("");
@@ -279,9 +284,10 @@ export default function Page() {
   const now = data?.sampledAt ?? Date.now();
   const tree = view === "tree";
 
+  const Header = embedded ? SectionHeader : PageHeader;
   return (
     <div>
-      <PageHeader
+      <Header
         title="Processes"
         description={data ? `${data.procs.length} processes on this host` : "Live view of everything running on this host"}
         actions={
@@ -405,6 +411,20 @@ export default function Page() {
         )}
       </Card>
       <ProcessSheet pid={open} onClose={() => setOpen(null)} onOpen={setOpen} list={data} live={live} />
+    </div>
+  );
+}
+
+function SectionHeader({ title, description, actions }: { title: string; description?: React.ReactNode; actions?: React.ReactNode }) {
+  return (
+    <div className="mb-3 mt-6 flex flex-wrap items-end justify-between gap-3">
+      <div className="min-w-0">
+        <h2 id="processes-heading" className="text-[0.9375rem] font-semibold tracking-tight">
+          {title}
+        </h2>
+        {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
+      </div>
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }
