@@ -33,6 +33,12 @@ type Registrar interface{ Register(mux *http.ServeMux) }
 // Runner is implemented by services with background loops.
 type Runner interface{ Run(ctx context.Context) }
 
+// Capable services describe what they can do on this host; the UI uses it
+// to show or hide navigation and actions. Key is the capability namespace.
+type Capable interface {
+	Capabilities(ctx context.Context) (key string, value any)
+}
+
 // Deps are shared building blocks handed to feature services.
 type Deps struct {
 	Cfg     config.Config
@@ -57,6 +63,7 @@ type Server struct {
 	deps    *Deps
 	http    *http.Server
 	runners []Runner
+	capable []Capable
 }
 
 func New(cfg config.Config) (*Server, error) {
@@ -99,7 +106,19 @@ func New(cfg config.Config) (*Server, error) {
 		if r, ok := svc.(Runner); ok {
 			s.runners = append(s.runners, r)
 		}
+		if c, ok := svc.(Capable); ok {
+			s.capable = append(s.capable, c)
+		}
 	}
+
+	private.HandleFunc("GET /api/capabilities", func(w http.ResponseWriter, r *http.Request) {
+		out := map[string]any{"elevation": d.Elevate.Methods(), "version": Version}
+		for _, c := range s.capable {
+			k, v := c.Capabilities(r.Context())
+			out[k] = v
+		}
+		httpx.OK(w, out)
+	})
 
 	private.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		httpx.OK(w, map[string]string{"version": Version})

@@ -1,0 +1,170 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+@import "tailwindcss";
+@import "@fontsource-variable/ibm-plex-sans";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * "Northern" palette: cold slate/ice neutrals with a single warm ember
+ * accent. Every colour is a CSS variable so light/dark swap in one place.
+ */
+:root {
+  --bg: #f2f4f6;
+  --surface: #ffffff;
+  --surface-2: #f7f8fa;
+  --surface-3: #eef1f4;
+  --border: #dde2e8;
+  --border-strong: #c5cdd6;
+  --fg: #121820;
+  --fg-muted: #535e6b;
+  --fg-subtle: #7d8895;
+  --accent: #a85e0a;
+  --accent-strong: #8f4f06;
+  --accent-soft: #f6e7d2;
+  --accent-fg: #ffffff;
+  --frost: #2a7aa3;
+  --frost-soft: #dcecf4;
+  --ok: #1d8556;
+  --ok-soft: #dcf1e6;
+  --warn: #9a6400;
+  --warn-soft: #f6ead0;
+  --crit: #c4382f;
+  --crit-soft: #f8dfdc;
+  --focus: #2a7aa3;
+  --shadow: 0 1px 2px rgb(16 24 32 / 0.05);
+  --overlay: rgb(10 14 18 / 0.35);
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #0a0d11;
+  --surface: #10151b;
+  --surface-2: #141a21;
+  --surface-3: #1a212a;
+  --border: #212932;
+  --border-strong: #2f3944;
+  --fg: #e2e7ed;
+  --fg-muted: #94a0ad;
+  --fg-subtle: #65717e;
+  --accent: #f0a43a;
+  --accent-strong: #f5b65e;
+  --accent-soft: #2c2113;
+  --accent-fg: #1a1104;
+  --frost: #74bde0;
+  --frost-soft: #13252f;
+  --ok: #52c492;
+  --ok-soft: #10261d;
+  --warn: #e7b84a;
+  --warn-soft: #2a2312;
+  --crit: #f06a60;
+  --crit-soft: #2e1614;
+  --focus: #74bde0;
+  --shadow: none;
+  --overlay: rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", monospace;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--fg-muted);
+  --color-subtle: var(--fg-subtle);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-fg);
+  --color-frost: var(--frost);
+  --color-frost-soft: var(--frost-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-crit: var(--crit);
+  --color-crit-soft: var(--crit-soft);
+  --color-focus: var(--focus);
+  --color-overlay: var(--overlay);
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-bg text-fg font-sans antialiased;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    font-feature-settings: "ss01", "ss02";
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--accent) 30%, transparent);
+  }
+  code,
+  kbd,
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .num {
+    font-feature-settings: "zero" 0;
+    letter-spacing: -0.01em;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .scroll-area {
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  .hairline {
+    border-color: var(--border);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* uPlot */
+.uplot,
+.uplot * {
+  font-family: var(--font-mono);
+}
+.u-legend {
+  display: none;
+}
+.u-over,
+.u-under {
+  border-radius: 2px;
+}
+.u-cursor-pt {
+  border-radius: 50%;
+}
