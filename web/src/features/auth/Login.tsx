@@ -44,8 +44,13 @@ export function Login() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  // The password was right but this account must finish with a passkey
+  // (it has passkeys and no TOTP / recovery codes left).
+  const [passkeyRequired, setPasskeyRequired] = useState(false);
 
   const done = async (next: string) => {
+    // Nothing from a previous session should survive into this one.
+    qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "auth" });
     await qc.invalidateQueries({ queryKey: ["auth"] });
     nav(next === "totp-setup" ? "/setup/2fa" : "/", { replace: true });
   };
@@ -65,7 +70,17 @@ export function Login() {
   const submitPassword = (e: React.FormEvent) => {
     e.preventDefault();
     run(async () => {
-      const r = await api.post<{ next: string; token?: string }>("/api/auth/login", { username, password });
+      let r: { next: string; token?: string };
+      try {
+        r = await api.post<{ next: string; token?: string }>("/api/auth/login", { username, password });
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "passkey_required") {
+          setPassword("");
+          setPasskeyRequired(true);
+          return;
+        }
+        throw e;
+      }
       setPassword("");
       if (r.next === "second-factor" && r.token) setStep({ kind: "second", token: r.token, recovery: false });
       else await done(r.next);
@@ -93,7 +108,7 @@ export function Login() {
       await done(r.next);
     });
 
-  const canPasskey = !!state?.passkeys && webauthnSupported();
+  const canPasskey = (!!state?.passkeys || passkeyRequired) && webauthnSupported();
   const errMsg = error instanceof ApiError || error instanceof Error ? error : null;
 
   if (step.kind === "second") {
@@ -138,6 +153,13 @@ export function Login() {
 
   return (
     <AuthShell title="Sign in" subtitle="Use your host account on this server.">
+      {passkeyRequired && (
+        <Notice tone="warn" className="mb-4">
+          {webauthnSupported()
+            ? "This account signs in with a passkey. Use “Sign in with passkey” below to continue."
+            : "This account signs in with a passkey, but passkeys need HTTPS and a supported browser. Open Wargo over HTTPS to sign in."}
+        </Notice>
+      )}
       {canPasskey && (
         <>
           <Button variant="primary" className="w-full" icon={<Fingerprint />} loading={busy} onClick={passkey}>

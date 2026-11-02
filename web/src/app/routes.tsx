@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { lazy, useEffect } from "react";
-import { createBrowserRouter, Navigate, Outlet, useNavigate } from "react-router";
+import { lazy, Suspense, useEffect } from "react";
+import { createBrowserRouter, Navigate, Outlet, useNavigate, useRouteError } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { setUnauthorizedHandler } from "@/lib/api";
 import { events } from "@/lib/ws";
 import { Spinner } from "@/components/ui/misc";
-import { useAuthState, useMe } from "./session";
+import { ErrorFallback } from "@/components/ui/error-boundary";
+import { useAuthState, useMe, type AuthState } from "./session";
 import { Layout } from "./Layout";
-import { Login } from "@/features/auth/Login";
-import { TotpSetupPage } from "@/features/auth/TotpSetup";
 
+// Sign-in screens are only needed when signed out; keep them out of the main bundle.
+const Login = lazy(() => import("@/features/auth/Login").then((m) => ({ default: m.Login })));
+const TotpSetupPage = lazy(() => import("@/features/auth/TotpSetup").then((m) => ({ default: m.TotpSetupPage })));
 const Home = lazy(() => import("@/features/home/Home"));
 const System = lazy(() => import("@/features/system/System"));
 const Containers = lazy(() => import("@/features/containers/Containers"));
@@ -18,6 +21,15 @@ const Updates = lazy(() => import("@/features/updates/Updates"));
 const Torrents = lazy(() => import("@/features/torrents/Torrents"));
 const Apps = lazy(() => import("@/features/launcher/Apps"));
 const Settings = lazy(() => import("@/features/settings/Settings"));
+
+/** Errors thrown while rendering a route outside the app shell. */
+function RouteError() {
+  return (
+    <div className="flex min-h-dvh items-center justify-center">
+      <ErrorFallback error={useRouteError()} />
+    </div>
+  );
+}
 
 function FullPageSpinner() {
   return (
@@ -32,16 +44,25 @@ function RequireAuth() {
   const me = useMe(!!state.data?.authenticated);
   const nav = useNavigate();
 
+  const qc = useQueryClient();
   useEffect(() => {
-    setUnauthorizedHandler(() => nav("/login", { replace: true }));
+    // Session expired or revoked: mark it signed out first, or PublicOnly
+    // would see the cached "authenticated" state and bounce straight back.
+    setUnauthorizedHandler(() => {
+      qc.setQueryData<AuthState>(["auth", "state"], (s) => (s ? { ...s, authenticated: false } : s));
+      nav("/login", { replace: true });
+    });
     return () => setUnauthorizedHandler(null);
-  }, [nav]);
+  }, [nav, qc]);
 
   const authed = !!state.data?.authenticated;
+  // Only a fully enrolled session may open /ws/events: one that still has to
+  // set up TOTP gets 403 from everything but the enrolment endpoints.
+  const ready = authed && !!me.data && !me.data.totpSetupRequired;
   useEffect(() => {
-    if (authed) events.start();
+    if (ready) events.start();
     return () => events.stop();
-  }, [authed]);
+  }, [ready]);
 
   if (state.isLoading || (authed && me.isLoading)) return <FullPageSpinner />;
   if (!authed) return <Navigate to="/login" replace />;
@@ -59,11 +80,13 @@ function PublicOnly() {
 export const router = createBrowserRouter([
   {
     element: <PublicOnly />,
-    children: [{ path: "/login", element: <Login /> }],
+    errorElement: <RouteError />,
+    children: [{ path: "/login", element: <Suspense fallback={<FullPageSpinner />}><Login /></Suspense> }],
   },
-  { path: "/setup/2fa", element: <TotpSetupPage /> },
+  { path: "/setup/2fa", element: <Suspense fallback={<FullPageSpinner />}><TotpSetupPage /></Suspense>, errorElement: <RouteError /> },
   {
     element: <RequireAuth />,
+    errorElement: <RouteError />,
     children: [
       {
         element: <Layout />,

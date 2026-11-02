@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { Navigate, useNavigate } from "react-router";
+import { useMe } from "@/app/session";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Copy, Download } from "lucide-react";
 import { api } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
+import { downloadText } from "@/lib/download";
+import { safeImageDataUrl } from "@/lib/url";
 import { Button } from "@/components/ui/button";
 import { FormField, Input } from "@/components/ui/form";
 import { ErrorNote, Notice, Spinner } from "@/components/ui/misc";
@@ -49,7 +53,7 @@ export function TotpEnroll({ onDone }: { onDone: (codes: string[]) => void }) {
         <li>Enter the 6-digit code it shows.</li>
       </ol>
       <div className="flex justify-center rounded-md border border-border bg-white p-3">
-        <img src={setup.qr} alt="TOTP QR code" width={180} height={180} />
+        <img src={safeImageDataUrl(setup.qr)} alt="TOTP QR code" width={180} height={180} />
       </div>
       <details className="text-xs text-muted">
         <summary className="cursor-pointer">Can't scan? Enter the key manually</summary>
@@ -81,8 +85,8 @@ export function RecoveryCodes({ codes, onContinue }: { codes: string[]; onContin
           size="sm"
           icon={<Copy />}
           onClick={async () => {
-            await navigator.clipboard?.writeText(text);
-            toast.ok("Recovery codes copied");
+            if (await copyText(text)) toast.ok("Recovery codes copied");
+            else toast.error("Copy failed", "Select the codes and copy them manually, or download them.");
           }}
         >
           Copy
@@ -91,11 +95,7 @@ export function RecoveryCodes({ codes, onContinue }: { codes: string[]; onContin
           size="sm"
           icon={<Download />}
           onClick={() => {
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(new Blob([text + "\n"], { type: "text/plain" }));
-            a.download = "wargo-recovery-codes.txt";
-            a.click();
-            URL.revokeObjectURL(a.href);
+            downloadText(text + "\n", "wargo-recovery-codes.txt");
           }}
         >
           Download
@@ -108,10 +108,26 @@ export function RecoveryCodes({ codes, onContinue }: { codes: string[]; onContin
   );
 }
 
+/**
+ * Forced enrolment after a password-only sign-in. Such a session may only
+ * call GET /api/auth/me and the TOTP setup/enable endpoints, so this page
+ * must not render anything that talks to other APIs or the events socket.
+ */
 export function TotpSetupPage() {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const me = useMe();
   const [codes, setCodes] = useState<string[] | null>(null);
+  if (me.isLoading) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center text-muted">
+        <Spinner />
+      </div>
+    );
+  }
+  // Signed out, or nothing to enrol (codes are shown until "I've saved them").
+  if (me.error || !me.data) return <Navigate to="/login" replace />;
+  if (!me.data.totpSetupRequired && !codes) return <Navigate to="/" replace />;
   return (
     <AuthShell
       title={codes ? "Recovery codes" : "Set up two-factor authentication"}

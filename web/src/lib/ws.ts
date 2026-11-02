@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { isHostBlocked } from "@/lib/api";
 
 type Handler = (data: unknown) => void;
 
@@ -16,14 +17,26 @@ class EventSocket {
   private statusListeners = new Set<() => void>();
   status: "connecting" | "open" | "closed" = "closed";
   private enabled = false;
+  private openedAt = 0;
+
+  /** Back online (or tab visible again): reconnect now instead of waiting out the backoff. */
+  private wake = () => {
+    if (!this.enabled || this.ws || document.visibilityState === "hidden") return;
+    window.clearTimeout(this.timer);
+    this.connect();
+  };
 
   start() {
     this.enabled = true;
+    window.addEventListener("online", this.wake);
+    document.addEventListener("visibilitychange", this.wake);
     if (!this.ws) this.connect();
   }
 
   stop() {
     this.enabled = false;
+    window.removeEventListener("online", this.wake);
+    document.removeEventListener("visibilitychange", this.wake);
     window.clearTimeout(this.timer);
     this.ws?.close();
     this.ws = null;
@@ -45,14 +58,15 @@ class EventSocket {
   }
 
   private connect() {
-    if (!this.enabled) return;
+    // 421: this origin is rejected; reconnecting can't help.
+    if (!this.enabled || isHostBlocked()) return;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${location.host}/ws/events?topics=${encodeURIComponent(this.topics().join(","))}`;
     this.setStatus("connecting");
     const ws = new WebSocket(url);
     this.ws = ws;
     ws.onopen = () => {
-      this.retry = 0;
+      this.openedAt = Date.now();
       this.setStatus("open");
       this.sync();
     };
@@ -69,7 +83,12 @@ class EventSocket {
       this.ws = null;
       this.setStatus("closed");
       if (!this.enabled) return;
-      const delay = Math.min(15000, 500 * 2 ** this.retry++);
+      // Only a connection that stayed up resets the backoff; a server that
+      // accepts and immediately drops us must not cause a tight loop.
+      if (this.openedAt && Date.now() - this.openedAt > 10_000) this.retry = 0;
+      this.openedAt = 0;
+      const base = Math.min(15000, 500 * 2 ** this.retry++);
+      const delay = base / 2 + Math.random() * (base / 2);
       this.timer = window.setTimeout(() => this.connect(), delay);
     };
   }

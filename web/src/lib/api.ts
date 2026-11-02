@@ -27,6 +27,29 @@ export interface ElevationRequest {
 type ElevationPrompt = (req: ElevationRequest) => Promise<ElevationCredential | null>;
 
 let elevationPrompt: ElevationPrompt | null = null;
+
+// ---- 421 Misdirected Request: the server doesn't accept this Host --------
+// (DNS-rebinding protection). Nothing can work from this origin, so the app
+// swaps itself for an explanation page instead of retrying or redirecting.
+let hostBlocked = false;
+const hostListeners = new Set<() => void>();
+
+export function isHostBlocked() {
+  return hostBlocked;
+}
+
+export function onHostBlocked(l: () => void) {
+  hostListeners.add(l);
+  return () => {
+    hostListeners.delete(l);
+  };
+}
+
+function blockHost() {
+  if (hostBlocked) return;
+  hostBlocked = true;
+  hostListeners.forEach((l) => l());
+}
 let onUnauthorized: (() => void) | null = null;
 
 /** Registered by <ElevationProvider/>. */
@@ -39,7 +62,8 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn;
 }
 
-function csrf(): string {
+/** Double-submit CSRF token (readable cookie set by the server; not a secret). */
+export function csrf(): string {
   const m = document.cookie.match(/(?:^|;\s*)wargo_csrf=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : "";
 }
@@ -91,6 +115,7 @@ async function toError(res: Response): Promise<ApiError> {
  */
 export async function request<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
   let res = await send(path, opts);
+  if (res.status === 421) blockHost();
   if (res.status === 403 || res.status === 401) {
     const err = await toError(res.clone());
     if (err.code === "elevation_required" && elevationPrompt) {
@@ -99,7 +124,8 @@ export async function request<T = unknown>(path: string, opts: RequestOptions = 
         const cred = await elevationPrompt(err.data as ElevationRequest);
         if (!cred) throw new ApiError(403, "elevation_canceled", "Canceled");
         res = await send(path, opts, cred);
-        if (cred.method === "sudo") (cred as { password: string }).password = "";
+        // Drop our reference to the password as soon as it has been sent.
+        if ("password" in cred) cred.password = "";
         if (res.status === 401 && attempt < 2) {
           const e2 = await toError(res.clone());
           if (e2.code === "elevation_failed") {

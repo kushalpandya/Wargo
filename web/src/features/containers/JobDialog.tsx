@@ -5,7 +5,7 @@ import { CheckCircle2, XCircle } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Meter, Spinner } from "@/components/ui/misc";
+import { ErrorNote, Meter, Spinner } from "@/components/ui/misc";
 import type { JobSnapshot } from "./types";
 
 /** Shows a job's progress and streaming log until it finishes. */
@@ -14,7 +14,8 @@ export function JobDialog({ jobId, title, onClose }: { jobId: string | null; tit
     queryKey: ["jobs", jobId],
     queryFn: () => api.get<{ job: JobSnapshot; log: string[] }>(`/api/jobs/${jobId}`),
     enabled: !!jobId,
-    refetchInterval: (query) => (query.state.data?.job.state === "running" || !query.state.data ? 800 : false),
+    // Poll while running; stop once it has finished or the job is gone.
+    refetchInterval: (query) => (query.state.status === "error" ? false : query.state.data?.job.state === "running" || !query.state.data ? 800 : false),
   });
   const job = q.data?.job;
   const log = q.data?.log ?? [];
@@ -22,7 +23,7 @@ export function JobDialog({ jobId, title, onClose }: { jobId: string | null; tit
   useEffect(() => {
     if (pre.current) pre.current.scrollTop = pre.current.scrollHeight;
   }, [log.length]);
-  const running = !job || job.state === "running";
+  const running = job ? job.state === "running" : !q.error;
   const result = job?.result as { updated?: boolean; message?: string } | undefined;
 
   return (
@@ -68,6 +69,7 @@ export function JobDialog({ jobId, title, onClose }: { jobId: string | null; tit
             className={job && job.progress >= 0 ? undefined : "animate-pulse opacity-60"}
           />
         )}
+        {q.error && !job && <ErrorNote error={q.error} />}
         {job?.error && <p className="rounded-md border border-crit/30 bg-crit-soft px-3 py-2 text-sm text-crit">{job.error}</p>}
         <pre
           ref={pre}
