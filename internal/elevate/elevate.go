@@ -23,6 +23,7 @@ import (
 
 	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/httpx"
+	"github.com/kushalpandya/wargo/internal/store"
 )
 
 // Header carries base64(JSON Credential) on privileged requests.
@@ -57,6 +58,7 @@ type Service struct {
 	throttle Throttler
 	privd    *PrivdClient
 	exe      string
+	store    *store.Store
 }
 
 func New(al *audit.Log, proxy *httpx.ProxyTrust, t Throttler, privdSocket string) *Service {
@@ -216,4 +218,5 @@ func (s *Service) Register(mux *http.ServeMux) {
 		httpx.OK(w, ch)
 		return nil
 	}))
+	s.registerPrivd(mux)
 }

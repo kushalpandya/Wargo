@@ -78,7 +78,7 @@ func New(cfg config.Config) (*Server, error) {
 	hub.OriginPatterns = au.OriginPatterns()
 	d := &Deps{
 		Cfg: cfg, Store: st, Hub: hub, Jobs: jobs.NewManager(hub), Audit: al, Proxy: proxy, Auth: au,
-		Elevate: elevate.New(al, proxy, auth.NewThrottle(), ""),
+		Elevate: elevate.New(al, proxy, auth.NewThrottle(), "").WithStore(st),
 	}
 	s := &Server{deps: d}
 

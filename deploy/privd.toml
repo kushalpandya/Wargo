@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# /etc/wargo/privd.toml — configuration for wargo-privd (owned by root, 0644).
+
+# uid of the account Wargo runs as (`id -u <user>`). Only this uid may
+# connect to the socket. Must not be 0.
+allowed_uid = 1000
+
+# Exact browser origins allowed to request approvals. Passkeys are bound
+# to the origin's hostname (WebAuthn RP ID), so list every hostname you
+# use to reach Wargo over HTTPS. http:// is only accepted for localhost.
+origins = ["https://wargo.example.com"]
+
+# Absolute path of the trusted wargo binary used for `wargo helper` ops.
+# It must be owned by root and not writable by group/others.
+wargo_binary = "/usr/local/bin/wargo"
+
+# Trusted passkeys (written by Wargo: Settings → Security → Admin approvals).
+credentials = "/var/lib/wargo-privd/credentials.json"
+
+# Socket path (ignored with socket activation).
+socket = "/run/wargo-privd.sock"
+
+# systemd_run = "/usr/bin/systemd-run"
+# systemctl = "/usr/bin/systemctl"

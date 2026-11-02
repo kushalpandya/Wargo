@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# wargo-privd: optional root helper that runs a closed set of privileged
+# commands for Wargo after verifying a passkey (WebAuthn) approval.
+#
+#   sudo install -m 0755 -o root -g root bin/wargo-privd /usr/local/bin/wargo-privd
+#   sudo install -D -m 0644 deploy/privd.toml /etc/wargo/privd.toml   # then edit it
+#   sudo install -m 0644 deploy/systemd/wargo-privd.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now wargo-privd
+#
+# Without socket activation the daemon creates /run/wargo-privd.sock itself
+# (mode 0660, group = primary group of allowed_uid) and additionally checks
+# the peer uid of every connection (SO_PEERCRED).
+
+[Unit]
+Description=Wargo privileged helper (passkey-approved actions)
+Documentation=https://github.com/kushalpandya/wargo/blob/main/docs/SECURITY.md
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wargo-privd -config /etc/wargo/privd.toml
+Restart=on-failure
+RestartSec=2
+# Runs as root by design; keep the daemon itself as constrained as
+# possible without breaking the commands it launches (package managers,
+# systemctl, wargo helper file operations).
+UMask=0077
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+SystemCallArchitectures=native
+StateDirectory=wargo-privd
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

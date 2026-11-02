@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Optional socket activation for wargo-privd. Set SocketGroup to the
+# primary group of the user Wargo runs as (e.g. `id -gn`), then:
+#
+#   sudo install -m 0644 deploy/systemd/wargo-privd.socket /etc/systemd/system/
+#   sudo systemctl edit wargo-privd.socket     # [Socket] SocketGroup=<group>
+#   sudo systemctl enable --now wargo-privd.socket
+#
+# The daemon still verifies the peer uid (allowed_uid) on every connection.
+
+[Unit]
+Description=Wargo privileged helper socket
+
+[Socket]
+ListenStream=/run/wargo-privd.sock
+SocketUser=root
+SocketGroup=root
+SocketMode=0660
+Accept=no
+
+[Install]
+WantedBy=sockets.target

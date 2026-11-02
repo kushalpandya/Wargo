@@ -33,6 +33,9 @@ type PrivdClient struct{ socket string }
 
 func NewPrivdClient(socket string) *PrivdClient {
 	if socket == "" {
+		socket = os.Getenv("WARGO_PRIVD_SOCKET")
+	}
+	if socket == "" {
 		socket = privproto.DefaultSocket
 	}
 	return &PrivdClient{socket: socket}
