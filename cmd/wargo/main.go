@@ -79,6 +79,11 @@ func loadConfigChecked(args []string, preflight bool) config.Config {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 	if host.Container() {
+		if !auth.CryptAvailable() {
+			fmt.Fprintln(os.Stderr, "wargo: container mode (WARGO_HOST_ROOT) needs a binary built with libcrypt support "+
+				"(go build -tags wargo_container, as in the official Docker image); this one can't verify host passwords.")
+			os.Exit(1)
+		}
 		host.SetupEnv()
 		if preflight {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

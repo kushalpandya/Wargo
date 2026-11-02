@@ -29,7 +29,10 @@ contents:
   - src: config.example.toml
     dst: /etc/wargo/config.toml
     type: config|noreplace
-    file_info: { mode: 0640 }
+    # Wargo runs as the admin user, so the config must be readable by it.
+    # It holds no secrets by default (integration keys are stored
+    # encrypted in the database); tighten with chgrp+0640 if you add any.
+    file_info: { mode: 0644 }
   - src: deploy/systemd/wargo@.service
     dst: /usr/lib/systemd/system/wargo@.service
   - src: deploy/systemd/wargo-privd.service

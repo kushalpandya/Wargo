@@ -6,7 +6,9 @@
 # on the host. Expose it only behind TLS (reverse proxy / tunnel).
 services:
   wargo:
-    image: ghcr.io/kushalpandya/wargo:latest
+    # latest = newest release (pre-releases included until v1.0.0), next =
+    # newest pre-release, edge = main. Pin a version with WARGO_TAG=v0.2.0.
+    image: ghcr.io/kushalpandya/wargo:${WARGO_TAG:-latest}
     container_name: wargo
     restart: unless-stopped
     privileged: true          # nsenter into the host namespaces, identity switching

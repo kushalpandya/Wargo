@@ -23,11 +23,17 @@ RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist ./web/dist
 ARG VERSION=dev
-RUN CGO_ENABLED=1 go build -trimpath \
+# -tags wargo_container links libxcrypt (host /etc/shadow verification),
+# which only container mode needs; native release builds leave it out.
+RUN CGO_ENABLED=1 go build -trimpath -tags wargo_container \
       -ldflags "-s -w -X github.com/kushalpandya/wargo/internal/server.Version=${VERSION}" \
       -o /out/wargo ./cmd/wargo
 
 # --- runtime ---
+# Wargo must run as root in this image (container mode: nsenter into the
+# host namespaces, per-thread identity switching, reading the host's
+# /etc/shadow); see docs/SECURITY.md#container-mode. Base images are pinned
+# by Debian release; rebuild regularly for security updates.
 FROM debian:bookworm-slim
 ARG VERSION=dev
 ARG REVISION=unknown

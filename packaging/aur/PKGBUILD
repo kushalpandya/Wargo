@@ -14,6 +14,7 @@ conflicts=('wargo')
 backup=('etc/wargo/config.toml' 'etc/pam.d/wargo')
 source_x86_64=("$url/releases/download/v$pkgver/wargo_${pkgver}_linux_amd64.tar.gz")
 source_aarch64=("$url/releases/download/v$pkgver/wargo_${pkgver}_linux_arm64.tar.gz")
+# Fill in from the release's SHA256SUMS when bumping pkgver.
 sha256sums_x86_64=('SKIP')
 sha256sums_aarch64=('SKIP')
 
@@ -21,9 +22,10 @@ package() {
   install -Dm755 wargo "$pkgdir/usr/bin/wargo"
   install -Dm755 wargo-privd "$pkgdir/usr/bin/wargo-privd"
   install -Dm644 deploy/pam/wargo "$pkgdir/etc/pam.d/wargo"
-  install -Dm640 config.example.toml "$pkgdir/etc/wargo/config.toml"
+  # Readable by the admin user Wargo runs as (no secrets by default).
+  install -Dm644 config.example.toml "$pkgdir/etc/wargo/config.toml"
   sed 's#/usr/local/bin/wargo#/usr/bin/wargo#' deploy/systemd/wargo@.service | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/system/wargo@.service"
-  install -Dm644 deploy/systemd/wargo-privd.service "$pkgdir/usr/lib/systemd/system/wargo-privd.service"
+  sed 's#/usr/local/bin/wargo#/usr/bin/wargo#' deploy/systemd/wargo-privd.service | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/system/wargo-privd.service"
   install -Dm644 deploy/systemd/wargo-privd.socket "$pkgdir/usr/lib/systemd/system/wargo-privd.socket"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

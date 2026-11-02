@@ -21,10 +21,14 @@ var (
 	errLocked    = errors.New("account is locked or has no password")
 	errExpired   = errors.New("account has expired")
 	errMismatch  = errors.New("password mismatch")
-	errNoCrypt   = errors.New("wargo was built without crypt support")
+	errNoCrypt   = errors.New("wargo was built without libcrypt support (container mode needs a build with -tags wargo_container)")
 	errBadHash   = errors.New("unsupported password hash")
 	cryptForTest func(password, setting string) (string, error)
 )
+
+// CryptAvailable reports whether this binary can verify shadow hashes
+// (required for container mode).
+func CryptAvailable() bool { return cryptAvailable }
 
 // verifyShadow checks password against a shadow entry. Locked accounts
 // ("!" / "*" prefixes, empty hashes) and expired accounts (shadow field 8)

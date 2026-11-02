@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//go:build linux && cgo
+//go:build linux && cgo && wargo_container
+
+// libxcrypt is only needed for container mode (host /etc/shadow checks),
+// so it is linked only with -tags wargo_container (the Docker image).
+// Native binaries then depend on libpam.so.0 and libc only: distributions
+// disagree on libcrypt's soname (Arch ships only libcrypt.so.2).
 
 package auth
 

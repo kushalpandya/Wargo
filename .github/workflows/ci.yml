@@ -6,9 +6,23 @@ on:
     tags: ["v*"]
   pull_request:
 
+# Least privilege by default; jobs that publish widen it explicitly.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Third-party actions are pinned to commit SHAs (comment = tag at pin time).
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-24.04
@@ -16,35 +30,113 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    # Build on Debian 11 (glibc 2.31) so the cgo binary runs on every
+    # reasonably modern distribution (Debian 11+, Ubuntu 20.04+, Fedora,
+    # Arch, openSUSE). Building on the runner itself would require its
+    # glibc (2.39).
+    container: debian:bullseye
+    env:
+      MAX_GLIBC: "2.31"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git curl xz-utils build-essential binutils libpam0g-dev
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with: { go-version: "1.26" }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
-      - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libcrypt-dev
       - run: make web
-      - run: go vet ./... && go test ./...
-      - run: make build privd
-      - name: Package
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: Build
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          case "$GITHUB_REF" in refs/tags/*) ;; *) VERSION="0.0.0-dev+${GITHUB_SHA::7}";; esac
+          case "$GITHUB_REF" in refs/tags/v*) ;; *) VERSION="0.0.0-dev+${GITHUB_SHA::7}";; esac
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          LDFLAGS="-s -w -X github.com/kushalpandya/wargo/internal/server.Version=$VERSION"
+          # Native build: PAM + libc only (no libcrypt, see internal/auth/crypt_cgo.go).
+          CGO_ENABLED=1 go build -trimpath -ldflags "$LDFLAGS" -o bin/wargo ./cmd/wargo
+          CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/wargo-privd ./cmd/wargo-privd
+      - name: Check portability (glibc symbols, shared libraries)
+        run: |
+          set -eu
+          max=$(objdump -T bin/wargo | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "highest GLIBC symbol version: $max (limit $MAX_GLIBC)"
+          if [ "$(printf '%s\n%s\n' "$max" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+            echo "::error::bin/wargo needs GLIBC_$max > $MAX_GLIBC"; exit 1
+          fi
+          readelf -d bin/wargo | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort > needed.txt
+          cat needed.txt
+          # libresolv is part of glibc on every distribution (cgo DNS resolver).
+          if grep -vxE 'libpam\.so\.0|libc\.so\.6|libresolv\.so\.2|libpthread\.so\.0|libdl\.so\.2' needed.txt; then
+            echo "::error::unexpected shared library dependency"; exit 1
+          fi
+          if readelf -d bin/wargo-privd | grep -q NEEDED; then
+            echo "::error::wargo-privd must be static"; exit 1
+          fi
+      - name: Package
+        run: |
+          set -eu
           mkdir -p dist/pkg
           tar -czf "dist/wargo_${VERSION}_linux_${{ matrix.arch }}.tar.gz" -C . \
-            --transform 's#^bin/##' bin/wargo bin/wargo-privd LICENSE README.md config.example.toml deploy docs
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+            --owner=0 --group=0 --transform 's#^bin/##' \
+            bin/wargo bin/wargo-privd LICENSE README.md config.example.toml deploy docs
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
           for p in deb rpm apk archlinux; do
-            VERSION="$VERSION" ARCH=${{ matrix.arch }} ~/go/bin/nfpm pkg -f packaging/nfpm.yaml -p $p -t dist/pkg/
+            VERSION="$VERSION" ARCH=${{ matrix.arch }} "$(go env GOPATH)/bin/nfpm" pkg -f packaging/nfpm.yaml -p $p -t dist/pkg/
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wargo-${{ matrix.arch }}
           path: dist/
+          if-no-files-found: error
+
+  # GitHub Release with the tarballs, packages and one SHA256SUMS file.
+  # Asset names are relied upon by install.sh:
+  #   wargo_<version>_linux_<amd64|arm64>.tar.gz and SHA256SUMS
+  release:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          pattern: wargo-*
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          set -eu
+          mkdir release
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.deb' -o -name '*.rpm' -o -name '*.apk' -o -name '*.pkg.tar.zst' \) \
+            -exec cp {} release/ \;
+          cd release
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          pre=""
+          case "$TAG" in *-*) pre="--prerelease";; esac
+          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --title "Wargo $TAG" \
+            --generate-notes --verify-tag $pre
 
   # Multi-arch container image (container mode, see docs/DOCKER.md).
-  # Tags: the git tag (e.g. v0.2.0-alpha.1) on v* tags, "latest" only for
-  # tags without a pre-release suffix, "edge" for main.
+  # Tags: on every v* tag the version (e.g. v0.2.0-alpha.1), "latest" and
+  # "next"; "edge" for main.
+  # Until the first stable release, latest tracks every release. After
+  # v1.0.0, restrict latest to stable tags and keep next for pre-releases.
   docker:
     needs: build
     if: github.event_name == 'push'
@@ -53,10 +145,12 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -69,21 +163,23 @@ jobs:
             *) echo "version=0.0.0-dev+${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT" ;;
           esac
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/${{ github.repository }}
           flavor: latest=false
           tags: |
             type=ref,event=tag
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=next,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=edge,branch=main
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
           build-args: |
             VERSION=${{ steps.ver.outputs.version }}
             REVISION=${{ github.sha }}
