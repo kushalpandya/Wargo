@@ -17,8 +17,11 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
   { className, children, ...rest },
   ref,
 ) {
+  // A width passed in (e.g. w-auto) replaces the default w-full; cn()
+  // doesn't merge Tailwind classes, so both would apply otherwise.
+  const base = /(^|\s)w-/.test(className ?? "") ? inputBase.replace("w-full ", "") : inputBase;
   return (
-    <select ref={ref} className={cn(inputBase, "appearance-none bg-[length:12px] bg-[right_0.5rem_center] bg-no-repeat pr-7", className)} style={{ backgroundImage: chevron }} {...rest}>
+    <select ref={ref} className={cn(base, "appearance-none bg-[length:12px] bg-[right_0.5rem_center] bg-no-repeat pr-7", className)} style={{ backgroundImage: chevron }} {...rest}>
       {children}
     </select>
   );

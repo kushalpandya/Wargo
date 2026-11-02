@@ -8,7 +8,7 @@ import { ago } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { useFillViewport } from "@/lib/hooks";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/button";
 import { SearchInput, Segmented, Select } from "@/components/ui/form";
 import { Badge, EmptyState, ErrorNote, Notice, Skeleton } from "@/components/ui/misc";
 
@@ -175,7 +175,28 @@ export const EventsPanel = memo(function EventsPanel() {
 
       <Card>
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
-          <SearchInput value={q} onChange={setQ} placeholder="Filter messages…" label="Filter events" className="min-w-0 flex-1 basis-44" />
+          <SearchInput value={q} onChange={setQ} placeholder="Filter messages…" label="Filter events" className="min-w-0 flex-1 basis-40" />
+          <label htmlFor="events-source" className="sr-only">
+            Source
+          </label>
+          <Select id="events-source" className="w-auto" title="Source" value={source} onChange={(e) => set("source", e.target.value === "all" ? null : e.target.value)}>
+            <option value="all">All sources ({counts.all})</option>
+            {SOURCES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label} ({counts[s.value] ?? 0})
+              </option>
+            ))}
+          </Select>
+          <Segmented<Range>
+            label="Time range"
+            value={range}
+            onChange={(v) => set("range", v === "24h" ? null : v)}
+            options={[
+              { value: "1h", label: "1 hour", title: "Last hour" },
+              { value: "24h", label: "24 hours", title: "Last 24 hours" },
+              { value: "7d", label: "7 days", title: "Last 7 days" },
+            ]}
+          />
           <Segmented<Level>
             label="Levels"
             value={level}
@@ -185,33 +206,12 @@ export const EventsPanel = memo(function EventsPanel() {
               { value: "warning", label: "Errors & warnings" },
             ]}
           />
-          <label htmlFor="events-source" className="sr-only">
-            Source
-          </label>
-          <Select id="events-source" className="w-auto" value={source} onChange={(e) => set("source", e.target.value === "all" ? null : e.target.value)}>
-            <option value="all">All sources ({counts.all})</option>
-            {SOURCES.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label} ({counts[s.value] ?? 0})
-              </option>
-            ))}
-          </Select>
-          <label htmlFor="events-range" className="sr-only">
-            Time range
-          </label>
-          <Select id="events-range" className="w-auto" value={range} onChange={(e) => set("range", e.target.value === "24h" ? null : e.target.value)}>
-            <option value="1h">Last hour</option>
-            <option value="24h">Last 24 hours</option>
-            <option value="7d">Last 7 days</option>
-          </Select>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={<RefreshCw className={cn(query.isFetching && "animate-spin")} />}
+          <IconButton
+            label="Refresh events"
             onClick={() => api.get<EventsResponse>(`/api/system/events${qs({ range, level, fresh: 1 })}`).then(() => query.refetch())}
-            aria-label="Refresh events"
-            title="Refresh"
-          />
+          >
+            <RefreshCw className={cn(query.isFetching && "animate-spin")} />
+          </IconButton>
         </div>
 
         {query.isLoading ? (
