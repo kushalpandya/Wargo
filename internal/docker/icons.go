@@ -9,12 +9,15 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/httpx"
@@ -33,6 +36,10 @@ type iconStore struct {
 	dir    string // <dataDir>/icons/containers
 	base   string // dashboard-icons CDN prefix (tests override)
 	client *http.Client
+	// labelClient fetches URLs taken from container labels. Labels are
+	// attacker-controlled (an image's labels are inherited by its
+	// containers), so it only connects to public addresses.
+	labelClient *http.Client
 
 	mu       sync.Mutex
 	inflight map[string]*iconFetch
@@ -47,22 +54,91 @@ type iconFetch struct {
 
 var errNoIcon = errors.New("no icon")
 
+func httpsOnlyRedirects(req *http.Request, via []*http.Request) error {
+	if req.URL.Scheme != "https" || len(via) >= 3 {
+		return errors.New("redirect not allowed")
+	}
+	return nil
+}
+
 func newIconStore(dataDir string) *iconStore {
 	return &iconStore{
 		dir:  filepath.Join(dataDir, "icons", "containers"),
 		base: launcher.DashboardIconsBase,
 		client: &http.Client{
-			Timeout: 15 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if req.URL.Scheme != "https" || len(via) >= 3 {
-					return errors.New("redirect not allowed")
-				}
-				return nil
-			},
+			Timeout:       15 * time.Second,
+			CheckRedirect: httpsOnlyRedirects,
 		},
-		inflight: map[string]*iconFetch{},
-		failed:   map[string]time.Time{},
+		labelClient: publicOnlyClient(15 * time.Second),
+		inflight:    map[string]*iconFetch{},
+		failed:      map[string]time.Time{},
 	}
+}
+
+var errBlockedAddr = errors.New("destination address not allowed")
+
+// cgnat and other special-purpose ranges that netip has no predicate for.
+var blockedPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"), // CGNAT (Tailscale etc.)
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("64:ff9b::/96"),   // NAT64 can map to private v4
+	netip.MustParsePrefix("64:ff9b:1::/48"), // local-use NAT64
+	netip.MustParsePrefix("2002::/16"),      // 6to4 embeds arbitrary v4
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("fec0::/10"),
+}
+
+// publicAddr reports whether ip is a globally routable unicast address.
+func publicAddr(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	if !ip.IsValid() || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	for _, p := range blockedPrefixes {
+		if p.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// publicOnlyClient is an HTTPS client that refuses to connect to
+// loopback, private, link-local and other non-public addresses. The check
+// runs on the resolved address at connect time (also for redirects), so
+// DNS rebinding can't bypass it. It ignores proxy settings: a proxy
+// would hide the real destination from the check.
+func publicOnlyClient(timeout time.Duration) *http.Client {
+	d := &net.Dialer{
+		Timeout: 10 * time.Second,
+		Control: func(network, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return errBlockedAddr
+			}
+			ip, err := netip.ParseAddr(host)
+			if err != nil || !publicAddr(ip) {
+				return errBlockedAddr
+			}
+			return nil
+		},
+	}
+	tr := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           d.DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		MaxIdleConns:          4,
+		IdleConnTimeout:       30 * time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+	return &http.Client{Timeout: timeout, Transport: tr, CheckRedirect: httpsOnlyRedirects}
 }
 
 // iconSource is one place a container logo may come from.
@@ -103,12 +179,22 @@ func iconCandidates(a *apiContainer) []iconSource {
 	}
 	for _, k := range iconLabelKeys {
 		v := strings.TrimSpace(a.Labels[k])
-		if u, err := url.Parse(v); err == nil && u.Scheme == "https" && u.Host != "" && len(v) <= 1024 {
+		if validIconURL(v) {
 			out = append(out, iconSource{URL: v})
 			break
 		}
 	}
 	return out
+}
+
+// validIconURL accepts plain https URLs on the default port without
+// credentials (see publicOnlyClient for the address check).
+func validIconURL(v string) bool {
+	if len(v) > 1024 {
+		return false
+	}
+	u, err := url.Parse(v)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && (u.Port() == "" || u.Port() == "443")
 }
 
 func (st *iconStore) missPath(src iconSource) string { return filepath.Join(st.dir, src.key()+".miss") }
@@ -214,7 +300,11 @@ func (st *iconStore) fetch(ctx context.Context, src iconSource) (string, error) 
 		return "", errNoIcon
 	}
 	req.Header.Set("User-Agent", "Wargo")
-	resp, err := st.client.Do(req)
+	client := st.client
+	if src.Slug == "" {
+		client = st.labelClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		if src.URL != "" {
 			// A broken label URL is not worth retrying every few minutes.

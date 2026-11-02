@@ -362,16 +362,43 @@ func envNames(env []string) []string {
 	return out
 }
 
-var secretKeyRe = regexp.MustCompile(`(?i)(pass(word|wd)?|secret|token|api[-_.]?key|private[-_.]?key|credential|auth|\bpwd\b|\.key$|_key$)`)
+var secretKeyRe = regexp.MustCompile(`(?i)(pass(word|wd|phrase)?|secret|token|api[-_.]?key|access[-_.]?key|private[-_.]?key|credential|auth|cookie|htpasswd|bearer|jwt|salt|\bdsn\b|\bpwd\b|\.key$|_key$|-key$)`)
 
-// redactLabels masks values whose key looks like it holds a secret.
+// urlCredsRe matches credentials embedded in URLs ("scheme://user:pass@").
+var urlCredsRe = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s:@]*:[^/\s@]+@`)
+
+// redactURLCreds masks passwords in URLs, e.g. in a DSN label or a
+// healthcheck command.
+func redactURLCreds(s string) string {
+	if !strings.Contains(s, "://") {
+		return s
+	}
+	return urlCredsRe.ReplaceAllString(s, "${1}[redacted]@")
+}
+
+func redactAll(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = redactURLCreds(s)
+	}
+	return out
+}
+
+// redactLabels masks values whose key looks like it holds a secret and
+// credentials embedded in URLs.
 func redactLabels(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 	for k, v := range in {
 		if secretKeyRe.MatchString(k) {
 			v = "[redacted]"
-		} else if len(v) > 2048 {
-			v = v[:2048] + "…"
+		} else {
+			v = redactURLCreds(v)
+			if len(v) > 2048 {
+				v = truncate(v, 2048)
+			}
 		}
 		out[k] = v
 	}

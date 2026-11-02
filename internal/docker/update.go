@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -135,6 +137,40 @@ func composeFiles(labels map[string]string) []string {
 	return out
 }
 
+var composeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+
+// composeLabelsTrusted reports whether the compose labels of a container
+// can be used to run `docker compose` for it. Image labels are inherited
+// by containers, so a malicious image could otherwise point Wargo at a
+// compose file of its choosing (e.g. one it wrote into a bind mount) and
+// have the update start arbitrary — even privileged — containers. Compose
+// always overwrites these labels with the real values when it creates a
+// container, so values equal to the image's are not trusted. Names must
+// also look like compose names (no leading '-', which docker would parse
+// as a flag) and paths must be absolute.
+func composeLabelsTrusted(labels, imageLabels map[string]string, project, service, dir string, files []string) bool {
+	if project == "" {
+		return true // not a compose container; nothing to trust
+	}
+	for _, k := range []string{labelProject, labelService, labelWorkingDir, labelConfig} {
+		if v := imageLabels[k]; v != "" && v == labels[k] {
+			return false
+		}
+	}
+	if !composeNameRe.MatchString(project) || (service != "" && !composeNameRe.MatchString(service)) {
+		return false
+	}
+	if dir != "" && !filepath.IsAbs(dir) {
+		return false
+	}
+	for _, f := range files {
+		if !filepath.IsAbs(f) {
+			return false
+		}
+	}
+	return true
+}
+
 func filesReadable(files []string) bool {
 	if len(files) == 0 {
 		return false
@@ -184,6 +220,14 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request, id string
 	labels := in.Config.Labels
 	project, service, dir := labels[labelProject], labels[labelService], labels[labelWorkingDir]
 	files := composeFiles(labels)
+	ictx, icancel := context.WithTimeout(r.Context(), 5*time.Second)
+	imgLabels, imgOK := s.imageLabels(ictx, []string{in.Image})[in.Image]
+	icancel()
+	if !imgOK || !composeLabelsTrusted(labels, imgLabels, project, service, dir, files) {
+		// Treat the container as a plain one: never run `docker compose`
+		// (possibly as root) on a project/file named by untrusted labels.
+		project, service, dir, files = "", "", "", nil
+	}
 	readable := filesReadable(files)
 
 	strategy := req.Strategy
@@ -229,7 +273,9 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request, id string
 	s.updating[in.ID] = true
 	s.mu.Unlock()
 
-	jctx, jcancel := context.WithCancel(context.Background())
+	// Bounded so a hung pull or compose run can't block further updates
+	// of this container forever (rollback has its own context).
+	jctx, jcancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	job := s.jobs.Start("containers.update", "Update "+name, jcancel)
 	details := map[string]any{"id": in.ID, "strategy": strategy, "image": in.Config.Image, "job": job.ID()}
 	// Detach from the request but keep its headers (elevation credential).
@@ -423,6 +469,11 @@ func (s *Service) UpdateRecreate(ctx context.Context, job *jobs.Job, id string) 
 		for _, c := range l {
 			m := strings.TrimPrefix(c.NetworkMode, "container:")
 			if c.NetworkMode == m || (m != old.ID && m != name && !(len(m) >= 12 && strings.HasPrefix(old.ID, m))) {
+				continue
+			}
+			if s.selfID != "" && c.FullID == s.selfID {
+				// Never recreate Wargo's own container (it would kill this job).
+				job.Log(fmt.Sprintf("warning: %s (Wargo itself) shares %s's network; recreate it from the host to reconnect it", c.Name, name))
 				continue
 			}
 			job.Log(fmt.Sprintf("Recreating %s, which shares %s's network", c.Name, name))

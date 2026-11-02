@@ -120,7 +120,10 @@ func (l *LineReader) Next() (LogLine, error) {
 
 func (l *LineReader) fill() error {
 	if !l.mux {
-		chunk := make([]byte, 16<<10)
+		if cap(l.frame) < 16<<10 {
+			l.frame = make([]byte, 16<<10)
+		}
+		chunk := l.frame[:16<<10]
 		n, err := l.r.Read(chunk)
 		if n > 0 {
 			l.feed(1, chunk[:n])
@@ -155,14 +158,15 @@ func (l *LineReader) fill() error {
 	return nil
 }
 
-// Logs opens a log stream for container id. tail <= 0 means "all".
+// Logs opens a log stream for container id. tail < 0 means "all", 0 means
+// no history (follow only).
 func (s *Service) Logs(ctx context.Context, id string, tail int, follow, timestamps bool) (*LineReader, io.Closer, error) {
 	var in inspect
 	if err := s.c.call(ctx, http.MethodGet, "/containers/"+id+"/json", nil, &in); err != nil {
 		return nil, nil, err
 	}
 	q := url.Values{"stdout": {"1"}, "stderr": {"1"}}
-	if tail > 0 {
+	if tail >= 0 {
 		q.Set("tail", strconv.Itoa(tail))
 	} else {
 		q.Set("tail", "all")

@@ -434,7 +434,7 @@ type apiImage struct {
 }
 
 func buildDetails(in *inspect, summary *Container, img *apiImage) *Details {
-	d := &Details{Created: in.Created, Path: in.Path, Args: in.Args, Entrypoint: in.Config.Entrypoint, Cmd: in.Config.Cmd,
+	d := &Details{Created: in.Created, Path: in.Path, Args: redactAll(in.Args), Entrypoint: redactAll(in.Config.Entrypoint), Cmd: redactAll(in.Config.Cmd),
 		WorkingDir: in.Config.WorkingDir, User: in.Config.User, Hostname: in.Config.Hostname, Tty: in.Config.Tty,
 		Env: envNames(in.Config.Env), Labels: redactLabels(in.Config.Labels), LogDriver: in.HostConfig.LogConfig.Type, Platform: in.Platform}
 	if summary != nil {
@@ -461,10 +461,10 @@ func buildDetails(in *inspect, summary *Container, img *apiImage) *Details {
 			logs = logs[len(logs)-5:]
 		}
 		for _, l := range logs {
-			d.Health.Log = append(d.Health.Log, HealthResult{Start: l.Start, End: l.End, ExitCode: l.ExitCode, Output: truncate(strings.TrimSpace(l.Output), 1024)})
+			d.Health.Log = append(d.Health.Log, HealthResult{Start: l.Start, End: l.End, ExitCode: l.ExitCode, Output: redactURLCreds(truncate(strings.TrimSpace(l.Output), 1024))})
 		}
 		if hc := in.Config.Healthcheck; hc != nil {
-			d.Health.Test, d.Health.IntervalNs, d.Health.TimeoutNs, d.Health.Retries = hc.Test, hc.Interval, hc.Timeout, hc.Retries
+			d.Health.Test, d.Health.IntervalNs, d.Health.TimeoutNs, d.Health.Retries = redactAll(hc.Test), hc.Interval, hc.Timeout, hc.Retries
 		}
 	}
 	d.Mounts = []Mount{}
