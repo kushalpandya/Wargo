@@ -6,6 +6,8 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"html"
 	"log/slog"
 	"net"
 	"net/http"
@@ -182,8 +184,30 @@ func rejectHost(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("rejected request for an unknown host; add its origin to auth.origins (WARGO_ORIGINS) if it is yours",
 			"host", r.Host, "path", r.URL.Path)
 	}
-	httpx.Fail(w, r, httpx.Errorf(http.StatusMisdirectedRequest, "unknown_host",
-		"This host name is not configured for Wargo. Add its URL to auth.origins (or WARGO_ORIGINS)."))
+	const msg = "This host name is not configured for Wargo. Add its URL to auth.origins (or WARGO_ORIGINS)."
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/ws/") {
+		httpx.Fail(w, r, httpx.Errorf(http.StatusMisdirectedRequest, "unknown_host", msg))
+		return
+	}
+	// Browsers navigating here get a readable page instead of JSON. The
+	// host is shown escaped and only as text.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusMisdirectedRequest)
+	origin := "https://" + r.Host
+	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wargo: address not allowed</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;max-width:36rem;margin:12vh auto;padding:0 1.25rem;color:#1b2430;background:#f2f4f6}
+@media(prefers-color-scheme:dark){body{color:#e2e7ed;background:#0a0d11}code,pre{background:#1a212a!important}}
+h1{font-size:1.2rem}pre,code{background:#e4e8ec;border-radius:6px;padding:.15rem .35rem}pre{padding:.75rem;overflow:auto}</style>
+<h1>This address isn't allowed</h1>
+<p>Wargo only answers host names it knows, to protect against DNS-rebinding attacks.
+To use <code>%s</code>, add it to <code>auth.origins</code> in <code>/etc/wargo/config.toml</code>
+(Docker: the <code>WARGO_ORIGINS</code> variable) and restart Wargo:</p>
+<pre>[auth]
+origins = ["%s"]</pre>
+<p>IP addresses, <code>localhost</code>, this machine's hostname and <code>.local</code>/<code>.lan</code> names always work.</p>
+`, html.EscapeString(r.Host), html.EscapeString(origin))
 }
 
 func isPublic(r *http.Request) bool {
@@ -225,7 +249,7 @@ func (s *Server) Run(ctx context.Context) error {
 func securityHeaders(proxy *httpx.ProxyTrust, next http.Handler) http.Handler {
 	csp := strings.Join([]string{
 		"default-src 'self'",
-		"script-src 'self' 'wasm-unsafe-eval'",
+		"script-src 'self'",
 		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' data: blob:",
 		"media-src 'self' blob:",

@@ -4,6 +4,7 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,6 +118,24 @@ func TestUnknownHostRejected(t *testing.T) {
 		if res.Header.Get("X-Frame-Options") != "DENY" {
 			t.Errorf("%s: security headers missing on rejection", path)
 		}
+	}
+}
+
+func TestUnknownHostPageIsEscapedHTML(t *testing.T) {
+	ts := newTestServer(t, true)
+	req, _ := http.NewRequest("GET", ts.URL+"/", nil)
+	req.Host = "<script>x</script>.example"
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusMisdirectedRequest || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("got %d %s", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	if strings.Contains(string(b), "<script>") || !strings.Contains(string(b), "auth.origins") {
+		t.Fatalf("page not escaped or missing guidance: %s", b)
 	}
 }
 
