@@ -29,7 +29,7 @@ function CoreGrid({ cores }: { cores: number[] }) {
               className={cn("absolute inset-x-0 bottom-0 transition-[height] duration-500", t === "crit" ? "bg-crit/25" : t === "warn" ? "bg-warn/25" : "bg-accent/20")}
               style={{ height: `${Math.max(2, v)}%` }}
             />
-            <div className="relative text-2xs text-subtle">{i}</div>
+            <div className="relative text-2xs text-muted">{i}</div>
             <div className="num relative text-xs">{Math.round(v)}</div>
           </div>
         );

@@ -351,7 +351,8 @@ export function ProcessesPanel({ embedded }: { embedded?: boolean }) {
           </EmptyState>
         ) : (
           <>
-            <div className="overflow-x-auto max-md:hidden">
+            {/* Fixed-height, scrollable list so the page itself doesn't grow. */}
+            <div className="scroll-area max-h-[min(70dvh,42rem)] max-md:hidden" tabIndex={0} role="region" aria-label="Process table">
               <Table className="table-fixed">
                 <THead>
                   <tr>
@@ -387,12 +388,14 @@ export function ProcessesPanel({ embedded }: { embedded?: boolean }) {
                 ]}
               />
             </div>
-            <ul className="md:hidden" aria-label="Processes">
-              {shown.map((r) => (
-                <MobileRow key={r.p.pid} row={r} tree={tree} onOpen={setOpen} />
-              ))}
-            </ul>
-            <div className="flex flex-wrap items-center gap-3 px-3.5 py-2.5 text-xs text-muted">
+            <div className="scroll-area max-h-[70dvh] md:hidden" tabIndex={0} role="region" aria-label="Process list">
+              <ul aria-label="Processes">
+                {shown.map((r) => (
+                  <MobileRow key={r.p.pid} row={r} tree={tree} onOpen={setOpen} />
+                ))}
+              </ul>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 border-t border-border px-3.5 py-2.5 text-xs text-muted">
               <span className="num">
                 Showing {shown.length} of {rows.length}
               </span>
