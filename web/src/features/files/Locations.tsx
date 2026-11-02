@@ -129,7 +129,15 @@ function BookmarkRow({ b, index, count, current, onPick, drag }: { b: Bookmark; 
     >
       {current && <CurrentBar />}
       <div className={cn("flex items-center gap-2", disabled && "opacity-50")}>
-        <BookmarkIcon b={b} className={cn("size-4 shrink-0", current ? "text-accent" : "text-subtle")} />
+        <BookmarkIcon
+          b={b}
+          className={cn(
+            "size-4 shrink-0 transition-opacity",
+            current ? "text-accent" : "text-subtle",
+            // The drag grip takes the icon's place on hover (fine pointers).
+            count > 1 && "pointer-fine:group-hover:opacity-0",
+          )}
+        />
         <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium">{b.name}</span>
       </div>
       <div className={cn("num mt-0.5 truncate pl-6 text-2xs text-subtle", disabled && "opacity-70")}>{disabled ? (b.reason ?? "Unavailable") : shortPath(b.abs, home)}</div>
@@ -160,7 +168,7 @@ function BookmarkRow({ b, index, count, current, onPick, drag }: { b: Bookmark; 
       )}
       {count > 1 && (
         <span
-          className="absolute left-1 top-2 flex cursor-grab items-center rounded bg-surface-2 py-0.5 text-subtle opacity-0 transition-opacity hover:text-fg active:cursor-grabbing group-hover:opacity-100 pointer-coarse:hidden"
+          className="absolute left-2.5 top-2.5 flex size-4 cursor-grab items-center justify-center text-subtle opacity-0 transition-opacity hover:text-fg active:cursor-grabbing group-hover:opacity-100 pointer-coarse:hidden"
           onPointerDown={() => drag.arm(true)}
           onPointerUp={() => drag.arm(false)}
           title="Drag to reorder (or Alt+↑/↓)"
@@ -224,7 +232,7 @@ function SectionHeader({ id, title, children }: { id: string; title: string; chi
 
 export function RootsSidebar({ current, onPick }: { current?: Loc; onPick: (l: Loc) => void }) {
   const api = useLocationsApi();
-  const { drives, bookmarks, hiddenCount, manageDrives, manageBookmarks, reorderBookmarks } = api;
+  const { drives, bookmarks, manageDrives, manageBookmarks, reorderBookmarks } = api;
   const visibleDrives = drives.filter((d) => !d.hidden);
   const cur = currentLocation(api, current);
   const [order, setOrder] = useState<Bookmark[] | null>(null);
@@ -259,11 +267,6 @@ export function RootsSidebar({ current, onPick }: { current?: Loc; onPick: (l: L
           <>
             <nav aria-labelledby="files-drives" className="p-1.5">
               <SectionHeader id="files-drives" title="Drives">
-                {hiddenCount > 0 && (
-                  <button type="button" onClick={manageDrives} className="num h-6 rounded px-1.5 text-2xs text-muted hover:bg-surface-3 hover:text-fg" title="Show hidden drives">
-                    {hiddenCount} hidden
-                  </button>
-                )}
                 <IconButton label="Manage drives" size="xs" onClick={manageDrives} className="text-subtle [&_svg]:size-3.5">
                   <Settings2 />
                 </IconButton>
@@ -346,7 +349,7 @@ export function RootMenuItems({ current, onPick }: { current?: Loc; onPick: (l: 
         </MenuItem>
       )}
       {api.drives.length > 0 && (
-        <MenuItem icon={<Settings2 />} onSelect={api.manageDrives} shortcut={api.hiddenCount ? `${api.hiddenCount} hidden` : undefined}>
+        <MenuItem icon={<Settings2 />} onSelect={api.manageDrives}>
           Manage drives…
         </MenuItem>
       )}
