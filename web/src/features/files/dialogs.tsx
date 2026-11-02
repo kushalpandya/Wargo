@@ -170,7 +170,7 @@ export function DeleteDialog({
       <div className="space-y-3">
         <ul className="num max-h-40 space-y-0.5 overflow-auto rounded-md border border-border bg-surface-2 px-2.5 py-2 text-xs text-muted">
           {paths.slice(0, 50).map((p) => (
-            <li key={p} className="truncate">
+            <li key={p} className="break-all">
               {p}
             </li>
           ))}
@@ -688,7 +688,7 @@ export function ConflictDialog({ state, onResolve }: { state: { count: number; n
     >
       <ul className="num max-h-40 space-y-0.5 overflow-auto text-xs text-muted">
         {state?.names.slice(0, 20).map((n) => (
-          <li key={n} className="truncate">
+          <li key={n} className="break-all">
             {n}
           </li>
         ))}

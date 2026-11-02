@@ -39,9 +39,9 @@ export function Dialog({
         >
           <div className="flex items-start gap-3 border-b border-border px-4 py-3">
             <div className="min-w-0 flex-1">
-              <D.Title className="text-[0.9375rem] font-semibold">{title}</D.Title>
+              <D.Title className="text-[0.9375rem] font-semibold [overflow-wrap:anywhere]">{title}</D.Title>
               {description ? (
-                <D.Description className="mt-0.5 text-sm text-muted">{description}</D.Description>
+                <D.Description className="mt-0.5 text-sm text-muted [overflow-wrap:anywhere]">{description}</D.Description>
               ) : (
                 <D.Description className="sr-only">{typeof title === "string" ? title : "Dialog"}</D.Description>
               )}
