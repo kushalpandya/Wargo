@@ -14,22 +14,22 @@ import (
 )
 
 type Filesystem struct {
-	Device     string  `json:"device"`
-	Mount      string  `json:"mount"`
-	FSType     string  `json:"fstype"`
-	Total      uint64  `json:"total"`
-	Used       uint64  `json:"used"`
-	Free       uint64  `json:"free"`
-	UsedPct    float64 `json:"usedPct"`
-	InodesPct  float64 `json:"inodesPct"`
-	ReadOnly   bool    `json:"readOnly"`
-	Label      string  `json:"label,omitempty"`
-	Partition  string  `json:"partition,omitempty"` // kernel name, e.g. nvme0n1p5
+	Device    string  `json:"device"`
+	Mount     string  `json:"mount"`
+	FSType    string  `json:"fstype"`
+	Total     uint64  `json:"total"`
+	Used      uint64  `json:"used"`
+	Free      uint64  `json:"free"`
+	UsedPct   float64 `json:"usedPct"`
+	InodesPct float64 `json:"inodesPct"`
+	ReadOnly  bool    `json:"readOnly"`
+	Label     string  `json:"label,omitempty"`
+	Partition string  `json:"partition,omitempty"` // kernel name, e.g. nvme0n1p5
 }
 
 type Partition struct {
-	Name   string `json:"name"`
-	Size   uint64 `json:"size"`
+	Name   string   `json:"name"`
+	Size   uint64   `json:"size"`
 	Mounts []string `json:"mounts,omitempty"`
 }
 
