@@ -30,6 +30,11 @@ for the Docker image.)
 - Strict headers on every response: CSP (`default-src 'self'`, no inline
   scripts), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`,
   `Permissions-Policy`, COOP, and HSTS when served over TLS.
+- **Outbound requests** happen only for features you use: the public IP on
+  System → Network (`api.ipify.org`, falling back to `ipv4.icanhazip.com`;
+  looked up while the page is open and cached for 30 minutes), icon
+  downloads from dashboard-icons, container update checks against image
+  registries, launcher health checks and the integrations you configure.
 - The systemd unit deliberately avoids filesystem sandboxing
   (`ProtectSystem`, `PrivateTmp`, …) because those settings would apply to
   every shell opened in the web terminal, and leaves `NoNewPrivileges` off so

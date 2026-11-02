@@ -6,6 +6,7 @@ package metrics
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -96,6 +97,8 @@ type Point struct {
 	DiskW   float64 `json:"dw"`
 	CPUTemp float64 `json:"temp"`
 	Load1   float64 `json:"load"`
+	// Cores is per-core usage, rounded to 0.1 to keep history small.
+	Cores []float64 `json:"cores,omitempty"`
 }
 
 type Collector struct {
@@ -118,6 +121,8 @@ type Collector struct {
 	prevNet  map[string]net.IOCountersStat
 	prevDisk map[string]disk.IOCountersStat
 	prevAt   time.Time
+
+	publicIP publicIP
 }
 
 func NewCollector(hub *events.Hub, interval, history time.Duration) *Collector {
@@ -269,6 +274,12 @@ func (c *Collector) sample(ctx context.Context) {
 	}
 	p := Point{TS: s.TS, CPU: s.CPU.Total, Mem: s.Memory.UsedPct, Swap: swapPct, NetRx: s.NetRx, NetTx: s.NetTx,
 		DiskR: s.DiskR, DiskW: s.DiskW, CPUTemp: s.CPUTemp, Load1: s.CPU.Load[0]}
+	if len(s.CPU.PerCore) > 0 {
+		p.Cores = make([]float64, len(s.CPU.PerCore))
+		for i, v := range s.CPU.PerCore {
+			p.Cores[i] = math.Round(v*10) / 10
+		}
+	}
 
 	c.mu.Lock()
 	c.latest = s
@@ -401,6 +412,10 @@ func (c *Collector) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/system/metrics/history", func(w http.ResponseWriter, r *http.Request) {
 		httpx.OK(w, map[string]any{"interval": c.interval.Milliseconds(), "points": c.History()})
 	})
+	mux.HandleFunc("GET /api/system/public-ip", httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
+		httpx.OK(w, c.publicIP.get(r.Context()))
+		return nil
+	}))
 	mux.HandleFunc("GET /api/system/storage", httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
 		httpx.OK(w, c.Storage(r.Context()))
 		return nil
