@@ -231,7 +231,8 @@ export default function Page() {
 }
 
 /** Process list; `embedded` renders a section heading instead of a page title (System page). */
-export function ProcessesPanel({ embedded }: { embedded?: boolean }) {
+// Memoised: parents re-render on every 1 s metrics tick.
+export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embedded?: boolean }) {
   const qc = useQueryClient();
   const [live, setLive] = useState(true);
   const [q, setQ] = useState("");
@@ -416,7 +417,7 @@ export function ProcessesPanel({ embedded }: { embedded?: boolean }) {
       <ProcessSheet pid={open} onClose={() => setOpen(null)} onOpen={setOpen} list={data} live={live} />
     </div>
   );
-}
+});
 
 function SectionHeader({ title, description, actions }: { title: string; description?: React.ReactNode; actions?: React.ReactNode }) {
   return (

@@ -1,13 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 
 const api = process.env.WARGO_API ?? "http://127.0.0.1:2207";
 
+/** Preloads the main UI font (latin IBM Plex Sans) so text doesn't reflow on first paint. */
+function preloadFont(): Plugin {
+  return {
+    name: "wargo-preload-font",
+    apply: "build",
+    transformIndexHtml(_html, ctx) {
+      const file = Object.keys(ctx.bundle ?? {}).find((f) => /ibm-plex-sans-latin-wght-normal-[\w-]+\.woff2$/.test(f));
+      if (!file) return;
+      return [{ tag: "link", attrs: { rel: "preload", href: `/${file}`, as: "font", type: "font/woff2", crossorigin: "" }, injectTo: "head" }];
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), preloadFont()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   server: {
     proxy: {

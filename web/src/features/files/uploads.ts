@@ -4,7 +4,7 @@
 // so an upload can resume after a network error or a page reload (the user
 // re-selects the same file and it continues where it stopped).
 import { useSyncExternalStore } from "react";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, csrf } from "@/lib/api";
 import { joinPath, type RootId } from "./api";
 
 export type UploadState = "queued" | "uploading" | "paused" | "done" | "error" | "canceled" | "conflict" | "interrupted";
@@ -56,7 +56,9 @@ function persist() {
 function restore() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as Partial<UploadItem>[];
-    items = raw.map((r) => ({ ...(r as UploadItem), root: String(r.root ?? "0"), state: "interrupted", speed: 0 }));
+    items = (Array.isArray(raw) ? raw : [])
+      .filter((r) => r && typeof r.key === "string" && typeof r.name === "string" && typeof r.dir === "string" && typeof r.uploadId === "string" && Number.isFinite(r.size))
+      .map((r) => ({ ...(r as UploadItem), root: String(r.root ?? "0"), received: Number(r.received) || 0, state: "interrupted", speed: 0 }));
   } catch {
     items = [];
   }
@@ -173,7 +175,7 @@ export function cancel(key: string) {
   if (!it) return;
   controllers.get(key)?.abort();
   update(key, { state: "canceled", speed: 0 });
-  if (it.uploadId) api.del(`/api/files/upload/${it.uploadId}`).catch(() => {});
+  if (it.uploadId) api.del(`/api/files/upload/${encodeURIComponent(it.uploadId)}`).catch(() => {});
   window.setTimeout(() => {
     items = items.filter((i) => i.key !== key);
     emit();
@@ -192,11 +194,6 @@ export function resolveConflict(key: string, overwrite: boolean) {
 export function clearFinished() {
   items = items.filter((i) => !["done", "canceled"].includes(i.state));
   emit();
-}
-
-function csrf(): string {
-  const m = document.cookie.match(/(?:^|;\s*)wargo_csrf=([^;]+)/);
-  return m ? decodeURIComponent(m[1]) : "";
 }
 
 async function sha256Hex(buf: ArrayBuffer): Promise<string | null> {
@@ -222,7 +219,7 @@ function putChunk(key: string, id: string, offset: number, body: ArrayBuffer, ha
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     controllers.set(key, xhr);
-    xhr.open("PUT", `/api/files/upload/${id}?offset=${offset}`);
+    xhr.open("PUT", `/api/files/upload/${encodeURIComponent(id)}?offset=${offset}`);
     xhr.setRequestHeader("X-Wargo-CSRF", csrf());
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     if (hash) xhr.setRequestHeader("X-Chunk-Sha256", hash);
@@ -301,7 +298,7 @@ async function run(key: string) {
         update(key, { error: undefined });
       }
     }
-    await api.post(`/api/files/upload/${init.uploadId}/complete`);
+    await api.post(`/api/files/upload/${encodeURIComponent(init.uploadId)}/complete`);
     update(key, { state: "done", received: it.size, speed: 0, file: undefined, error: undefined });
     const done = get(key);
     if (done) doneCallbacks.forEach((cb) => cb(done));

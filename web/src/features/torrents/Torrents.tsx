@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useSearchParams } from "react-router";
 import { Columns2, Download, Search as SearchIcon, Square } from "lucide-react";
 import { useCapabilities } from "@/app/session";
 import { useTopicValue } from "@/lib/ws";
+import { useMedia } from "@/lib/hooks";
 import { PageHeader } from "@/components/ui/misc";
 import { Segmented } from "@/components/ui/form";
 import SearchPage from "./Search";
@@ -14,18 +15,6 @@ type Layout = "tabs" | "split";
 
 const LAYOUT_KEY = "wargo.torrents.layout";
 
-function useWide() {
-  const q = "(min-width: 1280px)";
-  const [wide, setWide] = useState(() => window.matchMedia(q).matches);
-  useEffect(() => {
-    const m = window.matchMedia(q);
-    const on = () => setWide(m.matches);
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
-  }, []);
-  return wide;
-}
-
 /**
  * Search (Prowlarr) and Downloads (Transmission) in one place: side by side
  * on wide screens, tabs elsewhere or when the user prefers.
@@ -33,7 +22,7 @@ function useWide() {
 export default function Torrents() {
   const { data: caps } = useCapabilities();
   const [params, setParams] = useSearchParams();
-  const wide = useWide();
+  const wide = useMedia("(min-width: 1280px)");
   const [layout, setLayoutState] = useState<Layout>(() => (localStorage.getItem(LAYOUT_KEY) === "tabs" ? "tabs" : "split"));
   const setLayout = (l: Layout) => {
     localStorage.setItem(LAYOUT_KEY, l);

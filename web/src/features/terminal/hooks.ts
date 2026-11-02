@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useReducer, useState, useSyncExternalStore } from "react";
+import { useEffect, useReducer, useState } from "react";
 import type { TermSession } from "./session";
 
 /** Re-renders when the session's state, title, modifiers or search results change. */
@@ -13,22 +13,6 @@ export function useSessionState(s: TermSession | undefined) {
     };
   }, [s]);
   return s;
-}
-
-function mediaStore(query: string) {
-  return {
-    subscribe: (l: () => void) => {
-      const m = window.matchMedia(query);
-      m.addEventListener("change", l);
-      return () => m.removeEventListener("change", l);
-    },
-    get: () => window.matchMedia(query).matches,
-  };
-}
-
-export function useMedia(query: string) {
-  const [store] = useState(() => mediaStore(query));
-  return useSyncExternalStore(store.subscribe, store.get);
 }
 
 /** Height of the visual viewport (shrinks when an on-screen keyboard opens). */
@@ -46,21 +30,6 @@ export function useVisualHeight(enabled: boolean) {
     return () => vv.removeEventListener("resize", on);
   }, [enabled]);
   return h;
-}
-
-export function useLocalState<T>(key: string, initial: T) {
-  const [v, setV] = useState<T>(() => {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw == null ? initial : (JSON.parse(raw) as T);
-    } catch {
-      return initial;
-    }
-  });
-  useEffect(() => {
-    localStorage.setItem(key, JSON.stringify(v));
-  }, [key, v]);
-  return [v, setV] as const;
 }
 
 export function useFullscreen(el: HTMLElement | null) {

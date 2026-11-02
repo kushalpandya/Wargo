@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { Link } from "react-router";
 import { ArrowUpCircle, Boxes, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -34,7 +34,8 @@ function versionOf(c: Container): string {
   return tag;
 }
 
-export function ContainersCard() {
+// Memoised: parents re-render on every 1 s metrics tick.
+export const ContainersCard = memo(function ContainersCard() {
   const { data, isLoading, error } = useContainers();
 
   const list = useMemo(() => [...(data ?? [])].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name)), [data]);
@@ -110,4 +111,4 @@ export function ContainersCard() {
       )}
     </Card>
   );
-}
+});

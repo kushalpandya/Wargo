@@ -22,7 +22,7 @@ import {
   Sun,
   X,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { setTheme, useThemeMode, type ThemeMode } from "@/lib/theme";
 import { useSocketStatus } from "@/lib/ws";
@@ -32,6 +32,8 @@ import { UpdatesBadge } from "@/features/updates/UpdatesBadge";
 import { Menu, MenuItem, MenuLabel, MenuSeparator, Tooltip } from "@/components/ui/menu";
 import { IconButton } from "@/components/ui/button";
 import { Badge, Spinner, StatusDot } from "@/components/ui/misc";
+import { toast } from "@/components/ui/toast";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 interface NavItem {
   to: string;
@@ -134,7 +136,15 @@ function UserMenu() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const logout = async () => {
-    await api.post("/api/auth/logout");
+    try {
+      await api.post("/api/auth/logout");
+    } catch (e) {
+      // 401: the session is already gone, which is what we wanted.
+      if (!(e instanceof ApiError && e.status === 401)) {
+        toast.error("Sign out failed", e);
+        return;
+      }
+    }
     qc.clear();
     nav("/login", { replace: true });
   };
@@ -303,15 +313,18 @@ export function Layout() {
           </div>
         </header>
         <main id="main" className="min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-5 lg:px-6">
-          <Suspense
-            fallback={
-              <div className="flex h-40 items-center justify-center text-muted">
-                <Spinner />
-              </div>
-            }
-          >
-            <Outlet />
-          </Suspense>
+          {/* Per-route boundary: a crashing page keeps the shell usable. */}
+          <ErrorBoundary resetKey={loc.pathname}>
+            <Suspense
+              fallback={
+                <div className="flex h-40 items-center justify-center text-muted">
+                  <Spinner />
+                </div>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
     </div>

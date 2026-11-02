@@ -26,6 +26,7 @@ import {
   Layers,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { copyText } from "@/lib/clipboard";
 import { useIsDark } from "@/lib/theme";
 import { useCapabilities } from "@/app/session";
 import { Button, IconButton } from "@/components/ui/button";
@@ -35,7 +36,8 @@ import { EmptyState, Kbd, Spinner, StatusDot, type Tone } from "@/components/ui/
 import { toast } from "@/components/ui/toast";
 import { createSession, deleteSession, listSessions, TermSession, type ConnState, type TermInfo, type TermKind } from "./session";
 import { searchDecorations, terminalTheme } from "./theme";
-import { useFullscreen, useLocalState, useMedia, useSessionState, useVisualHeight } from "./hooks";
+import { useLocalState, useMedia } from "@/lib/hooks";
+import { useFullscreen, useSessionState, useVisualHeight } from "./hooks";
 import { ExtraKeys } from "./ExtraKeys";
 import { ContainerPicker, PasteDialog, RenameDialog } from "./dialogs";
 
@@ -68,24 +70,6 @@ const stateMeta: Record<ConnState, { tone: Tone; label: string }> = {
   takeover: { tone: "neutral", label: "Open elsewhere" },
   gone: { tone: "crit", label: "Session ended" },
 };
-
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    ta.remove();
-    return ok;
-  }
-}
 
 export default function TerminalPage() {
   const { data: caps } = useCapabilities();

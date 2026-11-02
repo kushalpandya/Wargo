@@ -42,6 +42,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { bytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { copyWithToast } from "@/lib/clipboard";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/form";
@@ -263,11 +264,7 @@ export function Pane(props: PaneProps) {
       if (!(e instanceof ApiError && e.code === "elevation_canceled")) toast.error(kind === "copy" ? "Copy failed" : "Move failed", e);
     });
 
-  const copyPath = (p: string) =>
-    navigator.clipboard?.writeText(p).then(
-      () => toast.ok("Path copied"),
-      () => toast.error("Clipboard unavailable"),
-    );
+  const copyPath = (p: string) => void copyWithToast(p, "Path copied");
 
   // ---- actions ----
   const folderGroups = (): ActionGroups => [

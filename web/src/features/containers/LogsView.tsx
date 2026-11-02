@@ -2,6 +2,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownToLine, Download, Eraser, WrapText } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { downloadText } from "@/lib/download";
 import { Button, IconButton } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/form";
 import { StatusDot } from "@/components/ui/misc";
@@ -112,12 +113,7 @@ export function LogsView({ id, name, className }: { id: string; name: string; cl
 
   const download = () => {
     const text = lines.map((l) => `${l.ts ? l.ts + " " : ""}${l.stream === "err" ? "[err] " : ""}${l.text}`).join("\n");
-    const url = URL.createObjectURL(new Blob([text + "\n"], { type: "text/plain" }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${name}-${new Date().toISOString().slice(0, 19).replace(/:/g, "")}.log`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadText(text + "\n", `${name}-${new Date().toISOString().slice(0, 19).replace(/:/g, "")}.log`);
   };
 
   const tone = state === "live" ? "ok" : state === "connecting" ? "warn" : state === "error" ? "crit" : "neutral";

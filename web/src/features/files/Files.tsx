@@ -9,6 +9,7 @@ import { useLocation, useNavigate } from "react-router";
 import { HardDrive } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { useMedia } from "@/lib/hooks";
 import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
@@ -25,17 +26,6 @@ import type { Sort } from "./Listing";
 const MAX_PANES = 4;
 const LAYOUT_KEY = "wargo.files.layout";
 const MIN_SHARE = 0.15;
-
-function useMedia(q: string) {
-  const [m, setM] = useState(() => window.matchMedia(q).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(q);
-    const h = () => setM(mq.matches);
-    mq.addEventListener("change", h);
-    return () => mq.removeEventListener("change", h);
-  }, [q]);
-  return m;
-}
 
 let keySeq = 0;
 const newKey = () => `pane${++keySeq}`;
@@ -59,8 +49,12 @@ interface SavedLayout {
 function loadLayout(): SavedLayout | null {
   try {
     const v = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "null") as SavedLayout | null;
-    if (!v || !Array.isArray(v.panes) || !v.panes.length) return null;
-    return { panes: v.panes.slice(0, MAX_PANES), weights: Array.isArray(v.weights) ? v.weights : [] };
+    if (!v || !Array.isArray(v.panes)) return null;
+    // localStorage can hold anything (older versions, manual edits): keep only well-formed entries.
+    const panes = v.panes.filter((l) => l && typeof l.root === "string" && typeof l.path === "string").slice(0, MAX_PANES);
+    if (!panes.length) return null;
+    const weights = Array.isArray(v.weights) && v.weights.length === panes.length && v.weights.every((x) => Number.isFinite(x) && x > 0) ? v.weights : [];
+    return { panes, weights };
   } catch {
     return null;
   }

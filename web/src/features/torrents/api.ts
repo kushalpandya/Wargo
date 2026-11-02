@@ -158,15 +158,3 @@ export function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
 }
-
-/** Copies text to the clipboard. Returns false when the async Clipboard API
- * is unavailable (insecure context) or denied. */
-export async function copyText(text: string): Promise<boolean> {
-  if (!window.isSecureContext || !navigator.clipboard?.writeText) return false;
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}

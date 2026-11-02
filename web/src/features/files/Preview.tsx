@@ -300,6 +300,9 @@ export function Preview({
                     </div>
                   </Centered>
                 )}
+                {/* No sandbox attribute: Chrome's PDF viewer refuses to run in a sandboxed frame. The
+                    server serves inline files with nosniff and a script-less CSP, and only as
+                    application/pdf for .pdf names, so the frame can't run page script. */}
                 {kind === "pdf" && <iframe key={src} src={src} title={entry.name} className="h-full w-full rounded border border-border bg-white" />}
                 {showText && <TextView key={path} root={root} path={path} name={entry.name} editorRef={editorRef} onState={onState} wrap={wrap} />}
                 {kind === "archive" && (

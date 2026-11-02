@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Popover } from "radix-ui";
-import { Link } from "react-router";
 import { Check, ChevronDown } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -10,7 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/form";
 import { Tooltip } from "@/components/ui/menu";
 import { toast } from "@/components/ui/toast";
-import { copyText, errorMessage, type IndexerRef } from "./api";
+import { copyText } from "@/lib/clipboard";
+import { downloadBlob } from "@/lib/download";
+import { errorMessage, type IndexerRef } from "./api";
 
 /** Readonly, pre-selected magnet for manual copying on insecure origins. */
 export function MagnetDialog({ magnet, title, onClose }: { magnet: string | null; title?: string; onClose: () => void }) {
@@ -114,14 +115,7 @@ export function useResultActions(refresh?: () => Promise<unknown>) {
         const blob = await res.blob();
         const cd = res.headers.get("Content-Disposition") ?? "";
         const name = /filename="([^"]+)"/.exec(cd)?.[1] ?? "download.torrent";
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        downloadBlob(blob, name);
       } catch (e) {
         if (e instanceof ApiError && e.code === "magnet_only") {
           setMagnetOnly((m) => ({ ...m, [id]: true }));
@@ -207,18 +201,5 @@ export function IndexerPicker({ indexers, value, onChange }: { indexers: Indexer
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
-  );
-}
-
-/** Router link styled as a small secondary button. */
-export function LinkButton({ to, icon, children }: { to: string; icon?: ReactNode; children: ReactNode }) {
-  return (
-    <Link
-      to={to}
-      className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 text-[0.8125rem] text-fg transition-colors hover:border-border-strong hover:bg-surface-3 max-md:h-8 [&_svg]:size-[1.1em]"
-    >
-      {icon}
-      {children}
-    </Link>
   );
 }

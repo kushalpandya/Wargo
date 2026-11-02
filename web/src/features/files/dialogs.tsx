@@ -5,6 +5,7 @@ import { ChevronRight, Copy, CornerLeftUp, Folder, FolderOpen, HardDrive, Trash2
 import { api, ApiError, qs } from "@/lib/api";
 import { bytes, datetime } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { copyWithToast } from "@/lib/clipboard";
 import { Dialog, Sheet } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox, FormField, Input, Segmented, Switch } from "@/components/ui/form";
@@ -718,11 +719,7 @@ export function PropertiesSheet({ open, onOpenChange, root, rootInfo, dir, entry
     retry: false,
   });
   const full = absPath(rootInfo, p);
-  const copy = (s: string) =>
-    navigator.clipboard?.writeText(s).then(
-      () => toast.ok("Copied to clipboard"),
-      () => toast.error("Clipboard unavailable"),
-    );
+  const copy = (s: string) => void copyWithToast(s);
   const rows = useMemo(() => entry, [entry]);
   if (!rows) return null;
   const e = rows;

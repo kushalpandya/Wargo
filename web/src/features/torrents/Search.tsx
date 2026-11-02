@@ -6,6 +6,7 @@ import { AlertTriangle, Download, ExternalLink, Magnet, Search as SearchIcon, Se
 import { api, qs } from "@/lib/api";
 import { ago, bytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { safeHttpUrl } from "@/lib/url";
 import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
@@ -376,15 +377,17 @@ function torrentReason(r: SearchResult, magnetOnly?: boolean) {
 }
 
 function Title({ r }: { r: SearchResult }) {
+  // Indexer-supplied: only ever link to http(s) pages.
+  const info = safeHttpUrl(r.infoUrl);
   const cats = r.categories.filter((c) => !c.name.includes("/")).slice(0, 2);
   const sub = r.categories.find((c) => c.name.includes("/"));
   return (
     <div className="min-w-0">
       <div className="break-words font-medium leading-snug [overflow-wrap:anywhere]">
         {r.title}
-        {r.infoUrl && (
+        {info && (
           <a
-            href={r.infoUrl}
+            href={info}
             target="_blank"
             rel="noopener noreferrer"
             className="-my-2 ml-0.5 inline-flex size-6 items-center justify-center rounded align-middle text-subtle hover:text-frost @max-3xl:size-8"

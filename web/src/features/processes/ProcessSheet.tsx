@@ -6,6 +6,7 @@ import { Boxes, ChevronDown, Copy, OctagonX, Square } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { bytes, datetime, duration, num } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { copyWithToast } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Sheet } from "@/components/ui/dialog";
 import { Menu, MenuItem, MenuLabel } from "@/components/ui/menu";
@@ -159,7 +160,7 @@ export function ProcessSheet({
                     type="button"
                     aria-label="Copy command"
                     title="Copy command"
-                    onClick={() => navigator.clipboard?.writeText(d.cmdline).then(() => toast.ok("Copied"))}
+                    onClick={() => void copyWithToast(d.cmdline, "Command copied")}
                     className="absolute right-1 top-1 inline-flex size-8 items-center justify-center rounded text-subtle hover:bg-surface-3 hover:text-fg"
                   >
                     <Copy className="size-3.5" />

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { memo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { HardDrive, Thermometer } from "lucide-react";
 import { api } from "@/lib/api";
@@ -51,7 +52,8 @@ function driveKind(d: Drive) {
   return d.rotational ? "HDD" : "SATA SSD";
 }
 
-export function StorageCard() {
+// Memoised: parents re-render on every 1 s metrics tick.
+export const StorageCard = memo(function StorageCard() {
   const { data, isLoading } = useStorage();
   const fsByPart = new Map((data?.filesystems ?? []).map((f) => [f.partition, f]));
 
@@ -127,4 +129,4 @@ export function StorageCard() {
       </ul>
     </Card>
   );
-}
+});
