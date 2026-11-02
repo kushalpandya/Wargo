@@ -4,8 +4,7 @@ import { Link } from "react-router";
 import { Check, LayoutGrid, Pencil, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState, ErrorNote, PageHeader, Skeleton } from "@/components/ui/misc";
-import { TileGrid } from "./Tiles";
-import { LauncherDisabledNotice, TileEditor } from "./TileEditor";
+import { LauncherDisabledNotice, LauncherGrid, TileEditor } from "./TileEditor";
 import { useLauncherSettings, useTiles } from "./api";
 
 export default function Apps() {
@@ -67,7 +66,7 @@ export default function Apps() {
           </EmptyState>
         </div>
       ) : (
-        <TileGrid tiles={visible} />
+        <LauncherGrid tiles={visible} />
       )}
     </>
   );

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { TileGrid } from "@/features/launcher/Tiles";
+import { LauncherGrid } from "@/features/launcher/TileEditor";
 import { useTiles } from "@/features/launcher/api";
 
 export function LauncherStrip() {
@@ -8,7 +8,7 @@ export function LauncherStrip() {
   if (!tiles.length) return null;
   return (
     <div className="mb-4">
-      <TileGrid tiles={tiles} compact />
+      <LauncherGrid tiles={tiles} compact />
     </div>
   );
 }

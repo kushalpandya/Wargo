@@ -10,7 +10,7 @@ import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { Checkbox, FormField, Input, Switch } from "@/components/ui/form";
 import { Badge, EmptyState, ErrorNote, Notice, Skeleton, Spinner, StatusDot } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { TileIcon, type Tile } from "./Tiles";
+import { TileGrid, TileIcon, type Tile } from "./Tiles";
 import { fetchIcon, slugify, tilesKey, uploadIcon, useTiles, type Suggestion, type TileInput } from "./api";
 
 const emptyInput: TileInput = { name: "", url: "", icon: "", group: "", newTab: true, healthUrl: "", enabled: true };
@@ -522,6 +522,71 @@ export function TileEditor({ className }: { className?: string }) {
         {del.error && <ErrorNote error={del.error} />}
       </ConfirmDialog>
     </div>
+  );
+}
+
+/**
+ * The launcher grid with edit, delete and drag-to-reorder. The order is
+ * saved on the server (shared by every browser), never in localStorage.
+ */
+export function LauncherGrid({ tiles, compact }: { tiles: Tile[]; compact?: boolean }) {
+  const qc = useQueryClient();
+  const { data: all } = useTiles();
+  const [editing, setEditing] = useState<Tile | null>(null);
+  const [deleting, setDeleting] = useState<Tile | null>(null);
+  const groups = useMemo(() => [...new Set((all ?? []).map((t) => t.group).filter(Boolean) as string[])].sort(), [all]);
+
+  const reorder = useMutation({
+    mutationFn: (ids: string[]) => api.post("/api/launcher/tiles/reorder", { ids }),
+    onMutate: async (ids) => {
+      await qc.cancelQueries({ queryKey: tilesKey });
+      const prev = qc.getQueryData<Tile[]>(tilesKey);
+      const pos = new Map(ids.map((id, i) => [id, i]));
+      qc.setQueryData<Tile[]>(tilesKey, (cur) => cur?.map((t) => ({ ...t, sort: pos.get(t.id) ?? t.sort })));
+      return { prev };
+    },
+    onError: (e, _ids, ctx) => {
+      if (ctx?.prev) qc.setQueryData(tilesKey, ctx.prev);
+      toast.error("Could not save order", e);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: tilesKey }),
+  });
+  const del = useMutation({
+    mutationFn: (t: Tile) => api.del(`/api/launcher/tiles/${t.id}`),
+    onSuccess: (_, t) => {
+      toast.ok(`Removed ${t.name}`);
+      setDeleting(null);
+      qc.invalidateQueries({ queryKey: tilesKey });
+    },
+  });
+
+  // The grid may show only some tiles (hidden ones are left out), but the
+  // server numbers exactly the ids it gets: keep hidden tiles in their
+  // slots and fill the shown tiles' slots in the new order.
+  const onReorder = (shown: Tile[]) => {
+    const full = [...(all ?? tiles)].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+    const ids = new Set(shown.map((t) => t.id));
+    const queue = shown.map((t) => t.id);
+    reorder.mutate(full.map((t) => (ids.has(t.id) ? queue.shift()! : t.id)));
+  };
+
+  return (
+    <>
+      <TileGrid tiles={tiles} compact={compact} edit={{ onEdit: setEditing, onDelete: setDeleting, onReorder }} />
+      <TileDialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)} tile={editing} groups={groups} />
+      <ConfirmDialog
+        open={!!deleting}
+        onOpenChange={(o) => !o && setDeleting(null)}
+        title={`Delete ${deleting?.name ?? "app"}?`}
+        description="The tile is removed from the launcher. The app itself is not affected."
+        confirmLabel="Delete"
+        danger
+        loading={del.isPending}
+        onConfirm={() => deleting && del.mutate(deleting)}
+      >
+        {del.error && <ErrorNote error={del.error} />}
+      </ConfirmDialog>
+    </>
   );
 }
 
