@@ -380,7 +380,8 @@ func TestCheckTrustedFile(t *testing.T) {
 // TestSocketPeerUID runs the server on a real unix socket under a temp dir.
 func TestSocketPeerUID(t *testing.T) {
 	f := newFixture(t)
-	dir, err := os.MkdirTemp("/tmp/opencode", "privd-test-")
+	// A short path keeps the socket under the 108-byte sun_path limit.
+	dir, err := os.MkdirTemp("", "privd-")
 	if err != nil {
 		dir = t.TempDir()
 	} else {
