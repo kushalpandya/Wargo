@@ -44,9 +44,9 @@ export default function Apps() {
       {edit ? (
         <TileEditor />
       ) : isLoading ? (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] sm:gap-3">
           {Array.from({ length: 8 }, (_, i) => (
-            <Skeleton key={i} className="h-[3.75rem] rounded-lg" />
+            <Skeleton key={i} className="aspect-square rounded-xl" />
           ))}
         </div>
       ) : error ? (

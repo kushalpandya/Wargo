@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
-import { ArrowLeft, ArrowRight, EllipsisVertical, ExternalLink, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, EllipsisVertical, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { safeHttpUrl } from "@/lib/url";
 import { StatusDot } from "@/components/ui/misc";
@@ -20,12 +20,23 @@ export interface Tile {
   status?: "up" | "down" | null;
 }
 
-export function TileIcon({ tile, className }: { tile: Pick<Tile, "name" | "icon">; className?: string }) {
+export function TileIcon({ tile, className, large }: { tile: Pick<Tile, "name" | "icon">; className?: string; large?: boolean }) {
   if (tile.icon) {
-    return <img src={`/api/launcher/icons/${encodeURIComponent(tile.icon)}`} alt="" draggable={false} className={cn("size-8 rounded-md object-contain", className)} loading="lazy" />;
+    return (
+      <img
+        src={`/api/launcher/icons/${encodeURIComponent(tile.icon)}`}
+        alt=""
+        draggable={false}
+        className={cn(large ? "size-12 rounded-lg" : "size-8 rounded-md", "object-contain", className)}
+        loading="lazy"
+      />
+    );
   }
   return (
-    <span className={cn("flex size-8 items-center justify-center rounded-md bg-accent-soft text-sm font-semibold text-accent", className)} aria-hidden="true">
+    <span
+      className={cn("flex items-center justify-center bg-accent-soft font-semibold text-accent", large ? "size-12 rounded-lg text-xl" : "size-8 rounded-md text-sm", className)}
+      aria-hidden="true"
+    >
       {tile.name.slice(0, 1).toUpperCase()}
     </span>
   );
@@ -40,6 +51,7 @@ export interface TileGridEdit {
 
 const sortTiles = (tiles: Tile[]) => [...tiles].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
 
+/** Square app tiles. `compact` (Home) leaves out group headings. */
 export function TileGrid({ tiles, compact, edit }: { tiles: Tile[]; compact?: boolean; edit?: TileGridEdit }) {
   const [preview, setPreview] = useState<Tile[] | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -82,7 +94,10 @@ export function TileGrid({ tiles, compact, edit }: { tiles: Tile[]; compact?: bo
       {[...groups.entries()].map(([g, list]) => (
         <section key={g || "_"} aria-label={g || "Apps"}>
           {g && <h2 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-subtle">{g}</h2>}
-          <div className={cn("grid gap-2", compact ? "grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 2xl:grid-cols-8" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5")}>
+          <div
+            // Square tiles that keep their size as the screen widens.
+            className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] sm:gap-3"
+          >
             {list.map((t, i) => (
               <div
                 key={t.id}
@@ -117,22 +132,23 @@ export function TileGrid({ tiles, compact, edit }: { tiles: Tile[]; compact?: bo
                   rel="noopener noreferrer"
                   draggable={false}
                   className={cn(
-                    "flex min-w-0 items-center gap-2.5 rounded-lg border border-border bg-surface px-3 py-2.5 transition-colors hover:border-border-strong hover:bg-surface-2",
-                    edit && "cursor-grab pr-9 active:cursor-grabbing",
+                    "relative flex aspect-square min-w-0 flex-col items-center justify-center gap-2 rounded-xl border border-border bg-surface px-2 pb-2 pt-3 text-center transition-colors hover:border-border-strong hover:bg-surface-2 sm:gap-2.5 sm:px-2.5 sm:pb-2.5 sm:pt-4",
+                    edit && "cursor-grab active:cursor-grabbing",
                   )}
                 >
-                  <TileIcon tile={t} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate text-[0.8125rem] font-medium">{t.name}</span>
-                      {t.status && <StatusDot tone={t.status === "up" ? "ok" : "crit"} label={t.status === "up" ? "Online" : "Offline"} />}
-                    </div>
+                  {t.status && (
+                    <span className="absolute left-2.5 top-2.5">
+                      <StatusDot tone={t.status === "up" ? "ok" : "crit"} label={t.status === "up" ? "Online" : "Offline"} />
+                    </span>
+                  )}
+                  <TileIcon tile={t} large />
+                  <div className="w-full min-w-0">
+                    <div className="truncate text-[0.8125rem] font-medium">{t.name}</div>
                     <div className="num truncate text-2xs text-muted">{t.url.replace(/^https?:\/\//, "")}</div>
                   </div>
-                  {t.newTab && !edit && <ExternalLink className="size-3.5 shrink-0 text-subtle opacity-0 transition-opacity group-hover:opacity-100" />}
                 </a>
                 {edit && (
-                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+                  <div className="absolute right-1.5 top-1.5">
                     <Menu
                       trigger={
                         <button
