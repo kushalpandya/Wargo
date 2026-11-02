@@ -61,6 +61,9 @@ export function TileDialog({
     mutationFn: (body: TileInput) => (tile ? api.put<Tile>(`/api/launcher/tiles/${tile.id}`, body) : api.post<Tile>("/api/launcher/tiles", body)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: tilesKey });
+      // The first app turns the launcher on (see the launcher service).
+      qc.invalidateQueries({ queryKey: ["capabilities"] });
+      qc.invalidateQueries({ queryKey: ["launcher", "settings"] });
       toast.ok(tile ? "App updated" : "App added");
       onOpenChange(false);
     },
@@ -256,6 +259,9 @@ export function SuggestDialog({ open, onOpenChange }: { open: boolean; onOpenCha
     onSettled: () => {
       setProgress(null);
       qc.invalidateQueries({ queryKey: tilesKey });
+      // The first app turns the launcher on (see the launcher service).
+      qc.invalidateQueries({ queryKey: ["capabilities"] });
+      qc.invalidateQueries({ queryKey: ["launcher", "settings"] });
     },
   });
 

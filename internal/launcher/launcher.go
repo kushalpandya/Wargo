@@ -257,6 +257,14 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	// Adding the first app to a launcher that was never configured turns
+	// it on (shown on Home); explicit choices, including "hidden", stay.
+	if n == 0 {
+		var cur Settings
+		if ok, _ := s.st.Get(r.Context(), settingsKey, &cur); !ok {
+			s.st.Set(r.Context(), settingsKey, Settings{Enabled: true, Placement: "overview"})
+		}
+	}
 	if t.HealthURL != "" {
 		s.health.kick()
 	}

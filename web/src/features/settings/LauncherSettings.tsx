@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { LayoutGrid } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { Segmented, Switch } from "@/components/ui/form";
+import { Segmented } from "@/components/ui/form";
 import { ErrorNote, Skeleton } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
 import { TileEditor } from "@/features/launcher/TileEditor";
@@ -23,39 +23,34 @@ export default function LauncherSettings() {
       <div className="flex flex-col gap-4">
         <Card>
           <CardHeader title="Display" icon={<LayoutGrid />} />
-          <CardBody className="divide-y divide-border">
+          <CardBody>
             {isLoading ? (
               <Skeleton className="h-16" />
             ) : error ? (
               <ErrorNote error={error} />
             ) : (
               v && (
-                <>
-                  <div className="pb-3">
-                    <Switch
-                      checked={v.enabled}
-                      onCheckedChange={(enabled) => update({ enabled })}
-                      label="Enable app launcher"
-                      description="Health checks run every minute while the launcher is enabled."
-                    />
-                  </div>
-                  <SettingRow
-                    title="Placement"
-                    description={
-                      v.placement === "page" ? "Apps get their own page in the sidebar." : "Apps are shown as a strip at the top of the Overview."
-                    }
-                  >
-                    <Segmented
-                      label="Launcher placement"
-                      value={v.placement}
-                      onChange={(placement) => update({ placement })}
-                      options={[
-                        { value: "overview", label: "Overview strip" },
-                        { value: "page", label: "Apps page" },
-                      ]}
-                    />
-                  </SettingRow>
-                </>
+                <SettingRow
+                  title="Show apps"
+                  description={
+                    !v.enabled
+                      ? "Apps are hidden and their online checks are paused."
+                      : v.placement === "page"
+                        ? "Apps get their own page in the sidebar. Online checks run every minute."
+                        : "Apps are shown at the top of Home. Online checks run every minute."
+                  }
+                >
+                  <Segmented
+                    label="Where to show apps"
+                    value={!v.enabled ? "off" : v.placement === "page" ? "page" : "overview"}
+                    onChange={(choice) => update(choice === "off" ? { enabled: false } : { enabled: true, placement: choice })}
+                    options={[
+                      { value: "overview", label: "On Home" },
+                      { value: "page", label: "Apps page" },
+                      { value: "off", label: "Hidden" },
+                    ]}
+                  />
+                </SettingRow>
               )
             )}
           </CardBody>

@@ -360,3 +360,25 @@ func TestSuggestFakeDocker(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
+
+func TestFirstTileEnablesLauncher(t *testing.T) {
+	s, mux := newTestService(t)
+	ctx := context.Background()
+	if s.settings(ctx).Enabled {
+		t.Fatal("launcher should start off")
+	}
+	if w := do(t, mux, "POST", "/api/launcher/tiles", map[string]any{"name": "Plex", "url": "http://nas:32400", "enabled": true}); w.Code != 200 {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	if v := s.settings(ctx); !v.Enabled || v.Placement != "overview" {
+		t.Fatalf("first tile should show the launcher on Home: %+v", v)
+	}
+
+	// An explicit "hidden" choice survives adding more apps.
+	s2, mux2 := newTestService(t)
+	do(t, mux2, "PUT", "/api/launcher", map[string]any{"enabled": false, "placement": "overview"})
+	do(t, mux2, "POST", "/api/launcher/tiles", map[string]any{"name": "Plex", "url": "http://nas:32400", "enabled": true})
+	if s2.settings(ctx).Enabled {
+		t.Fatal("explicit hidden choice was overridden")
+	}
+}
