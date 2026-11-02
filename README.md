@@ -50,6 +50,13 @@ sudo systemctl enable --now wargo@$USER
 # open http://127.0.0.1:2207
 ```
 
+Or run the container image (privileged, host namespaces — read
+[docs/DOCKER.md](docs/DOCKER.md) first):
+
+```sh
+WARGO_USER=$USER docker compose -f deploy/docker/compose.yaml up -d
+```
+
 ## Stack
 
 Go (stdlib `net/http`, gopsutil, creack/pty, `os.Root`, SQLite, PAM,

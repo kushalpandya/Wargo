@@ -10,6 +10,9 @@ in public issues.
 
 ## Process and network
 
+(This describes the native install; see [Container mode](#container-mode)
+for the Docker image.)
+
 - Runs as the **admin user it authenticates**, not as root and not as a
   dedicated service account. PAM (`pam_unix`) can only verify the password of
   the account the process runs as, and running as that user gives the
@@ -88,6 +91,55 @@ chunked and resumable (so they fit Cloudflare's 100 MB body limit), archive
 extraction is size- and count-limited, inline previews are served with
 `Content-Security-Policy: sandbox`, and HTML/SVG is never rendered as active
 content.
+
+## Container mode
+
+When Wargo runs from the Docker image ([DOCKER.md](DOCKER.md)), set up with
+`WARGO_HOST_ROOT`, the process model differs from the native one:
+
+- **Wargo is root** inside a privileged container that shares the host's
+  PID, network and UTS namespaces and mounts the host's `/`. There is no
+  privilege boundary between Wargo and the host: a compromise of the Wargo
+  process is a root compromise of the host. "No standing root" does not
+  apply; what remains is the *application-level* approval model below and
+  the same sign-in, session, CSRF, header and audit protections as natively.
+- **Startup self-check.** Wargo refuses to start unless it is root, the host
+  root is mounted, it shares the host PID namespace (compares
+  `/proc/self/ns/pid` with the host PID 1's) and `nsenter` into the host
+  namespaces works.
+- **Sign-in.** The container's PAM can't see host accounts, so the password
+  is verified against the host's `/etc/shadow` with libxcrypt `crypt_r`
+  (yescrypt, sha512crypt, bcrypt, …) and a constant-time comparison. Locked
+  (`!`/`*`), password-less and expired accounts (shadow expiry date) are
+  rejected; password ageing is not. The same throttling, uniform timing,
+  TOTP, passkeys and recovery codes apply. Only a member of the admin group
+  can sign in, and never `root`. The admin account defaults to the first
+  regular (`uid >= 1000`) member of `wheel`/`sudo`/`admin` and is logged.
+- **Acting as the user.** File-manager requests and file jobs switch the
+  thread's filesystem identity (fsuid, fsgid, supplementary groups) to the
+  admin account with raw per-thread syscalls on a locked OS thread, verify
+  the switch, and restore it afterwards; a thread whose identity can't be
+  restored is never reused (it is destroyed with its goroutine). Permission
+  semantics therefore match a native install. Update checks, `docker
+  compose` and container shells run on the host as the user via `nsenter` +
+  `setpriv` (or `su`); host and root terminals use `su -l <user>` and the
+  host's own `sudo -i`, which asks for the password in the terminal.
+- **Administrator approval.** sudo can't run inside the container. Each
+  privileged action (signalling another user's process, editing files you
+  can't write, package refresh/upgrade, reboot, compose updates) still needs
+  approval per request: either the admin account's password (sent once in
+  the `X-Wargo-Elevation` header, verified against the host's shadow file,
+  throttled, never stored) or a passkey step-up bound to the action and
+  target. The action then runs in-process — the same strictly validated
+  `wargo helper` operations — or on the host via `nsenter`. Every approval is
+  audited with its method (`password` / `passkey`). wargo-privd is not used:
+  its guarantee (a compromised web process can't get root) can't hold when
+  the process already is root.
+- **Self protection.** Wargo identifies its own container and asks for
+  explicit confirmation before stopping or restarting it, and refuses to
+  recreate (update) it; it never signals its own process or its init.
+- **Network.** The default listen address stays `127.0.0.1:2207` (host
+  network). Only set `WARGO_LISTEN=0.0.0.0:2207` behind TLS.
 
 ## Integrations
 

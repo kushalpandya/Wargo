@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Wargo in container mode. Read docs/DOCKER.md first: this container is
+# deliberately NOT isolated from the host — Wargo needs the host's processes,
+# filesystem, network and Docker to do its job, so it is equivalent to root
+# on the host. Expose it only behind TLS (reverse proxy / tunnel).
+services:
+  wargo:
+    image: ghcr.io/kushalpandya/wargo:latest
+    container_name: wargo
+    restart: unless-stopped
+    privileged: true          # nsenter into the host namespaces, identity switching
+    pid: host                 # see and signal host processes
+    network_mode: host        # host interfaces and ports
+    uts: host                 # host hostname
+    volumes:
+      - /:/host               # the host filesystem (files, metrics, /etc/shadow for sign-in)
+      - /var/run/docker.sock:/var/run/docker.sock
+      - wargo-data:/data      # database, keys, upload staging (and config.toml if you add one)
+    environment:
+      WARGO_HOST_ROOT: /host
+      # Host admin account to sign in as. Default: the first member of
+      # wheel/sudo/admin with uid >= 1000.
+      WARGO_USER: ${WARGO_USER:-}
+      # Defaults to 127.0.0.1:2207 (reverse proxy on the same host).
+      # For LAN access set 0.0.0.0:2207 — and put TLS in front of it.
+      # WARGO_LISTEN: 0.0.0.0:2207
+      # Public URLs for WebSockets and passkeys (comma-separated):
+      # WARGO_ORIGINS: https://wargo.example.com
+      # Reverse proxies whose X-Forwarded-For is trusted:
+      # WARGO_TRUSTED_PROXIES: 127.0.0.1/32
+      # File manager places (default: your home folder, plus /DATA if present):
+      # WARGO_FILES_ROOTS: Home=/home/you,Media=/mnt/Store
+volumes:
+  wargo-data:

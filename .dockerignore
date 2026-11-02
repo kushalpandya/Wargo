@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+.git
+.github
+bin
+/wargo
+/data
+*.local.toml
+.env
+web/node_modules
+web/dist
+web/.vite
+web/*.tsbuildinfo
+web/playwright-report
+web/test-results
+**/*.test

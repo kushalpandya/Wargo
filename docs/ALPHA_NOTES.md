@@ -35,6 +35,7 @@ needs `/etc/pam.d/wargo` (from `deploy/pam/wargo`).
 | Admin approval via sudo | Done | Prompt flow verified; no sudo ever executed |
 | wargo-privd (passkey-approved root actions) | Done | Ran as normal user on a temp socket; root path not exercised |
 | Packaging (install.sh, nfpm, AUR, CI) | Drafted | Not run |
+| Container mode (Docker image, compose, ghcr CI) | Done | Unit tests with a fake host root; image built and run unprivileged (self-check). Privileged run (nsenter, setfsuid, shadow sign-in on a real host) **not** exercised |
 
 Every page passes `web/scripts/audit.mjs` (no horizontal overflow, touch
 targets ≥ 24px on phones, axe-core WCAG 2.1 AA) at desktop, tablet and phone

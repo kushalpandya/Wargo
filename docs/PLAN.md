@@ -21,7 +21,8 @@ License: **AGPL-3.0-only** · Default listen: **`127.0.0.1:2207`**
 
 **Non-goals (v1)**
 - Multi-user / RBAC (single admin = the host user).
-- Running Wargo itself inside a container (native install only).
+- ~~Running Wargo itself inside a container~~ — now supported as "container mode"
+  (privileged, host namespaces; see DOCKER.md).
 - Installing AUR packages (listed read-only).
 - Windows/macOS hosts.
 
