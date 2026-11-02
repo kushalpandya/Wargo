@@ -10,13 +10,13 @@ import (
 
 func TestClean(t *testing.T) {
 	for in, want := range map[string]string{
-		"":              ".",
-		"/":             ".",
-		"a/b/../c":      "a/c",
-		"../../etc":     "etc",
-		"/abs/path":     "abs/path",
-		`win\style\p`:   "win/style/p",
-		"./x/./y/":      "x/y",
+		"":            ".",
+		"/":           ".",
+		"a/b/../c":    "a/c",
+		"../../etc":   "etc",
+		"/abs/path":   "abs/path",
+		`win\style\p`: "win/style/p",
+		"./x/./y/":    "x/y",
 	} {
 		if got := Clean(in); got != want {
 			t.Errorf("Clean(%q) = %q, want %q", in, got, want)

@@ -6,13 +6,17 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 // Duration wraps time.Duration so it can be written as "30m" in TOML.
@@ -121,21 +125,45 @@ func Default() Config {
 		Metrics: Metrics{Interval: Duration{time.Second}, History: Duration{10 * time.Minute}},
 		Files:   Files{MaxEditSize: 4 << 20, ShowMounts: true},
 	}
-	if u, err := user.Current(); err == nil {
+	if host.Container() {
+		// The process runs as root in the container; the admin account is
+		// a host user (WARGO_USER, or the first regular wheel/sudo member).
+		if name := strings.TrimSpace(os.Getenv("WARGO_USER")); name != "" {
+			if u, err := host.LookupUser(name); err == nil {
+				c.Auth.User = u.Name
+				c.Files.Roots = []Root{{Name: "Home", Path: u.Home}}
+			} else {
+				c.Auth.User = name
+			}
+		} else if u, g, err := host.DefaultAdmin(); err == nil {
+			slog.Info("container mode: using the first admin-group member as the Wargo user", "user", u.Name, "group", g)
+			c.Auth.User = u.Name
+			c.Files.Roots = []Root{{Name: "Home", Path: u.Home}}
+		}
+	} else if u, err := user.Current(); err == nil {
 		c.Auth.User = u.Username
 		c.Files.Roots = []Root{{Name: "Home", Path: u.HomeDir}}
 	}
-	if st, err := os.Stat("/DATA"); err == nil && st.IsDir() {
+	if st, err := host.Stat("/DATA"); err == nil && st.IsDir() {
 		c.Files.Roots = append(c.Files.Roots, Root{Name: "DATA", Path: "/DATA"})
 	}
 	return c
 }
+
+// ContainerConfigPath and ContainerDataDir are the container-mode defaults.
+const (
+	ContainerDataDir    = "/data"
+	ContainerConfigPath = "/data/config.toml"
+)
 
 // DefaultPath returns the config path: $WARGO_CONFIG, /etc/wargo/config.toml,
 // or the XDG config dir for user installs.
 func DefaultPath() string {
 	if p := os.Getenv("WARGO_CONFIG"); p != "" {
 		return p
+	}
+	if host.Container() {
+		return ContainerConfigPath
 	}
 	if _, err := os.Stat("/etc/wargo/config.toml"); err == nil {
 		return "/etc/wargo/config.toml"
@@ -147,6 +175,9 @@ func DefaultPath() string {
 }
 
 func defaultDataDir() string {
+	if host.Container() {
+		return ContainerDataDir
+	}
 	if st, err := os.Stat("/var/lib/wargo"); err == nil && st.IsDir() {
 		if f, err := os.CreateTemp("/var/lib/wargo", ".w"); err == nil {
 			f.Close()
@@ -176,13 +207,88 @@ func Load(path string) (Config, error) {
 			return c, fmt.Errorf("parse %s: %w", path, err)
 		}
 	}
+	if err := c.ApplyEnv(os.Getenv); err != nil {
+		return c, err
+	}
 	if c.DataDir == "" {
 		c.DataDir = defaultDataDir()
 	}
-	if c.Files.TrashDir == "" {
+	// In container mode the trash must live on the host (renames can't
+	// cross into the data volume); the files service then defaults it to
+	// the admin's ~/.local/share/wargo/trash.
+	if c.Files.TrashDir == "" && !host.Container() {
 		c.Files.TrashDir = filepath.Join(c.DataDir, "trash")
 	}
 	return c, c.Validate()
+}
+
+// ApplyEnv overrides settings from WARGO_* environment variables (used by
+// the Docker image, but honoured natively too):
+//
+//	WARGO_LISTEN           listen address, e.g. 0.0.0.0:2207
+//	WARGO_USER             auth.user
+//	WARGO_ORIGINS          auth.origins, comma-separated
+//	WARGO_TRUSTED_PROXIES  auth.trusted_proxies, comma-separated CIDRs
+//	WARGO_DATA_DIR         data_dir
+//	WARGO_FILES_ROOTS      files.roots as "Name=/path,Other=/path" (or bare paths)
+func (c *Config) ApplyEnv(getenv func(string) string) error {
+	if v := strings.TrimSpace(getenv("WARGO_LISTEN")); v != "" {
+		c.Listen = v
+	}
+	if v := strings.TrimSpace(getenv("WARGO_USER")); v != "" {
+		c.Auth.User = v
+	}
+	if v := getenv("WARGO_ORIGINS"); strings.TrimSpace(v) != "" {
+		c.Auth.Origins = splitList(v)
+	}
+	if v := getenv("WARGO_TRUSTED_PROXIES"); strings.TrimSpace(v) != "" {
+		c.Auth.TrustedProxies = splitList(v)
+	}
+	if v := strings.TrimSpace(getenv("WARGO_DATA_DIR")); v != "" {
+		c.DataDir = v
+	}
+	if v := getenv("WARGO_FILES_ROOTS"); strings.TrimSpace(v) != "" {
+		roots, err := parseRoots(v)
+		if err != nil {
+			return fmt.Errorf("WARGO_FILES_ROOTS: %w", err)
+		}
+		c.Files.Roots = roots
+	}
+	return nil
+}
+
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// parseRoots parses "Name=/path,/other/path".
+func parseRoots(v string) ([]Root, error) {
+	var out []Root
+	for _, item := range splitList(v) {
+		name, p, ok := strings.Cut(item, "=")
+		if !ok {
+			name, p = "", item
+		}
+		name, p = strings.TrimSpace(name), strings.TrimSpace(p)
+		if !filepath.IsAbs(p) {
+			return nil, fmt.Errorf("%q is not an absolute path", p)
+		}
+		p = filepath.Clean(p)
+		if name == "" {
+			name = filepath.Base(p)
+			if name == "/" {
+				name = "System"
+			}
+		}
+		out = append(out, Root{Name: name, Path: p})
+	}
+	return out, nil
 }
 
 func (c Config) Validate() error {
@@ -190,7 +296,13 @@ func (c Config) Validate() error {
 		return fmt.Errorf("listen: %w", err)
 	}
 	if c.Auth.User == "" {
+		if host.Container() {
+			return errors.New("auth.user is required: set WARGO_USER to your host account")
+		}
 		return errors.New("auth.user is required")
+	}
+	if host.Container() && c.Auth.User == "root" {
+		return errors.New("auth.user must be a regular admin account, not root (set WARGO_USER)")
 	}
 	for _, p := range c.Auth.TrustedProxies {
 		if _, _, err := net.ParseCIDR(p); err != nil {
@@ -198,6 +310,22 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ListenAddr returns the effective listen address without loading the full
+// configuration (used by `wargo health`): WARGO_LISTEN, then the file's
+// listen, then the default.
+func ListenAddr(path string) string {
+	if v := strings.TrimSpace(os.Getenv("WARGO_LISTEN")); v != "" {
+		return v
+	}
+	var c struct {
+		Listen string `toml:"listen"`
+	}
+	if b, err := os.ReadFile(path); err == nil && toml.Unmarshal(b, &c) == nil && c.Listen != "" {
+		return c.Listen
+	}
+	return "127.0.0.1:2207"
 }
 
 // LoopbackOnly reports whether Listen binds a loopback address only.

@@ -33,10 +33,10 @@ func newTestServer(t *testing.T, bypass bool) *httptest.Server {
 func TestSecurityHeadersAndAuthGate(t *testing.T) {
 	ts := newTestServer(t, false)
 	for path, want := range map[string]int{
-		"/api/system/info":  http.StatusUnauthorized,
-		"/api/capabilities": http.StatusUnauthorized,
-		"/ws/events":        http.StatusUnauthorized,
-		"/api/auth/state":   http.StatusOK,
+		"/api/system/info":   http.StatusUnauthorized,
+		"/api/capabilities":  http.StatusUnauthorized,
+		"/ws/events":         http.StatusUnauthorized,
+		"/api/auth/state":    http.StatusOK,
 		"/some/client/route": http.StatusOK, // SPA fallback (or "not built" 503)
 	} {
 		res, err := http.Get(ts.URL + path)
