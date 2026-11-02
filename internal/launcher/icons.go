@@ -3,7 +3,6 @@
 package launcher
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,44 +16,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/dashicons"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/netx"
 )
 
-const maxIconSize = 512 << 10
+const maxIconSize = dashicons.MaxSize
 
 var (
 	iconNameRe = regexp.MustCompile(`^[a-f0-9]{64}\.(png|svg|webp|jpg)$`)
-	slugRe     = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
 )
 
 func validIconName(n string) bool { return iconNameRe.MatchString(n) }
 
-var iconTypes = map[string]string{
-	"png": "image/png", "svg": "image/svg+xml", "webp": "image/webp", "jpg": "image/jpeg",
-}
-
-// sniffIcon returns the file extension for an accepted image, or "".
-func sniffIcon(b []byte) string {
-	switch http.DetectContentType(b) {
-	case "image/png":
-		return "png"
-	case "image/jpeg":
-		return "jpg"
-	case "image/webp":
-		return "webp"
-	}
-	head := b
-	if len(head) > 1024 {
-		head = head[:1024]
-	}
-	t := strings.ToLower(strings.TrimSpace(string(bytes.TrimPrefix(head, []byte("\xef\xbb\xbf")))))
-	if (strings.HasPrefix(t, "<?xml") || strings.HasPrefix(t, "<svg") || strings.HasPrefix(t, "<!--") ||
-		strings.HasPrefix(t, "<!doctype svg")) && bytes.Contains(bytes.ToLower(b), []byte("<svg")) {
-		return "svg"
-	}
-	return ""
-}
+func sniffIcon(b []byte) string { return dashicons.Sniff(b) }
 
 // saveIcon stores b content-addressed and returns its file name.
 func (s *Service) saveIcon(b []byte) (string, error) {
@@ -136,7 +111,7 @@ func newIconClient() *http.Client {
 
 // fetchIcon downloads a dashboard-icons PNG by slug.
 func (s *Service) fetchIcon(ctx context.Context, slug string) (string, error) {
-	if !slugRe.MatchString(slug) {
+	if !dashicons.ValidSlug(slug) {
 		return "", httpx.BadRequest("invalid icon name (lowercase letters, digits and dashes)")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -208,7 +183,7 @@ func (s *Service) handleIconGet(w http.ResponseWriter, r *http.Request) error {
 	}
 	ext := name[strings.LastIndexByte(name, '.')+1:]
 	h := w.Header()
-	h.Set("Content-Type", iconTypes[ext])
+	h.Set("Content-Type", dashicons.ContentType(ext))
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "private, max-age=31536000, immutable")
 	if ext == "svg" {

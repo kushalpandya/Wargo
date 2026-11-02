@@ -337,7 +337,11 @@ func TestSuggestFakeDocker(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" || r.URL.Path != "/containers/json" {
+		if r.URL.Path == "/version" {
+			w.Write([]byte(`{"ApiVersion":"1.47","Version":"test"}`))
+			return
+		}
+		if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/containers/json") {
 			t.Errorf("unexpected docker call %s %s", r.Method, r.URL.Path)
 		}
 		json.NewEncoder(w).Encode([]dockerContainer{{Names: []string{"/sonarr"}, Image: "linuxserver/sonarr", State: "running",

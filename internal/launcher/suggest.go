@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/kushalpandya/wargo/internal/dashicons"
+	"github.com/kushalpandya/wargo/internal/docker"
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
@@ -49,21 +51,12 @@ type dockerContainer struct {
 	} `json:"HostConfig"`
 }
 
-// listContainers performs a read-only GET /containers/json on the socket.
+// listContainers performs a read-only GET /containers/json through the
+// shared Docker client.
 func listContainers(ctx context.Context, socket string) ([]dockerContainer, error) {
-	tr := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", socket)
-		},
-		DisableKeepAlives: true,
-	}
-	c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/containers/json", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.Do(req)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := docker.Shared(socket).Do(ctx, http.MethodGet, "/containers/json", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -121,65 +114,7 @@ func pickPort(ports []dockerPort, prefer int, skip map[int]bool) (public int, al
 	return best, all, web
 }
 
-var slugAliases = map[string]string{
-	"pms-docker":        "plex",
-	"pms":               "plex",
-	"plex-media-server": "plex",
-	"adguardhome":       "adguard-home",
-	"pihole":            "pi-hole",
-	"homeassistant":     "home-assistant",
-	"portainer-ce":      "portainer",
-	"portainer-ee":      "portainer",
-	"qbittorrent-nox":   "qbittorrent",
-	"code-server":       "code-server",
-	"casaos":            "casaos",
-	"gitea":             "gitea",
-	"syncthing":         "syncthing",
-	"filebrowser":       "filebrowser",
-	"uptime-kuma":       "uptime-kuma",
-	"server":            "",
-	"app":               "",
-}
-
-// guessSlug derives a dashboard-icons slug from an image reference, e.g.
-// "lscr.io/linuxserver/prowlarr:latest" -> "prowlarr".
-func guessSlug(image string) string {
-	ref := image
-	if i := strings.Index(ref, "@"); i >= 0 {
-		ref = ref[:i]
-	}
-	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
-		ref = ref[:i]
-	}
-	parts := strings.Split(strings.ToLower(ref), "/")
-	name := parts[len(parts)-1]
-	if v, ok := slugAliases[name]; ok {
-		name = v
-	}
-	if name == "" && len(parts) > 1 {
-		// Generic repository name (e.g. vaultwarden/server): use the namespace.
-		name = parts[len(parts)-2]
-	}
-	name = strings.TrimPrefix(name, "docker-")
-	name = strings.TrimSuffix(name, "-docker")
-	if v, ok := slugAliases[name]; ok && v != "" {
-		name = v
-	}
-	var b strings.Builder
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
-			b.WriteRune(r)
-		case r == '_' || r == '.':
-			b.WriteRune('-')
-		}
-	}
-	s := strings.Trim(b.String(), "-")
-	if !slugRe.MatchString(s) {
-		return ""
-	}
-	return s
-}
+func guessSlug(image string) string { return dashicons.GuessSlug(image) }
 
 // prettify turns "big-bear_jellyfin" into "Big Bear Jellyfin".
 func prettify(name string) string {

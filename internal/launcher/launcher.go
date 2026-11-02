@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/kushalpandya/wargo/internal/audit"
+	"github.com/kushalpandya/wargo/internal/dashicons"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/store"
 )
@@ -67,7 +68,7 @@ func New(st *store.Store, al *audit.Log, dataDir, dockerSock string) *Service {
 	return &Service{
 		st: st, audit: al, iconDir: dataDir + "/icons", dockerSock: dockerSock,
 		health:     newHealthChecker(),
-		iconBase:   DashboardIconsBase,
+		iconBase:   dashicons.Base,
 		iconClient: newIconClient(),
 	}
 }

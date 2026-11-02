@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/dashicons"
 	"github.com/kushalpandya/wargo/internal/httpx"
-	"github.com/kushalpandya/wargo/internal/launcher"
 )
 
 // Container logos: GET /api/containers/{id}/icon resolves a logo from
@@ -64,7 +64,7 @@ func httpsOnlyRedirects(req *http.Request, via []*http.Request) error {
 func newIconStore(dataDir string) *iconStore {
 	return &iconStore{
 		dir:  filepath.Join(dataDir, "icons", "containers"),
-		base: launcher.DashboardIconsBase,
+		base: dashicons.Base,
 		client: &http.Client{
 			Timeout:       15 * time.Second,
 			CheckRedirect: httpsOnlyRedirects,
@@ -165,7 +165,7 @@ func iconCandidates(a *apiContainer) []iconSource {
 	var out []iconSource
 	seen := map[string]bool{}
 	addSlug := func(s string) {
-		if s = launcher.GuessSlug(s); s != "" && !seen[s] {
+		if s = dashicons.GuessSlug(s); s != "" && !seen[s] {
 			seen[s] = true
 			out = append(out, iconSource{Slug: s})
 		}
@@ -290,7 +290,7 @@ func (st *iconStore) fetchOnce(ctx context.Context, src iconSource) (string, err
 func (st *iconStore) fetch(ctx context.Context, src iconSource) (string, error) {
 	u := src.URL
 	if src.Slug != "" {
-		if !launcher.ValidSlug(src.Slug) {
+		if !dashicons.ValidSlug(src.Slug) {
 			return "", errNoIcon
 		}
 		u = st.base + src.Slug + ".png"
@@ -325,15 +325,15 @@ func (st *iconStore) fetch(ctx context.Context, src iconSource) (string, error) 
 	if ct, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); ct != "" && !strings.HasPrefix(ct, "image/") && ct != "application/octet-stream" {
 		return "", st.markMiss(src)
 	}
-	if resp.ContentLength > launcher.MaxIconSize {
+	if resp.ContentLength > dashicons.MaxSize {
 		return "", st.markMiss(src)
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, launcher.MaxIconSize+1))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, dashicons.MaxSize+1))
 	if err != nil {
 		return "", err
 	}
-	ext := launcher.SniffIcon(b)
-	if len(b) > launcher.MaxIconSize || ext == "" || (src.Slug != "" && ext != "png") {
+	ext := dashicons.Sniff(b)
+	if len(b) > dashicons.MaxSize || ext == "" || (src.Slug != "" && ext != "png") {
 		return "", st.markMiss(src)
 	}
 	return st.save(src, ext, b)
@@ -412,7 +412,7 @@ func (s *Service) handleIcon(w http.ResponseWriter, r *http.Request) error {
 	}
 	ext := strings.TrimPrefix(filepath.Ext(p), ".")
 	h := w.Header()
-	h.Set("Content-Type", launcher.IconContentType(ext))
+	h.Set("Content-Type", dashicons.ContentType(ext))
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "private, max-age=604800")
 	if ext == "svg" {
