@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Badge, type Tone } from "@/components/ui/misc";
 import { ExternalLink, Heart, HeartCrack, HeartPulse, Radar } from "lucide-react";
-import { ago } from "@/lib/format";
 import { Tooltip } from "@/components/ui/menu";
 import { cn } from "@/lib/cn";
 import type { Container, Port } from "./types";
@@ -114,11 +113,12 @@ export function stateLabel(c: Pick<Container, "state">): string {
   }
 }
 
-const ownCheck = "Reported by the container itself: its own health check (defined in the image or compose file), which Docker runs on a schedule.";
+const byContainer = "reported by the container's health check";
+const byWargo = "checked by Wargo";
 
 function TipBadge({ tip, children }: { tip: string; children: React.ReactNode }) {
   return (
-    <Tooltip content={<span className="block max-w-72 leading-snug">{tip}</span>}>
+    <Tooltip content={tip}>
       <span className="inline-flex">{children}</span>
     </Tooltip>
   );
@@ -133,7 +133,7 @@ export function HealthBadge({ c }: { c: Pick<Container, "state" | "health" | "pr
   if (c.state !== "running") return null;
   if (c.health === "healthy")
     return (
-      <TipBadge tip={`${ownCheck} It is currently passing.`}>
+      <TipBadge tip={`Healthy, ${byContainer}`}>
         <Badge tone="ok">
           <Heart className="size-3 fill-current" aria-hidden="true" /> Healthy
         </Badge>
@@ -141,7 +141,7 @@ export function HealthBadge({ c }: { c: Pick<Container, "state" | "health" | "pr
     );
   if (c.health === "unhealthy")
     return (
-      <TipBadge tip={`${ownCheck} It is currently failing.`}>
+      <TipBadge tip={`Unhealthy, ${byContainer}`}>
         <Badge tone="crit">
           <HeartCrack className="size-3" aria-hidden="true" /> Unhealthy
         </Badge>
@@ -149,7 +149,7 @@ export function HealthBadge({ c }: { c: Pick<Container, "state" | "health" | "pr
     );
   if (c.health === "starting")
     return (
-      <TipBadge tip={`${ownCheck} It hasn't passed yet while the container starts.`}>
+      <TipBadge tip={`Starting, ${byContainer}`}>
         <Badge tone="warn">
           <HeartPulse className="size-3" aria-hidden="true" /> Starting
         </Badge>
@@ -157,22 +157,16 @@ export function HealthBadge({ c }: { c: Pick<Container, "state" | "health" | "pr
     );
   const p = c.probe;
   if (!p) return null;
-  const every = `Wargo checks about every ${Math.round(p.intervalS / 60)} min while you're using it.`;
-  const none = "This container has no health check of its own.";
   if (p.status === "up")
     return (
-      <TipBadge
-        tip={`Checked by Wargo, not reported by the container: its web UI on port ${p.port} answered (HTTP ${p.httpStatus}${p.latencyMs !== undefined ? ` in ${p.latencyMs} ms` : ""}) ${ago(p.checkedAt)}. That only shows something is listening, not that the app is healthy. ${none} ${every}`}
-      >
+      <TipBadge tip={`Responding, ${byWargo}`}>
         <Badge tone="frost">
           <Radar className="size-3" aria-hidden="true" /> Responding
         </Badge>
       </TipBadge>
     );
   return (
-    <TipBadge
-      tip={`Checked by Wargo, not reported by the container: nothing answered on port ${p.port}${p.error ? ` (${p.error})` : ""} twice in a row, last ${ago(p.checkedAt)}. ${none} ${every}`}
-    >
+    <TipBadge tip={`Not responding, ${byWargo}`}>
       <Badge tone="warn">
         <Radar className="size-3" aria-hidden="true" /> Not responding
       </Badge>
