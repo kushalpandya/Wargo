@@ -391,7 +391,7 @@ func (s *Service) handleSignal(w http.ResponseWriter, r *http.Request) error {
 	case errors.Is(err, syscall.ESRCH):
 		return httpx.ErrNotFound
 	case errors.Is(err, syscall.EPERM):
-		if _, err := s.elevate.Run(r, "procs.signal", target, s.elevate.Helper("kill", name, strconv.Itoa(pid)), nil); err != nil {
+		if _, err := s.elevate.Run(r, "procs.signal", target, s.elevate.Helper("kill", name, strconv.Itoa(pid), strconv.FormatUint(p.startTicks, 10)), nil); err != nil {
 			return err
 		}
 	default:

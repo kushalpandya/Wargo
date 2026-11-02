@@ -398,8 +398,31 @@ func TestSocketPeerUID(t *testing.T) {
 	}
 	go f.s.Serve(ln)
 
-	call := func() privproto.Response {
-		c, err := net.Dial("unix", f.cfg.Socket)
+	call := func() privproto.Response { return dialStatus(t, f.cfg.Socket) }
+	if r := call(); !r.OK || r.Credentials != 1 {
+		t.Fatalf("status: %+v", r)
+	}
+	// A server with a different allowed uid must reject us. (A separate
+	// server: mutating the running one's config would be a data race.)
+	cfg2 := f.cfg
+	cfg2.AllowedUID = os.Getuid() + 1
+	cfg2.Socket = filepath.Join(dir, "privd2.sock")
+	ln2, err := Listen(cfg2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln2.Close()
+	s2 := New(cfg2)
+	go s2.Serve(ln2)
+	if r := dialStatus(t, cfg2.Socket); r.OK || r.Error != "permission denied" {
+		t.Fatalf("foreign uid accepted: %+v", r)
+	}
+}
+
+func dialStatus(t *testing.T, socket string) privproto.Response {
+	t.Helper()
+	{
+		c, err := net.Dial("unix", socket)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -408,13 +431,5 @@ func TestSocketPeerUID(t *testing.T) {
 		var r privproto.Response
 		json.NewDecoder(c).Decode(&r)
 		return r
-	}
-	if r := call(); !r.OK || r.Credentials != 1 {
-		t.Fatalf("status: %+v", r)
-	}
-	// Same server, different allowed uid: we must be rejected.
-	f.s.cfg.AllowedUID = os.Getuid() + 1
-	if r := call(); r.OK || r.Error != "permission denied" {
-		t.Fatalf("foreign uid accepted: %+v", r)
 	}
 }

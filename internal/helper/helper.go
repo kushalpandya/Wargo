@@ -7,12 +7,17 @@
 package helper
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -89,19 +94,46 @@ func Exec(args []string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 	return 0, nil
 }
 
+// kill <SIGNAL> <pid> [starttime]: starttime is the expected process
+// start (/proc/<pid>/stat field 22, clock ticks since boot); when given,
+// the signal is only delivered to that exact process (pid-reuse safe).
 func kill(args []string) error {
-	if len(args) != 2 {
-		return errors.New("usage: kill <SIGNAL> <pid>")
+	if len(args) != 2 && len(args) != 3 {
+		return errors.New("usage: kill <SIGNAL> <pid> [starttime]")
 	}
 	sig, ok := Signal(args[0])
 	if !ok {
 		return fmt.Errorf("unsupported signal %q", args[0])
 	}
-	pid, err := strconv.Atoi(args[1])
-	if err != nil || pid <= 1 {
-		return fmt.Errorf("invalid pid %q", args[1])
+	pid, err := ParsePID(args[1])
+	if err != nil {
+		return err
 	}
-	return syscall.Kill(pid, sig)
+	var start uint64
+	if len(args) == 3 {
+		if start, err = strconv.ParseUint(args[2], 10, 64); err != nil {
+			return fmt.Errorf("invalid start time %q", args[2])
+		}
+	}
+	return signalPID(pid, sig, start)
+}
+
+// maxPID is the kernel's PID_MAX_LIMIT (4194304).
+const maxPID = 1 << 22
+
+// ParsePID accepts a single process id: plain decimal digits, 2..maxPID.
+// Anything else is refused — in particular 0, 1, negative values (process
+// groups, or -1 = every process) and values like 4294967295 that
+// strconv.Atoi accepts but the kernel's 32-bit pid_t truncates to -1.
+func ParsePID(s string) (int, error) {
+	if s == "" || len(s) > 7 || strings.TrimLeft(s, "0123456789") != "" || s[0] == '0' {
+		return 0, fmt.Errorf("invalid pid %q", s)
+	}
+	pid, err := strconv.Atoi(s)
+	if err != nil || pid <= 1 || pid > maxPID {
+		return 0, fmt.Errorf("invalid pid %q", s)
+	}
+	return pid, nil
 }
 
 // fs <op> <root> <path> [arg]
@@ -155,21 +187,103 @@ func fsOp(args []string, stdin io.Reader, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		mode := os.FileMode(0o644)
-		if st, err := root.Stat(p); err == nil {
-			mode = st.Mode().Perm()
-		}
-		return root.WriteFile(p, data, mode)
+		return writeReplace(root, p, data)
 	case "read":
-		f, err := root.Open(p)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		_, err = io.Copy(stdout, io.LimitReader(f, 32<<20))
-		return err
+		return readRegular(root, p, stdout)
 	}
 	return fmt.Errorf("unknown fs op %q", op)
+}
+
+// readRegular copies a regular file to w. The open never blocks (a FIFO
+// swapped in would otherwise hang the root helper) and what was opened
+// must be a regular file (not a device, FIFO or socket).
+func readRegular(root *os.Root, p string, w io.Writer) error {
+	f, err := fsops.OpenNonblock(root, p)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", p)
+	}
+	_, err = io.Copy(w, io.LimitReader(f, 32<<20))
+	return err
+}
+
+// writeReplace atomically replaces p with data, as root. It never writes
+// through the existing directory entry: a symlink or hard link planted at
+// p (e.g. to /etc/passwd) would otherwise make root overwrite its target.
+// Instead data goes to a fresh O_EXCL temp file in the same directory,
+// which gets the original's mode and owner, is fsynced and renamed over
+// p (rename replaces the entry, never follows it). A final-component
+// symlink is refused outright.
+func writeReplace(root *os.Root, p string, data []byte) error {
+	mode := os.FileMode(0o644)
+	uid, gid := -1, -1
+	if st, err := root.Lstat(p); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symbolic link; edit its target instead", p)
+		}
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", p)
+		}
+		mode = st.Mode().Perm()
+		if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+			uid, gid = int(sys.Uid), int(sys.Gid)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	dir, base := filepath.Split(p)
+	var tmp string
+	var f *os.File
+	for i := 0; ; i++ {
+		var rnd [8]byte
+		rand.Read(rnd[:])
+		tmp = filepath.Join(dir, fmt.Sprintf(".%s.wargo-%x", base, rnd))
+		var err error
+		f, err = root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrExist) || i >= 5 {
+			return err
+		}
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			f.Close()
+			root.Remove(tmp)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if uid >= 0 {
+		if err := f.Chown(uid, gid); err != nil {
+			return err
+		}
+	}
+	// After chown (which clears setuid/setgid bits).
+	if err := f.Chmod(mode); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := root.Rename(tmp, p); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }
 
 func power(args []string) error {
@@ -188,6 +302,11 @@ func composeUpdate(args []string, stdout, stderr io.Writer) error {
 	if !filepath.IsAbs(dir) || !filepath.IsAbs(file) {
 		return errors.New("paths must be absolute")
 	}
+	// The project is passed as the value of -p: it must not look like an
+	// option (or carry anything else docker would parse).
+	if !composeProjectRe.MatchString(project) {
+		return fmt.Errorf("invalid compose project name %q", project)
+	}
 	for _, step := range [][]string{
 		{"compose", "-p", project, "-f", file, "pull"},
 		{"compose", "-p", project, "-f", file, "up", "-d", "--remove-orphans"},
@@ -202,6 +321,8 @@ func composeUpdate(args []string, stdout, stderr io.Writer) error {
 	}
 	return nil
 }
+
+var composeProjectRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 // PkgExitMarker is printed after a package-manager run so the caller can
 // read the exit status from the log even after systemd collects the unit.
@@ -282,15 +403,82 @@ func privdTrust(args []string, stdin io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if len(data) == 0 || data[0] != '{' {
-		return errors.New("expected JSON on stdin")
-	}
-	if err := os.MkdirAll(filepath.Dir(PrivdCredentialsPath), 0o700); err != nil {
+	if err := validTrustStore(data); err != nil {
 		return err
 	}
-	tmp := PrivdCredentialsPath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	dir := filepath.Dir(PrivdCredentialsPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.Rename(tmp, PrivdCredentialsPath)
+	// The directory must be root's alone: anyone able to write it could
+	// plant their own passkey for root approvals.
+	if err := os.Chown(dir, 0, 0); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".credentials-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), PrivdCredentialsPath)
+}
+
+// validTrustStore checks the shape of a wargo-privd credential store
+// (mirrors privd.CredentialStore) so that garbage is never installed.
+func validTrustStore(data []byte) error {
+	var cs struct {
+		UserHandle  string            `json:"userHandle"`
+		RPIDs       []string          `json:"rpIds"`
+		Credentials []json.RawMessage `json:"credentials"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cs); err != nil {
+		return fmt.Errorf("invalid credential store: %w", err)
+	}
+	if dec.More() {
+		return errors.New("invalid credential store: trailing data")
+	}
+	if h, err := base64.RawURLEncoding.DecodeString(cs.UserHandle); err != nil || len(h) == 0 || len(h) > 64 {
+		return errors.New("invalid credential store: bad user handle")
+	}
+	if len(cs.Credentials) == 0 || len(cs.Credentials) > 32 {
+		return errors.New("invalid credential store: expected 1-32 credentials")
+	}
+	if len(cs.RPIDs) == 0 || len(cs.RPIDs) > 32 {
+		return errors.New("invalid credential store: expected 1-32 RP IDs")
+	}
+	for _, id := range cs.RPIDs {
+		if id == "" || len(id) > 253 || strings.ContainsAny(id, "/:@ \t\r\n") {
+			return fmt.Errorf("invalid credential store: bad RP ID %q", id)
+		}
+	}
+	for _, c := range cs.Credentials {
+		var cred struct {
+			ID        []byte `json:"id"`
+			PublicKey []byte `json:"publicKey"`
+		}
+		if err := json.Unmarshal(c, &cred); err != nil || len(cred.ID) == 0 || len(cred.PublicKey) == 0 {
+			return errors.New("invalid credential store: credential without id or public key")
+		}
+	}
+	return nil
 }

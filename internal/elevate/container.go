@@ -101,7 +101,7 @@ func (s *Service) containerApprove(r *http.Request, cred *Credential, action, ta
 	case "password", "sudo":
 		pw := cred.Password
 		cred.Password = ""
-		if pw == "" {
+		if !validPassword(pw) {
 			return errBadAccountPassword
 		}
 		start := time.Now()

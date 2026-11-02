@@ -51,6 +51,9 @@ type Throttler interface {
 	Allow(ip string) (bool, time.Duration)
 	Fail(ip string)
 	Success(ip string)
+	// Release ends an attempt that neither failed nor succeeded
+	// authentication (e.g. the approved command itself failed).
+	Release(ip string)
 }
 
 type Service struct {
@@ -140,6 +143,10 @@ func (s *Service) Run(r *http.Request, action, target string, argv []string, std
 	var out []byte
 	switch cred.Method {
 	case "sudo":
+		if !validPassword(cred.Password) {
+			err = errBadPassword
+			break
+		}
 		out, err = s.runSudo(r.Context(), cred.Password, argv, stdin)
 		cred.Password = ""
 	case "passkey":
@@ -150,10 +157,13 @@ func (s *Service) Run(r *http.Request, action, target string, argv []string, std
 	default:
 		err = httpx.BadRequest("unknown elevation method")
 	}
-	if errors.Is(err, errBadPassword) || errors.Is(err, errPasskeyRejected) {
+	switch {
+	case errors.Is(err, errBadPassword) || errors.Is(err, errPasskeyRejected):
 		s.throttle.Fail(ip)
-	} else if err == nil {
+	case err == nil:
 		s.throttle.Success(ip)
+	default:
+		s.throttle.Release(ip)
 	}
 	ctx := audit.WithElevation(r.Context(), cred.Method)
 	s.audit.Record(r.WithContext(ctx), action, target, err, map[string]any{"argv": argv})
@@ -174,6 +184,8 @@ func (s *Service) runContainer(r *http.Request, cred *Credential, ip, action, ta
 		if err = s.containerApprove(r, cred, action, target); err != nil {
 			if errors.Is(err, errBadAccountPassword) || errors.Is(err, errPasskeyRejected) {
 				s.throttle.Fail(ip)
+			} else {
+				s.throttle.Release(ip)
 			}
 		} else {
 			s.throttle.Success(ip)
@@ -218,6 +230,14 @@ func (s *Service) runSudo(ctx context.Context, password string, argv []string, s
 		return out, httpx.Errorf(http.StatusBadGateway, "command_failed", fmt.Sprintf("%s: %s", err, lastLine(out)))
 	}
 	return out, nil
+}
+
+// validPassword rejects empty passwords and ones containing line breaks or
+// NUL: the password is written to sudo's stdin followed by the command's
+// own stdin, so a newline would split it and leak the rest into the
+// privileged command's input.
+func validPassword(pw string) bool {
+	return pw != "" && len(pw) <= 1024 && !strings.ContainsAny(pw, "\r\n\x00")
 }
 
 func orEmpty(r io.Reader) io.Reader {

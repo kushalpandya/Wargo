@@ -178,7 +178,10 @@ func (c *Config) checkSystemdRun(args []string) error {
 }
 
 // checkTrustedFile refuses to execute binaries that someone other than
-// root could have replaced (only enforced when privd runs as root).
+// root could have replaced (ownership only enforced when privd runs as
+// root): the file and every parent directory must be root-owned and not
+// group/world-writable (a writable /usr/local/bin would allow swapping the
+// binary by rename).
 func checkTrustedFile(path string) error {
 	st, err := os.Stat(path)
 	if err != nil {
@@ -187,6 +190,28 @@ func checkTrustedFile(path string) error {
 	if !st.Mode().IsRegular() {
 		return fmt.Errorf("%s is not a regular file", path)
 	}
+	if err := checkOwner(path, st); err != nil {
+		return err
+	}
+	return checkParents(path)
+}
+
+// checkTrustedPath checks an open file f (at path) and its parents.
+func checkTrustedPath(path string, f *os.File) error {
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", path)
+	}
+	if err := checkOwner(path, st); err != nil {
+		return err
+	}
+	return checkParents(path)
+}
+
+func checkOwner(path string, st os.FileInfo) error {
 	if st.Mode().Perm()&0o022 != 0 {
 		return fmt.Errorf("%s is writable by group or others", path)
 	}
@@ -196,4 +221,28 @@ func checkTrustedFile(path string) error {
 		}
 	}
 	return nil
+}
+
+func checkParents(path string) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	for d := filepath.Dir(resolved); ; d = filepath.Dir(d) {
+		st, err := os.Stat(d)
+		if err != nil {
+			return err
+		}
+		// Sticky world-writable dirs (/tmp) still allow others to plant
+		// files, so they are refused as well.
+		if err := checkOwner(d, st); err != nil {
+			return err
+		}
+		if d == "/" {
+			return nil
+		}
+	}
 }

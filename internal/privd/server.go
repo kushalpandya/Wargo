@@ -178,7 +178,17 @@ func (s *Server) Handle(ctx context.Context, req privproto.Request) privproto.Re
 
 func (s *Server) loadCreds() (CredentialStore, error) {
 	var cs CredentialStore
-	b, err := os.ReadFile(s.cfg.Credentials)
+	f, err := os.Open(s.cfg.Credentials)
+	if err != nil {
+		return cs, err
+	}
+	defer f.Close()
+	// Whoever can write this file can approve root actions with their own
+	// passkey: refuse it unless only root can (when running as root).
+	if err := checkTrustedPath(s.cfg.Credentials, f); err != nil {
+		return cs, err
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 4<<20))
 	if err != nil {
 		return cs, err
 	}
@@ -337,6 +347,18 @@ func (s *Server) runOp(ctx context.Context, req privproto.Request) privproto.Res
 	}
 	if err := checkTrustedFile(argv[0]); err != nil {
 		return privproto.Response{Error: "untrusted executable: " + err.Error()}
+	}
+	if argv[0] == s.cfg.SystemdRun {
+		var logs []*os.File
+		if argv, logs, err = s.cfg.openLogTargets(argv); err != nil {
+			slog.Warn("log target rejected", "argv", req.Argv, "err", err)
+			return privproto.Response{Error: err.Error()}
+		}
+		defer func() {
+			for _, f := range logs {
+				f.Close()
+			}
+		}()
 	}
 	slog.Info("approved", "action", req.Action, "target", req.Target, "argv", argv)
 	out, err := s.run(ctx, argv, req.Stdin)
