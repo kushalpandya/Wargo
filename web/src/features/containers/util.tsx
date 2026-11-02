@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Badge, type Tone } from "@/components/ui/misc";
-import { ExternalLink, Heart, HeartCrack, HeartPulse } from "lucide-react";
+import { ExternalLink, Heart, HeartCrack, HeartPulse, Radar } from "lucide-react";
+import { ago } from "@/lib/format";
+import { Tooltip } from "@/components/ui/menu";
 import { cn } from "@/lib/cn";
 import type { Container, Port } from "./types";
 
@@ -91,10 +93,12 @@ export function parseTime(s?: string): number {
 }
 
 /** Status-dot tone for a container (state + health). */
-export function containerTone(c: Pick<Container, "state" | "health">): Tone {
+export function containerTone(c: Pick<Container, "state" | "health" | "probe">): Tone {
   if (c.state !== "running") return c.state === "restarting" ? "warn" : c.state === "paused" ? "frost" : "neutral";
   if (c.health === "unhealthy") return "crit";
   if (c.health === "starting") return "warn";
+  // Wargo's own check is weaker evidence than a health check: warn only.
+  if (!c.health && c.probe?.status === "down") return "warn";
   return "ok";
 }
 
@@ -110,27 +114,68 @@ export function stateLabel(c: Pick<Container, "state">): string {
   }
 }
 
+const ownCheck = "Reported by the container itself: its own health check (defined in the image or compose file), which Docker runs on a schedule.";
+
+function TipBadge({ tip, children }: { tip: string; children: React.ReactNode }) {
+  return (
+    <Tooltip content={<span className="block max-w-72 leading-snug">{tip}</span>}>
+      <span className="inline-flex">{children}</span>
+    </Tooltip>
+  );
+}
+
 /**
- * Health-check result as a badge. Only containers that define a
- * HEALTHCHECK have one; the rest show no badge.
+ * Health as a badge. A container's own Docker health check gets a heart;
+ * containers without one may get Wargo's reachability check instead,
+ * marked differently and explained as such.
  */
-export function HealthBadge({ c }: { c: Pick<Container, "state" | "health"> }) {
-  if (c.state !== "running" || !c.health) return null;
+export function HealthBadge({ c }: { c: Pick<Container, "state" | "health" | "probe"> }) {
+  if (c.state !== "running") return null;
   if (c.health === "healthy")
     return (
-      <Badge tone="ok" title="Health check passing">
-        <Heart className="size-3 fill-current" aria-hidden="true" /> Healthy
-      </Badge>
+      <TipBadge tip={`${ownCheck} It is currently passing.`}>
+        <Badge tone="ok">
+          <Heart className="size-3 fill-current" aria-hidden="true" /> Healthy
+        </Badge>
+      </TipBadge>
     );
   if (c.health === "unhealthy")
     return (
-      <Badge tone="crit" title="Health check failing">
-        <HeartCrack className="size-3" aria-hidden="true" /> Unhealthy
-      </Badge>
+      <TipBadge tip={`${ownCheck} It is currently failing.`}>
+        <Badge tone="crit">
+          <HeartCrack className="size-3" aria-hidden="true" /> Unhealthy
+        </Badge>
+      </TipBadge>
+    );
+  if (c.health === "starting")
+    return (
+      <TipBadge tip={`${ownCheck} It hasn't passed yet while the container starts.`}>
+        <Badge tone="warn">
+          <HeartPulse className="size-3" aria-hidden="true" /> Starting
+        </Badge>
+      </TipBadge>
+    );
+  const p = c.probe;
+  if (!p) return null;
+  const every = `Wargo checks about every ${Math.round(p.intervalS / 60)} min while you're using it.`;
+  const none = "This container has no health check of its own.";
+  if (p.status === "up")
+    return (
+      <TipBadge
+        tip={`Checked by Wargo, not reported by the container: its web UI on port ${p.port} answered (HTTP ${p.httpStatus}${p.latencyMs !== undefined ? ` in ${p.latencyMs} ms` : ""}) ${ago(p.checkedAt)}. That only shows something is listening, not that the app is healthy. ${none} ${every}`}
+      >
+        <Badge tone="frost">
+          <Radar className="size-3" aria-hidden="true" /> Responding
+        </Badge>
+      </TipBadge>
     );
   return (
-    <Badge tone="warn" title="Health check hasn't passed yet">
-      <HeartPulse className="size-3" aria-hidden="true" /> Starting
-    </Badge>
+    <TipBadge
+      tip={`Checked by Wargo, not reported by the container: nothing answered on port ${p.port}${p.error ? ` (${p.error})` : ""} twice in a row, last ${ago(p.checkedAt)}. ${none} ${every}`}
+    >
+      <Badge tone="warn">
+        <Radar className="size-3" aria-hidden="true" /> Not responding
+      </Badge>
+    </TipBadge>
   );
 }

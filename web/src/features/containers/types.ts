@@ -8,6 +8,17 @@ export interface Port {
 }
 
 /** Shape returned by GET /api/containers (also the sticky "containers" topic). */
+/** Wargo's own reachability check (only for containers without a Docker health check). */
+export interface Probe {
+  status: "up" | "down";
+  port: number;
+  httpStatus?: number;
+  latencyMs?: number;
+  error?: string;
+  checkedAt: number;
+  intervalS: number;
+}
+
 export interface Container {
   /** Short (12 char) id. */
   id: string;
@@ -53,6 +64,8 @@ export interface Container {
    * when a candidate exists. It can still 404: fall back to a letter avatar.
    */
   icon?: string;
+  /** Set by Wargo when the container defines no health check. */
+  probe?: Probe;
 }
 
 /** Live stats published on the "containers.stats" topic: short id -> stats. */
