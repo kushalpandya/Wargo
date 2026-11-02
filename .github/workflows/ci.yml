@@ -165,7 +165,8 @@ jobs:
       - id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          # Registry names must be lowercase (the GitHub repo is "Wargo").
+          images: ghcr.io/kushalpandya/wargo
           flavor: latest=false
           tags: |
             type=ref,event=tag
