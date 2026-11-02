@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { Slot } from "radix-ui";
 import { cn } from "@/lib/cn";
 import { Spinner } from "./misc";
 
@@ -25,12 +26,30 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: Size;
   loading?: boolean;
   icon?: ReactNode;
+  /** Render the child element (e.g. a router Link) with button styling. */
+  asChild?: boolean;
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = "secondary", size = "md", loading, icon, className, children, disabled, type = "button", ...rest },
+  { variant = "secondary", size = "md", loading, icon, className, children, disabled, type = "button", asChild, ...rest },
   ref,
 ) {
+  if (asChild) {
+    return (
+      <Slot.Root
+        ref={ref}
+        className={cn(
+          "inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap border transition-colors [&_svg]:size-[1.1em] [&_svg]:shrink-0",
+          variants[variant],
+          sizes[size],
+          className,
+        )}
+        {...rest}
+      >
+        {children}
+      </Slot.Root>
+    );
+  }
   return (
     <button
       ref={ref}

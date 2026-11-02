@@ -91,6 +91,7 @@ export default function Downloads() {
   const initial = useQuery({
     queryKey: ["transmission", "torrents"],
     queryFn: () => api.get<TransmissionPayload>("/api/transmission/torrents"),
+    enabled: caps?.transmission?.configured !== false,
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -179,9 +180,9 @@ export default function Downloads() {
             icon={<Download />}
             title="Transmission is not connected"
             action={
-              <Link to="/settings/integrations">
-                <Button variant="primary">Open settings</Button>
-              </Link>
+              <Button asChild variant="primary">
+                <Link to="/settings/integrations">Open settings</Link>
+              </Button>
             }
           >
             Connect Wargo to Transmission in Settings → Integrations to see and manage downloads here.

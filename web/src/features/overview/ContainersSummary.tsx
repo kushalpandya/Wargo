@@ -31,11 +31,11 @@ export function ContainersSummary() {
         icon={<Boxes />}
         meta={data ? `${running} running · ${data.length - running} stopped${unhealthy ? ` · ${unhealthy} unhealthy` : ""}` : undefined}
         actions={
-          <Link to="/containers">
-            <Button size="xs" variant="ghost">
+          <Button asChild size="xs" variant="ghost">
+            <Link to="/containers">
               Manage <ChevronRight />
-            </Button>
-          </Link>
+            </Link>
+          </Button>
         }
       />
       {isLoading ? (

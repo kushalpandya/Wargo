@@ -44,7 +44,6 @@ export default function LauncherSettings() {
                     description={
                       v.placement === "page" ? "Apps get their own page in the sidebar." : "Apps are shown as a strip at the top of the Overview."
                     }
-                    className={v.enabled ? undefined : "opacity-60"}
                   >
                     <Segmented
                       label="Launcher placement"
