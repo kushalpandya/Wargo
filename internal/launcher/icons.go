@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/httpx"
+	"github.com/kushalpandya/wargo/internal/netx"
 )
 
 const maxIconSize = 512 << 10
@@ -123,6 +125,15 @@ func (s *Service) handleIconUpload(w http.ResponseWriter, r *http.Request) error
 	}
 }
 
+// newIconClient is the client for the icon CDN: redirects are only
+// followed within the CDN host, so a misbehaving CDN can't point Wargo at
+// internal services.
+func newIconClient() *http.Client {
+	c := newHTTPClient(15 * time.Second)
+	c.CheckRedirect = netx.SameHostRedirects(3)
+	return c
+}
+
 // fetchIcon downloads a dashboard-icons PNG by slug.
 func (s *Service) fetchIcon(ctx context.Context, slug string) (string, error) {
 	if !slugRe.MatchString(slug) {
@@ -146,12 +157,12 @@ func (s *Service) fetchIcon(ctx context.Context, slug string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", httpx.Errorf(http.StatusBadGateway, "fetch_failed", "Icon CDN answered "+resp.Status)
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxIconSize+1))
+	b, err := netx.ReadLimited(resp.Body, maxIconSize)
+	if errors.Is(err, netx.ErrTooLarge) {
+		return "", httpx.BadRequest("icon is larger than 512 KB")
+	}
 	if err != nil {
 		return "", httpx.Errorf(http.StatusBadGateway, "fetch_failed", "Icon download failed")
-	}
-	if len(b) > maxIconSize {
-		return "", httpx.BadRequest("icon is larger than 512 KB")
 	}
 	if sniffIcon(b) != "png" {
 		return "", httpx.Errorf(http.StatusBadGateway, "fetch_failed", "CDN did not return a PNG")

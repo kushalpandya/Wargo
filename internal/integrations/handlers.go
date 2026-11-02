@@ -514,7 +514,8 @@ func (s *Service) handleAdd(w http.ResponseWriter, r *http.Request) error {
 		if !strings.HasPrefix(in.Magnet, "magnet:?") || len(in.Magnet) > 16<<10 {
 			return httpx.BadRequest("magnet must start with magnet:?")
 		}
-		target = in.Magnet
+		// Never audit the raw link: tracker URLs often embed passkeys.
+		target = "magnet link"
 		if h := torrent.MagnetInfoHash(in.Magnet); h != "" {
 			target = h
 		}

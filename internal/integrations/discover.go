@@ -14,9 +14,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/docker"
 	"github.com/kushalpandya/wargo/internal/host"
+	"github.com/kushalpandya/wargo/internal/netx"
 )
 
 // dockerContainer is the subset of GET /containers/json we use.
@@ -56,18 +59,9 @@ func listContainers(ctx context.Context, socket string) ([]dockerContainer, erro
 	if socket == "" {
 		return nil, errors.New("docker socket not configured")
 	}
-	hc := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", socket)
-		}},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/containers/json", nil)
-	if err != nil {
-		return nil, err
-	}
-	res, err := hc.Do(req)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	res, err := docker.Shared(socket).Do(ctx, http.MethodGet, "/containers/json", nil)
 	if err != nil {
 		var ue interface{ Unwrap() error }
 		if errors.As(err, &ue) {
@@ -75,7 +69,7 @@ func listContainers(ctx context.Context, socket string) ([]dockerContainer, erro
 		}
 		return nil, fmt.Errorf("docker: %w", err)
 	}
-	defer res.Body.Close()
+	defer netx.Drain(res)
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("docker: HTTP %d", res.StatusCode)
 	}
@@ -186,18 +180,41 @@ func candidate(c dockerContainer, all []dockerContainer, port int, path string) 
 // (checked with the admin's identity in container mode).
 func readable(path string) bool {
 	return host.AsUser(func() error {
-		p := host.Path(path)
-		st, err := os.Lstat(p)
-		if err != nil {
-			return err
-		}
-		if !st.Mode().IsRegular() {
-			return os.ErrInvalid
-		}
-		f, err := os.Open(p)
+		f, err := openConfigFile(path)
 		if err != nil {
 			return err
 		}
 		return f.Close()
 	}) == nil
+}
+
+// openConfigFile opens a container's config file given as a host path.
+// The file lives in a folder the container itself can write to, so it is
+// treated as hostile: the folder's symlinks are resolved inside the host
+// root (container mode), the file itself must not be a symlink (O_NOFOLLOW,
+// checked atomically on open rather than with a racy Lstat), O_NONBLOCK
+// keeps a FIFO from hanging the request, and the descriptor must be a
+// regular file. Callers run this with the admin's identity.
+func openConfigFile(path string) (*os.File, error) {
+	dir, err := host.Resolve(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(dir, filepath.Base(path)), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, errors.New("config.xml is a symbolic link")
+		}
+		return nil, err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		f.Close()
+		return nil, errors.New("config.xml is not a regular file")
+	}
+	return f, nil
 }

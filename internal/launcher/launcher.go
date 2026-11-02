@@ -68,7 +68,7 @@ func New(st *store.Store, al *audit.Log, dataDir, dockerSock string) *Service {
 		st: st, audit: al, iconDir: dataDir + "/icons", dockerSock: dockerSock,
 		health:     newHealthChecker(),
 		iconBase:   DashboardIconsBase,
-		iconClient: newHTTPClient(15e9),
+		iconClient: newIconClient(),
 	}
 }
 

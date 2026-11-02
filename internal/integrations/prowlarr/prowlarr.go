@@ -17,9 +17,15 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/integrations/torrent"
+	"github.com/kushalpandya/wargo/internal/netx"
 )
 
-const maxAPIResponse = 32 << 20
+const (
+	maxAPIResponse = 32 << 20
+	// maxMagnet bounds a magnet link taken from a redirect (they are kept
+	// in the result cache).
+	maxMagnet = 64 << 10
+)
 
 var (
 	ErrUnauthorized = errors.New("prowlarr: API key rejected")
@@ -40,10 +46,12 @@ type Client struct {
 
 func New(baseURL, apiKey string) *Client {
 	return &Client{
-		BaseURL:       strings.TrimRight(baseURL, "/"),
-		APIKey:        apiKey,
-		HTTP:          &http.Client{Timeout: 15 * time.Second},
-		Download:      &http.Client{Timeout: 45 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		APIKey:  apiKey,
+		// The API key travels in X-Api-Key, which net/http would forward on
+		// a cross-host redirect: only follow redirects within the host.
+		HTTP:          &http.Client{Timeout: 15 * time.Second, CheckRedirect: netx.SameHostRedirects(5)},
+		Download:      &http.Client{Timeout: 45 * time.Second, CheckRedirect: netx.NoRedirects},
 		SearchTimeout: 90 * time.Second,
 	}
 }
@@ -74,10 +82,7 @@ func (c *Client) do(ctx context.Context, hc *http.Client, method, path string, q
 	if err != nil {
 		return fmt.Errorf("prowlarr: %w", stripURL(err))
 	}
-	defer func() {
-		io.Copy(io.Discard, io.LimitReader(res.Body, 64<<10))
-		res.Body.Close()
-	}()
+	defer netx.Drain(res)
 	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
 		return ErrUnauthorized
 	}
@@ -367,17 +372,20 @@ func (c *Client) Fetch(ctx context.Context, link string) (*Fetched, error) {
 	switch {
 	case res.StatusCode >= 300 && res.StatusCode < 400:
 		loc := res.Header.Get("Location")
+		if len(loc) > maxMagnet {
+			return nil, errors.New("prowlarr: magnet link is too long")
+		}
 		if strings.HasPrefix(strings.ToLower(loc), "magnet:") {
 			return &Fetched{Magnet: loc}, nil
 		}
 		return nil, errors.New("prowlarr: download redirected to an unsupported location")
 	case res.StatusCode == http.StatusOK:
-		b, err := io.ReadAll(io.LimitReader(res.Body, torrent.MaxSize+1))
-		if err != nil {
-			return nil, fmt.Errorf("prowlarr: download failed: %w", err)
-		}
-		if len(b) > torrent.MaxSize {
+		b, err := netx.ReadLimited(res.Body, torrent.MaxSize)
+		if errors.Is(err, netx.ErrTooLarge) {
 			return nil, torrent.ErrTooLarge
+		}
+		if err != nil {
+			return nil, fmt.Errorf("prowlarr: download failed: %w", stripURL(err))
 		}
 		return &Fetched{Torrent: b}, nil
 	default:

@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -586,21 +585,15 @@ func readAPIKey(path string) (key string, err error) {
 	// The path is a host path; read it as the admin user.
 	err = host.AsUser(func() error {
 		var e error
-		key, e = readAPIKeyFile(host.Path(path))
+		key, e = readAPIKeyFile(path)
 		return e
 	})
 	return key, err
 }
 
+// readAPIKeyFile reads the key from the host path of a config.xml.
 func readAPIKeyFile(path string) (string, error) {
-	st, err := os.Lstat(path)
-	if err != nil {
-		return "", err
-	}
-	if !st.Mode().IsRegular() {
-		return "", errors.New("config.xml is not a regular file")
-	}
-	f, err := os.Open(path)
+	f, err := openConfigFile(path)
 	if err != nil {
 		return "", err
 	}

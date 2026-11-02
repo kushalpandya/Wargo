@@ -5,12 +5,11 @@ package launcher
 import (
 	"context"
 	"crypto/tls"
-	"errors"
-	"io"
-	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/kushalpandya/wargo/internal/netx"
 )
 
 const (
@@ -42,26 +41,9 @@ func newHealthChecker() *healthChecker {
 // newHTTPClient returns a client that never follows redirects to non-HTTP
 // schemes and ignores proxy environment variables.
 func newHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			DialContext:           (&net.Dialer{Timeout: timeout}).DialContext,
-			TLSHandshakeTimeout:   timeout,
-			ResponseHeaderTimeout: timeout,
-			MaxIdleConns:          4,
-			IdleConnTimeout:       30 * time.Second,
-			DisableKeepAlives:     true,
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return http.ErrUseLastResponse
-			}
-			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-				return errors.New("redirect to unsupported scheme")
-			}
-			return nil
-		},
-	}
+	tr := netx.NewTransport(timeout)
+	tr.DisableKeepAlives = true
+	return &http.Client{Timeout: timeout, Transport: tr, CheckRedirect: netx.HTTPRedirects(5)}
 }
 
 func (h *healthChecker) kick() {
@@ -109,8 +91,7 @@ func (h *healthChecker) probe(ctx context.Context, url string) bool {
 		if err != nil {
 			return 0, err
 		}
-		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		resp.Body.Close()
+		netx.Drain(resp)
 		return resp.StatusCode, nil
 	}
 	code, err := try(http.MethodHead)

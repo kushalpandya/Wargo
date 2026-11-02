@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kushalpandya/wargo/internal/netx"
 )
 
 const (
@@ -49,10 +51,8 @@ type Client struct {
 // New returns a client for the given RPC URL (e.g. http://host:9091/transmission/rpc).
 func New(url, username, password string) *Client {
 	return &Client{URL: url, Username: username, Password: password, HTTP: &http.Client{
-		Timeout: 15 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+		Timeout:       15 * time.Second,
+		CheckRedirect: netx.NoRedirects,
 	}}
 }
 
@@ -141,10 +141,7 @@ func (c *Client) Call(ctx context.Context, method string, args any, out any) err
 	}
 }
 
-func drain(res *http.Response) {
-	io.Copy(io.Discard, io.LimitReader(res.Body, 64<<10))
-	res.Body.Close()
-}
+func drain(res *http.Response) { netx.Drain(res) }
 
 // Session is the subset of session-get Wargo uses.
 type Session struct {
