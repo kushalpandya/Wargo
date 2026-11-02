@@ -34,7 +34,7 @@ export function useMe(enabled = true) {
 export interface Capabilities {
   version: string;
   elevation: { sudo: boolean; passkey: boolean; noNewPrivsHint?: boolean };
-  docker?: { available: boolean; error?: string; casaos?: boolean };
+  docker?: { available: boolean; error?: string; casaos?: boolean; version?: string; apiVersion?: string; compose?: boolean };
   prowlarr?: { available: boolean; configured: boolean; hasTransmissionClient: boolean; version?: string; error?: string };
   transmission?: { available: boolean; configured: boolean; version?: string; error?: string };
   launcher?: { enabled: boolean; placement: "overview" | "page" };
