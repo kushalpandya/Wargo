@@ -90,6 +90,19 @@ func TestComposeProjectValidated(t *testing.T) {
 	}
 }
 
+func TestComposeFilesValidated(t *testing.T) {
+	for _, files := range [][]string{
+		{"/srv/compose.yaml", "override.yaml"},
+		{"/srv/compose.yaml", "/srv/../etc/x.yaml"},
+		{"-f"},
+	} {
+		args := append([]string{"/srv", "media"}, files...)
+		if err := composeUpdate(args, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "absolute") {
+			t.Errorf("%v: %v", files, err)
+		}
+	}
+}
+
 func TestPrivdTrustStoreShape(t *testing.T) {
 	good := `{"userHandle":"AAAA","rpIds":["wargo.example.com"],"credentials":[{"id":"AQ==","publicKey":"AQ=="}]}`
 	if err := validTrustStore([]byte(good)); err != nil {

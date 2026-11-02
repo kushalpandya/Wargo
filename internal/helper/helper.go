@@ -294,22 +294,32 @@ func power(args []string) error {
 }
 
 // compose-update <working_dir> <project> <config_file>
+// compose-update <dir> <project> <file> [file...]: compose projects may
+// be split across several files (base + overrides); all are passed on.
 func composeUpdate(args []string, stdout, stderr io.Writer) error {
-	if len(args) != 3 {
-		return errors.New("usage: compose-update <dir> <project> <file>")
+	if len(args) < 3 || len(args) > 3+15 {
+		return errors.New("usage: compose-update <dir> <project> <file> [file...]")
 	}
-	dir, project, file := args[0], args[1], args[2]
-	if !filepath.IsAbs(dir) || !filepath.IsAbs(file) {
+	dir, project, files := args[0], args[1], args[2:]
+	if !filepath.IsAbs(dir) {
 		return errors.New("paths must be absolute")
+	}
+	var fileArgs []string
+	for _, f := range files {
+		if !filepath.IsAbs(f) || filepath.Clean(f) != f {
+			return errors.New("paths must be absolute")
+		}
+		fileArgs = append(fileArgs, "-f", f)
 	}
 	// The project is passed as the value of -p: it must not look like an
 	// option (or carry anything else docker would parse).
 	if !composeProjectRe.MatchString(project) {
 		return fmt.Errorf("invalid compose project name %q", project)
 	}
+	base := append([]string{"compose", "-p", project}, fileArgs...)
 	for _, step := range [][]string{
-		{"compose", "-p", project, "-f", file, "pull"},
-		{"compose", "-p", project, "-f", file, "up", "-d", "--remove-orphans"},
+		append(append([]string{}, base...), "pull"),
+		append(append([]string{}, base...), "up", "-d", "--remove-orphans"),
 	} {
 		// Native: plain exec in dir. Container: the host's docker CLI, as
 		// root, in the host's namespaces.

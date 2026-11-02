@@ -296,7 +296,7 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request, id string
 			job.Progress("Updating via docker compose (elevated)", -1, "")
 			var out []byte
 			out, err = s.elevate.Run(rr, "containers.update", fmt.Sprintf("docker compose pull && up -d (project %s)", project),
-				s.elevate.Helper("compose-update", dir, project, files[0]), nil)
+				s.elevate.Helper(append([]string{"compose-update", dir, project}, files...)...), nil)
 			if len(out) > 0 {
 				job.Log(string(out))
 			}
