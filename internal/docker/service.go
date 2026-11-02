@@ -50,6 +50,7 @@ type Service struct {
 	updating  map[string]bool        // container full ids being updated
 	statsPrev map[string]statsPrev
 	caps      *capsCache
+	probes    *prober // Wargo's own reachability checks
 
 	composeOnce sync.Once
 	composeOK   bool
@@ -104,6 +105,7 @@ func New(socket string, hub *events.Hub, jm *jobs.Manager, al *audit.Log, el *el
 	s := &Service{
 		c: Shared(socket), hub: hub, jobs: jm, audit: al, elevate: el, settle: 3 * time.Second,
 		updates: map[string]UpdateCheck{}, updating: map[string]bool{}, statsPrev: map[string]statsPrev{},
+		probes: newProber(),
 		images: map[string]imageMeta{}, checkDelay: 2 * time.Minute,
 	}
 	s.composeAvailable = s.detectCompose
@@ -265,6 +267,13 @@ func (s *Service) List(ctx context.Context, fresh bool) ([]Container, error) {
 			l[i].UpdateCheckedAt = u.CheckedAt
 		}
 	}
+	s.mu.Unlock()
+	for i := range l {
+		if l[i].Health == "" && s.probes != nil {
+			l[i].Probe = s.probes.result(l[i].FullID)
+		}
+	}
+	s.mu.Lock()
 	s.list, s.listAt, s.raw = l, time.Now(), raw
 	s.mu.Unlock()
 	return l, nil
@@ -296,6 +305,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 		if err != nil {
 			return dockerErr(err)
 		}
+		s.probes.viewed()
 		httpx.OK(w, l)
 		return nil
 	}))
@@ -576,6 +586,9 @@ func (s *Service) Run(ctx context.Context) {
 	go s.watchEvents(ctx)
 	go s.pollStats(ctx)
 	go s.autoCheck(ctx)
+	if s.hub != nil {
+		go s.probeLoop(ctx)
+	}
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
 	for {

@@ -98,6 +98,9 @@ type Container struct {
 	// Icon is a Wargo URL for the container's logo; omitted when no
 	// candidate exists. It may still 404 (show a fallback).
 	Icon string `json:"icon,omitempty"`
+	// Probe is Wargo's own reachability check, set only for running
+	// containers without a Docker health check.
+	Probe *Probe `json:"probe,omitempty"`
 }
 
 const (
