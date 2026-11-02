@@ -106,6 +106,12 @@ type Collector struct {
 	fs      []Filesystem
 	fsAt    time.Time
 
+	// Sampler-only state (sample runs on one goroutine).
+	hwmon   hwmonSensors
+	hwmonAt time.Time
+	cpuFreq []string // scaling_cur_freq files
+	freqAt  time.Time
+
 	prevNet  map[string]net.IOCountersStat
 	prevDisk map[string]disk.IOCountersStat
 	prevAt   time.Time
@@ -171,14 +177,22 @@ func (c *Collector) sample(ctx context.Context) {
 	if l, err := load.AvgWithContext(ctx); err == nil {
 		s.CPU.Load = [3]float64{l.Load1, l.Load5, l.Load15}
 	}
-	s.CPU.FreqMHz = avgFreq()
+	// Sensor and cpufreq file lists are rescanned once a minute (hotplug,
+	// module loads) instead of globbing sysfs every second.
+	if now.Sub(c.freqAt) > time.Minute {
+		c.cpuFreq, c.freqAt = cpuFreqFiles(), now
+	}
+	s.CPU.FreqMHz = avgFreq(c.cpuFreq)
 
 	if vm, err := mem.VirtualMemoryWithContext(ctx); err == nil {
 		s.Memory = Memory{Total: vm.Total, Used: vm.Used, Available: vm.Available, Cached: vm.Cached,
 			Buffers: vm.Buffers, SwapTotal: vm.SwapTotal, SwapUsed: vm.SwapTotal - vm.SwapFree, UsedPct: vm.UsedPercent}
 	}
 
-	s.Temps, s.Fans = readHwmon(hostfs.Path("/sys/class/hwmon"))
+	if now.Sub(c.hwmonAt) > time.Minute {
+		c.hwmon, c.hwmonAt = scanHwmon(hostfs.Path("/sys/class/hwmon")), now
+	}
+	s.Temps, s.Fans = c.hwmon.read()
 	for _, t := range s.Temps {
 		if t.Kind == "cpu" {
 			s.CPUTemp = t.Value
@@ -254,8 +268,12 @@ func (c *Collector) sample(ctx context.Context) {
 	c.hub.Publish(Topic, s)
 }
 
-func avgFreq() float64 {
+func cpuFreqFiles() []string {
 	files, _ := filepath.Glob(hostfs.Path("/sys/devices/system/cpu") + "/cpu[0-9]*/cpufreq/scaling_cur_freq")
+	return files
+}
+
+func avgFreq(files []string) float64 {
 	if len(files) == 0 {
 		return 0
 	}

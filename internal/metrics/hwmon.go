@@ -73,50 +73,76 @@ func chipKind(chip, label string) string {
 	return "other"
 }
 
-// readHwmon scans /sys/class/hwmon for temperatures and fans, dropping
-// readings that are obviously disconnected sensors.
-func readHwmon(root string) ([]Temp, []Fan) {
+// hwmonSensor is one discovered *_input file with its static attributes.
+type hwmonSensor struct {
+	input       string
+	chip, label string
+	high, crit  float64
+	kind        string
+}
+
+// hwmonSensors is the result of scanning /sys/class/hwmon. Chip names,
+// labels and limits don't change at runtime, so the scan (dozens of globs
+// and reads) is cached and only the *_input files are read per sample.
+type hwmonSensors struct {
+	temps, fans []hwmonSensor
+}
+
+func scanHwmon(root string) hwmonSensors {
+	var hs hwmonSensors
 	dirs, _ := filepath.Glob(filepath.Join(root, "hwmon*"))
-	var temps []Temp
-	var fans []Fan
 	for _, d := range dirs {
 		chip := readStr(filepath.Join(d, "name"))
 		inputs, _ := filepath.Glob(filepath.Join(d, "temp*_input"))
 		for _, in := range inputs {
 			base := strings.TrimSuffix(in, "_input")
-			v, ok := readInt(in)
-			if !ok {
-				continue
-			}
-			c := float64(v) / 1000
-			if c <= 0 || c >= 105 {
-				continue
-			}
 			label := readStr(base + "_label")
 			if label == "" {
 				label = chip
 			}
-			t := Temp{Chip: chip, Label: label, Value: c, Kind: chipKind(chip, label)}
+			t := hwmonSensor{input: in, chip: chip, label: label, kind: chipKind(chip, label)}
 			if h, ok := readInt(base + "_max"); ok && h > 0 {
-				t.High = float64(h) / 1000
+				t.high = float64(h) / 1000
 			}
 			if h, ok := readInt(base + "_crit"); ok && h > 0 {
-				t.Crit = float64(h) / 1000
+				t.crit = float64(h) / 1000
 			}
-			temps = append(temps, t)
+			hs.temps = append(hs.temps, t)
 		}
 		finputs, _ := filepath.Glob(filepath.Join(d, "fan*_input"))
 		for _, in := range finputs {
-			v, ok := readInt(in)
-			if !ok || v <= 0 {
-				continue
-			}
 			label := readStr(strings.TrimSuffix(in, "_input") + "_label")
 			if label == "" {
 				label = strings.TrimSuffix(filepath.Base(in), "_input")
 			}
-			fans = append(fans, Fan{Chip: chip, Label: label, RPM: int(v)})
+			hs.fans = append(hs.fans, hwmonSensor{input: in, chip: chip, label: label})
 		}
+	}
+	return hs
+}
+
+// read samples the sensors, dropping readings that are obviously
+// disconnected sensors.
+func (hs hwmonSensors) read() ([]Temp, []Fan) {
+	var temps []Temp
+	var fans []Fan
+	for _, sn := range hs.temps {
+		v, ok := readInt(sn.input)
+		if !ok {
+			continue
+		}
+		c := float64(v) / 1000
+		if c <= 0 || c >= 105 {
+			continue
+		}
+		temps = append(temps, Temp{Chip: sn.chip, Label: sn.label, Value: c, High: sn.high, Crit: sn.crit, Kind: sn.kind})
+	}
+	for _, sn := range hs.fans {
+		v, ok := readInt(sn.input)
+		if !ok || v <= 0 {
+			continue
+		}
+		fans = append(fans, Fan{Chip: sn.chip, Label: sn.label, RPM: int(v)})
 	}
 	order := map[string]int{"cpu": 0, "gpu": 1, "disk": 2, "board": 3, "wifi": 4, "core": 5, "other": 6}
 	sort.SliceStable(temps, func(a, b int) bool {
@@ -130,6 +156,9 @@ func readHwmon(root string) ([]Temp, []Fan) {
 	})
 	return temps, fans
 }
+
+// readHwmon scans root and samples it once.
+func readHwmon(root string) ([]Temp, []Fan) { return scanHwmon(root).read() }
 
 // natLess compares strings with embedded numbers naturally ("Core 2" < "Core 10").
 func natLess(a, b string) bool {
