@@ -74,10 +74,16 @@ type Files struct {
 	Roots       []Root `toml:"roots"`
 	TrashDir    string `toml:"trash_dir"`
 	MaxEditSize int64  `toml:"max_edit_size"`
+	// ShowMounts lists mounted filesystems ("Drives") next to the roots.
+	ShowMounts bool `toml:"show_mounts"`
 }
 
 type Docker struct {
 	Socket string `toml:"socket"`
+	// UpdateCheckInterval is how often container images are checked for
+	// newer versions in the background (read-only registry lookups).
+	// "0" disables background checks.
+	UpdateCheckInterval Duration `toml:"update_check_interval"`
 }
 
 type Integrations struct {
@@ -111,9 +117,9 @@ func Default() Config {
 			SessionMax:  Duration{12 * time.Hour},
 			RequireTOTP: true,
 		},
-		Docker:  Docker{Socket: "/var/run/docker.sock"},
+		Docker:  Docker{Socket: "/var/run/docker.sock", UpdateCheckInterval: Duration{6 * time.Hour}},
 		Metrics: Metrics{Interval: Duration{time.Second}, History: Duration{10 * time.Minute}},
-		Files:   Files{MaxEditSize: 4 << 20},
+		Files:   Files{MaxEditSize: 4 << 20, ShowMounts: true},
 	}
 	if u, err := user.Current(); err == nil {
 		c.Auth.User = u.Username

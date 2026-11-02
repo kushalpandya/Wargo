@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Fragment, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpCircle,
   Boxes,
@@ -16,9 +15,8 @@ import {
   RotateCw,
   Square,
 } from "lucide-react";
-import { api } from "@/lib/api";
-import { useTopic, useTopicValue } from "@/lib/ws";
-import { bytes, pct } from "@/lib/format";
+import { useTopicValue } from "@/lib/ws";
+import { ago, bytes, pct } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
@@ -38,6 +36,8 @@ import { Table, Td, Th, THead, Tr } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
 import { containerTone } from "@/features/overview/ContainersSummary";
 import { ContainerSheet, type SheetTab } from "./ContainerSheet";
+import { ContainerIcon } from "./ContainerIcon";
+import { useCheckContainerUpdates, useContainers, useContainerUpdates } from "./api";
 import { useContainerActions, type Action } from "./actions";
 import {
   displayPorts,
@@ -46,7 +46,7 @@ import {
   splitImage,
   statusText,
 } from "./util";
-import type { Container, ContainerStats, UpdateCheck } from "./types";
+import type { Container, ContainerStats } from "./types";
 
 type Filter = "all" | "running" | "stopped" | "attention";
 
@@ -59,7 +59,8 @@ function needsAttention(c: Container) {
   );
 }
 
-function Summary({ list, checked }: { list?: Container[]; checked: boolean }) {
+function Summary({ list, checkedAt }: { list?: Container[]; checkedAt?: number | null }) {
+  const checked = !!checkedAt;
   const s = useMemo(() => {
     if (!list) return null;
     return {
@@ -97,8 +98,8 @@ function Summary({ list, checked }: { list?: Container[]; checked: boolean }) {
           value: checked ? s.updates : "—",
           sub: checked
             ? s.updates
-              ? "images have newer versions"
-              : "all up to date"
+              ? `newer images · checked ${ago(checkedAt!)}`
+              : `all up to date · checked ${ago(checkedAt!)}`
             : "not checked yet",
           tone: s.updates ? ("accent" as const) : undefined,
         },
@@ -253,21 +254,30 @@ function ActionMenu({
   );
 }
 
-function ImageCell({ image }: { image: string }) {
-  const [, tag] = splitImage(image);
+function ImageCell({ c }: { c: Container }) {
+  const [, tag] = splitImage(c.image);
+  const showVersion = !!c.version && c.version !== tag;
   return (
-    <span className="num truncate text-xs text-muted" title={image}>
-      {shortImage(image)}
+    <span
+      className="num truncate text-xs text-muted"
+      title={`${c.image}${showVersion ? ` · version ${c.version}` : ""}`}
+    >
+      {shortImage(c.image)}
       <span className="text-subtle">:</span>
       <span className={cn(tag === "latest" ? "text-subtle" : "text-fg")}>
         {tag}
       </span>
+      {showVersion && (
+        <>
+          <span className="text-subtle"> · </span>
+          <span className="text-fg">{c.version}</span>
+        </>
+      )}
     </span>
   );
 }
 
 export default function Page() {
-  const qc = useQueryClient();
   const nav = useNavigate();
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
@@ -277,29 +287,15 @@ export default function Page() {
   const [group, setGroup] = useState(
     () => localStorage.getItem("wargo.containers.group") === "1",
   );
-  const list = useQuery({
-    queryKey: ["containers"],
-    queryFn: () => api.get<Container[]>("/api/containers"),
-    refetchInterval: 30_000,
-  });
-  useTopic<Container[]>("containers", (d) =>
-    qc.setQueryData(["containers"], d),
-  );
+  const list = useContainers();
   const stats =
     useTopicValue<Record<string, ContainerStats>>("containers.stats");
-  const updates = useQuery({
-    queryKey: ["containers", "updates"],
-    queryFn: () =>
-      api.get<Record<string, UpdateCheck>>("/api/containers/updates"),
-  });
-  const check = useMutation({
-    mutationFn: () =>
-      api.post<Record<string, UpdateCheck>>("/api/containers/check-updates"),
-    onSuccess: (res) => {
-      qc.setQueryData(["containers", "updates"], res);
-      qc.invalidateQueries({ queryKey: ["containers"] });
-      const n = Object.values(res).filter((u) => u.updateAvailable).length;
-      const failed = Object.values(res).filter(
+  const updates = useContainerUpdates();
+  const check = useCheckContainerUpdates({
+    onSuccess: (st) => {
+      const res = Object.values(st.results);
+      const n = res.filter((u) => u.updateAvailable).length;
+      const failed = res.filter(
         (u) => u.error && u.updateAvailable === null,
       ).length;
       toast.ok(
@@ -311,8 +307,8 @@ export default function Page() {
     },
     onError: (e) => toast.error("Update check failed", e),
   });
+  const checking = check.isPending || !!updates.data?.checking;
   const actions = useContainerActions();
-  const checked = Object.keys(updates.data ?? {}).length > 0;
 
   const data = list.data;
   const ql = q.trim().toLowerCase();
@@ -393,18 +389,18 @@ export default function Page() {
             <Button
               size="sm"
               icon={
-                <RefreshCw className={cn(check.isPending && "animate-spin")} />
+                <RefreshCw className={cn(checking && "animate-spin")} />
               }
               onClick={() => check.mutate()}
               loading={false}
-              disabled={check.isPending}
+              disabled={checking}
             >
-              {check.isPending ? "Checking…" : "Check for updates"}
+              {checking ? "Checking…" : "Check for updates"}
             </Button>
           </>
         }
       />
-      <Summary list={data} checked={checked} />
+      <Summary list={data} checkedAt={updates.data?.checkedAt} />
       <Card>
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
           <SearchInput
@@ -503,9 +499,10 @@ export default function Page() {
                           >
                             <Td className="py-2">
                               <div className="flex min-w-0 items-center gap-2.5">
-                                <StatusDot
-                                  tone={containerTone(c)}
-                                  label={c.health ?? c.state}
+                                <ContainerIcon
+                                  c={c}
+                                  status={containerTone(c)}
+                                  statusLabel={c.health ?? c.state}
                                 />
                                 <div className="min-w-0">
                                   <div className="truncate font-medium">
@@ -514,15 +511,15 @@ export default function Page() {
                                   <div className="mt-0.5 flex flex-wrap items-center gap-1 empty:hidden">
                                     <Badges c={c} />
                                   </div>
-                                  <div className="lg:hidden">
-                                    <ImageCell image={c.image} />
+                                  <div className="flex min-w-0 lg:hidden">
+                                    <ImageCell c={c} />
                                   </div>
                                 </div>
                               </div>
                             </Td>
                             <Td className="max-lg:hidden">
                               <div className="flex min-w-0">
-                                <ImageCell image={c.image} />
+                                <ImageCell c={c} />
                               </div>
                             </Td>
                             <Td>
@@ -594,10 +591,11 @@ export default function Page() {
                               onClick={() => open(c)}
                               className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
                             >
-                              <StatusDot
-                                tone={containerTone(c)}
-                                label={c.health ?? c.state}
-                                className="mt-1.5"
+                              <ContainerIcon
+                                c={c}
+                                status={containerTone(c)}
+                                statusLabel={c.health ?? c.state}
+                                className="mt-0.5"
                               />
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-baseline gap-2">
@@ -611,7 +609,7 @@ export default function Page() {
                                   )}
                                 </div>
                                 <div className="flex min-w-0">
-                                  <ImageCell image={c.image} />
+                                  <ImageCell c={c} />
                                 </div>
                                 <div className="mt-0.5 truncate text-xs text-muted">
                                   {statusText(c)}
@@ -634,7 +632,7 @@ export default function Page() {
                             <PortLinks
                               c={c}
                               max={4}
-                              className="mt-1.5 pl-[1.125rem]"
+                              className="mt-1.5 pl-[2.625rem]"
                             />
                           )}
                         </li>

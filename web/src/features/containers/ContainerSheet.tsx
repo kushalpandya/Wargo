@@ -11,6 +11,7 @@ import { Sheet } from "@/components/ui/dialog";
 import { Badge, EmptyState, ErrorNote, Field, Meter, Skeleton, StatusDot } from "@/components/ui/misc";
 import { containerTone } from "@/features/overview/ContainersSummary";
 import { LogsView } from "./LogsView";
+import { ContainerIcon } from "./ContainerIcon";
 import { parseTime, PortLinks, splitImage } from "./util";
 import type { Action } from "./actions";
 import type { Container, ContainerDetails, ContainerStats } from "./types";
@@ -58,6 +59,7 @@ function Overview({ d, stats }: { d: ContainerDetails; stats?: ContainerStats })
               <span className="text-accent">:{tag}</span>
             </span>
           </Field>
+          {d.version && d.version !== tag && <Field label="Version" mono>{d.version}</Field>}
           <Field label="Image ID" mono>{d.imageId.replace("sha256:", "").slice(0, 12)}</Field>
           {d.imageInfo && <Field label="Image size" mono>{bytes(d.imageInfo.size)}</Field>}
           <Field label="Created">{datetime(d.createdAt)}</Field>
@@ -256,7 +258,7 @@ export function ContainerSheet({
       width="max-w-3xl"
       title={
         <span className="flex items-center gap-2">
-          {c && <StatusDot tone={containerTone(c)} label={c.health ?? c.state} />}
+          {c && <ContainerIcon c={c} size="sm" status={containerTone(c)} statusLabel={c.health ?? c.state} />}
           {c?.name ?? id}
         </span>
       }

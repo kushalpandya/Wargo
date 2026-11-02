@@ -84,6 +84,18 @@ type Container struct {
 	Compose         *Compose `json:"compose,omitempty"`
 	CasaOS          bool     `json:"casaos"`
 	UpdateAvailable *bool    `json:"updateAvailable"`
+	// UpdateCheckedAt is when the image was last checked (unix ms, 0 = never).
+	UpdateCheckedAt int64 `json:"updateCheckedAt,omitempty"`
+	// Version is a best-effort human version of the image (labels, then
+	// tag, then short image id).
+	Version string `json:"version"`
+	// ImageRef is the image without tag/digest; Tag defaults to "latest"
+	// ("" for digest-pinned refs and images referenced by id).
+	ImageRef string `json:"imageRef"`
+	Tag      string `json:"tag"`
+	// Icon is a Wargo URL for the container's logo; omitted when no
+	// candidate exists. It may still 404 (show a fallback).
+	Icon string `json:"icon,omitempty"`
 }
 
 const (

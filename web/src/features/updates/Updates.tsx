@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
+import { useSearchParams } from "react-router";
+import { Tabs } from "radix-ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleCheck, Download, HardDrive, Lock, PackageCheck, PackageSearch, RefreshCw, RotateCw, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Boxes, CircleCheck, Download, HardDrive, Lock, PackageCheck, PackageSearch, RefreshCw, RotateCw, ShieldCheck, TriangleAlert } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { ago, bytes, datetime } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { useCapabilities } from "@/app/session";
 import { Card, CardBody, CardHeader, Stat } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { SearchInput } from "@/components/ui/form";
 import { Badge, EmptyState, ErrorNote, Notice, Skeleton, Spinner } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { statusKey, usePkgStatus, type CheckResult, type JobSnapshot, type PkgStatus, type Precheck } from "./api";
+import { statusKey, usePkgStatus, pendingCount, type CheckResult, type JobSnapshot, type PkgStatus, type Precheck } from "./api";
+import { useContainers, useContainerUpdates } from "@/features/containers/api";
+import { ContainerUpdates } from "./ContainerUpdates";
 import { GroupedUpdates, PlainList, matches } from "./UpdateList";
 import { RebootButton, RunPanel } from "./RunPanel";
 
@@ -208,7 +213,7 @@ function useDismissed(): [string | null, (id: string) => void] {
   ];
 }
 
-export default function UpdatesPage() {
+function SystemUpdates() {
   const { data: st, isLoading, error } = usePkgStatus();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
@@ -236,7 +241,7 @@ export default function UpdatesPage() {
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-[1600px]">
+      <div>
         <Skeleton className="mb-4 h-8 w-48" />
         <Skeleton className="mb-4 h-28 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -270,8 +275,8 @@ export default function UpdatesPage() {
   );
 
   return (
-    <div className="mx-auto max-w-[1600px]">
-      <PageTitle
+    <div>
+      <SystemToolbar
         status={st}
         actions={
           <>
@@ -368,18 +373,81 @@ export default function UpdatesPage() {
   );
 }
 
-function PageTitle({ status, actions }: { status: PkgStatus; actions: React.ReactNode }) {
+function SystemToolbar({ status, actions }: { status: PkgStatus; actions: React.ReactNode }) {
   return (
-    <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-      <div className="min-w-0">
-        <h1 className="text-lg font-semibold tracking-tight">Updates</h1>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
-          <span>{status.distro || "Unknown distribution"}</span>
-          {status.backend && <Badge tone="frost">{status.backend}</Badge>}
-          {status.fake && <Badge tone="warn">simulated upgrades</Badge>}
-        </div>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted">
+        <span>{status.distro || "Unknown distribution"}</span>
+        {status.backend && <Badge tone="frost">{status.backend}</Badge>}
+        {status.fake && <Badge tone="warn">simulated upgrades</Badge>}
       </div>
       <div className="flex flex-wrap items-center gap-2">{actions}</div>
+    </div>
+  );
+}
+
+type Tab = "system" | "containers";
+
+const tabCls =
+  "inline-flex h-10 items-center gap-2 border-b-2 border-transparent px-3 text-[0.8125rem] font-medium text-muted hover:text-fg data-[state=active]:border-accent data-[state=active]:text-fg [&_svg]:size-4";
+
+function Count({ n, loading, tone }: { n?: number; loading?: boolean; tone?: "accent" }) {
+  if (loading) return <Spinner className="size-3" />;
+  if (n === undefined) return null;
+  return (
+    <span
+      className={cn(
+        "num inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-2xs font-semibold leading-none",
+        n > 0 && tone === "accent" ? "bg-accent-soft text-accent" : "bg-surface-3 text-muted",
+      )}
+    >
+      {n > 999 ? "999+" : n}
+    </span>
+  );
+}
+
+/** Updates page: system packages and container images, as tabs. */
+export default function UpdatesPage() {
+  const [params, setParams] = useSearchParams();
+  const pkg = usePkgStatus();
+  const docker = useCapabilities().data?.docker;
+  const dockerOn = docker?.available !== false;
+  const containers = useContainers({ enabled: dockerOn });
+  const updates = useContainerUpdates({ enabled: dockerOn });
+
+  const pkgN = pkg.data ? pendingCount(pkg.data) : undefined;
+  const ctrN = containers.data ? containers.data.filter((c) => c.updateAvailable).length : undefined;
+  const param = params.get("tab");
+  // Without an explicit tab, open the one that has something to do.
+  const tab: Tab = param === "containers" || param === "system" ? param : pkgN === 0 && (ctrN ?? 0) > 0 ? "containers" : "system";
+
+  return (
+    <div className="mx-auto max-w-[1600px]">
+      <Tabs.Root value={tab} onValueChange={(v) => setParams(v === "system" ? {} : { tab: v }, { replace: true })}>
+        <div className="mb-4 border-b border-border">
+          <h1 className="text-lg font-semibold tracking-tight">Updates</h1>
+          <Tabs.List className="-mb-px mt-2 flex gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Update sources">
+            <Tabs.Trigger value="system" className={tabCls}>
+              <PackageCheck /> System packages <Count n={pkgN} loading={!!pkg.data?.checking || !!pkg.data?.running} tone="accent" />
+            </Tabs.Trigger>
+            <Tabs.Trigger value="containers" className={tabCls}>
+              <Boxes /> Containers <Count n={dockerOn ? ctrN : undefined} loading={!!updates.data?.checking} tone="accent" />
+            </Tabs.Trigger>
+          </Tabs.List>
+        </div>
+        <Tabs.Content value="system" className="focus-visible:outline-none">
+          <SystemUpdates />
+        </Tabs.Content>
+        <Tabs.Content value="containers" className="focus-visible:outline-none">
+          <ContainerUpdates
+            docker={docker}
+            list={containers.data}
+            listError={containers.error}
+            updates={updates.data}
+            updatesError={updates.error}
+          />
+        </Tabs.Content>
+      </Tabs.Root>
     </div>
   );
 }

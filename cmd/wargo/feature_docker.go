@@ -9,6 +9,10 @@ import (
 
 func init() {
 	server.RegisterFeature(func(d *server.Deps) (server.Registrar, error) {
-		return docker.New(d.Cfg.Docker.Socket, d.Hub, d.Jobs, d.Audit, d.Elevate), nil
+		return docker.New(d.Cfg.Docker.Socket, d.Hub, d.Jobs, d.Audit, d.Elevate).Configure(docker.Options{
+			Store:          d.Store,
+			DataDir:        d.Cfg.DataDir,
+			UpdateInterval: d.Cfg.Docker.UpdateCheckInterval.Duration,
+		}), nil
 	})
 }

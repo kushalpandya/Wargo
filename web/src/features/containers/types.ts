@@ -35,6 +35,22 @@ export interface Container {
   casaos?: boolean;
   /** null = not checked yet. */
   updateAvailable?: boolean | null;
+  /** When the image was last checked for updates (unix ms); absent = never. */
+  updateCheckedAt?: number;
+  /**
+   * Best-effort human version of the image: OCI version label, linuxserver
+   * build_version, "version" label, a non-"latest" tag, else short image id.
+   */
+  version: string;
+  /** Image without tag/digest, e.g. "lscr.io/linuxserver/plex". */
+  imageRef: string;
+  /** Image tag ("latest" by default; "" for digest-pinned or id-only images). */
+  tag: string;
+  /**
+   * Wargo URL of the container's logo (GET /api/containers/{id}/icon), present
+   * when a candidate exists. It can still 404: fall back to a letter avatar.
+   */
+  icon?: string;
 }
 
 /** Live stats published on the "containers.stats" topic: short id -> stats. */
@@ -50,11 +66,29 @@ export interface ContainerStats {
 
 export interface UpdateCheck {
   image: string;
+  /** null when the check failed (see error). A failed re-check keeps the previous answer and sets error. */
   updateAvailable: boolean | null;
   localDigest?: string;
   remoteDigest?: string;
   error?: string;
+  /** Unix ms. */
   checkedAt: number;
+}
+
+/** GET /api/containers/updates (and the answer of POST /api/containers/check-updates). */
+export interface UpdatesStatus {
+  /** When the last full check finished (unix ms), null if never. */
+  checkedAt: number | null;
+  /** A check (manual or background) is running. */
+  checking: boolean;
+  /** Next background check (unix ms); absent when background checks are disabled. */
+  nextCheckAt?: number;
+  /** Background check interval in ms (0 = disabled). */
+  intervalMs: number;
+  /** Short container id -> result for its image. */
+  results: Record<string, UpdateCheck>;
+  /** The last check could not run at all (e.g. Docker unreachable). */
+  error?: string;
 }
 
 export interface Mount {

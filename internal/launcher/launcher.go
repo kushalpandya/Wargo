@@ -67,7 +67,7 @@ func New(st *store.Store, al *audit.Log, dataDir, dockerSock string) *Service {
 	return &Service{
 		st: st, audit: al, iconDir: dataDir + "/icons", dockerSock: dockerSock,
 		health:     newHealthChecker(),
-		iconBase:   "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/",
+		iconBase:   DashboardIconsBase,
 		iconClient: newHTTPClient(15e9),
 	}
 }

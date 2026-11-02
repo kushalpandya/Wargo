@@ -22,6 +22,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/events"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
+	"github.com/kushalpandya/wargo/internal/store"
 )
 
 const (
@@ -52,6 +53,42 @@ type Service struct {
 
 	composeOnce sync.Once
 	composeOK   bool
+
+	// Optional (see Configure).
+	st     *store.Store
+	icons  *iconStore
+	raw    []apiContainer       // last raw list (for icon lookups)
+	images map[string]imageMeta // image id -> labels
+
+	// Update checks: interval 0 disables the background check.
+	checkInterval time.Duration
+	checkDelay    time.Duration // first background check after start
+	checkedAt     int64         // unix ms of the last completed full check
+	nextCheckAt   int64
+	checkDone     chan struct{} // non-nil while a check runs
+	checkErr      error
+}
+
+// Options configures the optional parts of the service.
+type Options struct {
+	// Store persists update-check results (key "docker.updates").
+	Store *store.Store
+	// DataDir enables container logos, cached in <DataDir>/icons/containers.
+	DataDir string
+	// UpdateInterval is how often images are checked in the background
+	// (0 disables; the first check runs ~2 minutes after start).
+	UpdateInterval time.Duration
+}
+
+// Configure applies opts and loads persisted update results.
+func (s *Service) Configure(o Options) *Service {
+	s.st = o.Store
+	s.checkInterval = o.UpdateInterval
+	if o.DataDir != "" {
+		s.icons = newIconStore(o.DataDir)
+	}
+	s.loadUpdates()
+	return s
 }
 
 type capsCache struct {
@@ -67,6 +104,7 @@ func New(socket string, hub *events.Hub, jm *jobs.Manager, al *audit.Log, el *el
 	s := &Service{
 		c: Shared(socket), hub: hub, jobs: jm, audit: al, elevate: el, settle: 3 * time.Second,
 		updates: map[string]UpdateCheck{}, updating: map[string]bool{}, statsPrev: map[string]statsPrev{},
+		images: map[string]imageMeta{}, checkDelay: 2 * time.Minute,
 	}
 	s.composeAvailable = s.detectCompose
 	return s
@@ -119,6 +157,8 @@ func (s *Service) Capabilities(ctx context.Context) (string, any) {
 		out["version"] = v.Version
 		out["apiVersion"] = s.c.APIVersion()
 		out["compose"] = s.composeAvailable()
+		out["updateCheckIntervalMs"] = s.checkInterval.Milliseconds()
+		out["icons"] = s.icons != nil
 	}
 	s.mu.Lock()
 	s.caps = &capsCache{at: time.Now(), val: out}
@@ -186,14 +226,18 @@ func (s *Service) List(ctx context.Context, fresh bool) ([]Container, error) {
 		return nil, err
 	}
 	l := convertList(raw)
+	s.enrich(ctx, raw, l)
 	s.mu.Lock()
 	for i := range l {
-		if u, ok := s.updates[l[i].Image+"|"+l[i].ImageID]; ok && u.UpdateAvailable != nil {
-			v := *u.UpdateAvailable
-			l[i].UpdateAvailable = &v
+		if u, ok := s.updates[l[i].Image+"|"+l[i].ImageID]; ok {
+			if u.UpdateAvailable != nil {
+				v := *u.UpdateAvailable
+				l[i].UpdateAvailable = &v
+			}
+			l[i].UpdateCheckedAt = u.CheckedAt
 		}
 	}
-	s.list, s.listAt = l, time.Now()
+	s.list, s.listAt, s.raw = l, time.Now(), raw
 	s.mu.Unlock()
 	return l, nil
 }
@@ -232,10 +276,11 @@ func (s *Service) Register(mux *http.ServeMux) {
 		if err != nil {
 			return dockerErr(err)
 		}
-		httpx.OK(w, s.updatesFor(l))
+		httpx.OK(w, s.updatesStatus(l))
 		return nil
 	}))
 	mux.HandleFunc("POST /api/containers/check-updates", httpx.Handler(s.handleCheckUpdates))
+	mux.HandleFunc("GET /api/containers/{id}/icon", httpx.Handler(s.handleIcon))
 	mux.HandleFunc("GET /api/containers/{id}", httpx.Handler(s.handleDetails))
 	mux.HandleFunc("GET /api/containers/{id}/logs", httpx.Handler(s.handleLogs))
 	mux.HandleFunc("GET /ws/containers/{id}/logs", s.handleLogsWS)
@@ -483,6 +528,7 @@ func (s *Service) handleAction(w http.ResponseWriter, r *http.Request) error {
 func (s *Service) Run(ctx context.Context) {
 	go s.watchEvents(ctx)
 	go s.pollStats(ctx)
+	go s.autoCheck(ctx)
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
 	for {

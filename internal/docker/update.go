@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/httpx"
@@ -30,18 +29,6 @@ type UpdateCheck struct {
 	RemoteDigest    string `json:"remoteDigest,omitempty"`
 	Error           string `json:"error,omitempty"`
 	CheckedAt       int64  `json:"checkedAt"`
-}
-
-func (s *Service) updatesFor(l []Container) map[string]UpdateCheck {
-	out := map[string]UpdateCheck{}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, c := range l {
-		if u, ok := s.updates[c.Image+"|"+c.ImageID]; ok {
-			out[c.ID] = u
-		}
-	}
-	return out
 }
 
 func digestOf(repoDigest string) string {
@@ -92,68 +79,13 @@ func (s *Service) checkImage(ctx context.Context, ref, imageID string) UpdateChe
 		} `json:"Descriptor"`
 	}
 	if err := s.c.call(ctx, http.MethodGet, "/distribution/"+ref+"/json", nil, &dist); err != nil {
-		u.Error = err.Error()
-		var ae *APIError
-		if errors.As(err, &ae) {
-			u.Error = ae.Message
-		}
+		u.Error = registryErr(err)
 		return u
 	}
 	u.RemoteDigest = dist.Descriptor.Digest
 	avail := u.RemoteDigest != "" && !local[u.RemoteDigest]
 	u.UpdateAvailable = &avail
 	return u
-}
-
-// CheckUpdates checks every container image (3 at a time) and caches results.
-func (s *Service) CheckUpdates(ctx context.Context) (map[string]UpdateCheck, error) {
-	l, err := s.List(ctx, true)
-	if err != nil {
-		return nil, err
-	}
-	type key struct{ ref, id string }
-	uniq := map[key]bool{}
-	for _, c := range l {
-		uniq[key{c.Image, c.ImageID}] = true
-	}
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 3)
-	results := map[string]UpdateCheck{}
-	var mu sync.Mutex
-	for k := range uniq {
-		wg.Add(1)
-		go func(k key) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-			r := s.checkImage(cctx, k.ref, k.id)
-			mu.Lock()
-			results[k.ref+"|"+k.id] = r
-			mu.Unlock()
-		}(k)
-	}
-	wg.Wait()
-	s.mu.Lock()
-	for k, v := range results {
-		s.updates[k] = v
-	}
-	s.list = nil
-	s.mu.Unlock()
-	go s.publishList(context.Background())
-	return s.updatesFor(l), nil
-}
-
-func (s *Service) handleCheckUpdates(w http.ResponseWriter, r *http.Request) error {
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
-	defer cancel()
-	out, err := s.CheckUpdates(ctx)
-	if err != nil {
-		return dockerErr(err)
-	}
-	httpx.OK(w, out)
-	return nil
 }
 
 // --- update ---
@@ -324,6 +256,12 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request, id string
 			s.audit.Record(rr, "containers.update", name, err, details)
 		}
 		job.Finish(err, result)
+		if err == nil {
+			go func() {
+				s.recheckContainer(context.Background(), name)
+				s.publishList(context.Background())
+			}()
+		}
 	}()
 	httpx.OK(w, map[string]any{"jobId": job.ID(), "strategy": strategy})
 	return nil
@@ -488,13 +426,6 @@ func (s *Service) UpdateRecreate(ctx context.Context, job *jobs.Job, id string) 
 	}
 	job.Log("Done")
 	return res, nil
-}
-
-func (s *Service) markUpToDate(ref, imageID string) {
-	f := false
-	s.mu.Lock()
-	s.updates[ref+"|"+imageID] = UpdateCheck{Image: ref, UpdateAvailable: &f, CheckedAt: time.Now().UnixMilli()}
-	s.mu.Unlock()
 }
 
 func sliceEqual(a, b any) bool {

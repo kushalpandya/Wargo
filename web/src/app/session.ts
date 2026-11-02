@@ -34,12 +34,32 @@ export function useMe(enabled = true) {
 export interface Capabilities {
   version: string;
   elevation: { sudo: boolean; passkey: boolean; noNewPrivsHint?: boolean };
-  docker?: { available: boolean; error?: string; casaos?: boolean; version?: string; apiVersion?: string; compose?: boolean };
+  docker?: {
+    available: boolean;
+    error?: string;
+    casaos?: boolean;
+    version?: string;
+    apiVersion?: string;
+    compose?: boolean;
+    /** Background image update-check interval (0 = disabled). */
+    updateCheckIntervalMs?: number;
+    /** Container logos are served at Container.icon. */
+    icons?: boolean;
+  };
   prowlarr?: { available: boolean; configured: boolean; hasTransmissionClient: boolean; version?: string; error?: string };
   transmission?: { available: boolean; configured: boolean; version?: string; error?: string };
   launcher?: { enabled: boolean; placement: "overview" | "page" };
   pkg?: { backend: string; available: boolean; distro: string };
-  files?: { roots: { id?: number; name: string; path: string }[]; trash?: boolean; maxEditSize?: number; chunkSize?: number };
+  files?: {
+    /** Configured places ("0", "1"…) followed by mounted drives ("m-…") when showMounts is on. */
+    roots: { id?: string | number; kind?: "place" | "drive"; name: string; path: string }[];
+    trash?: boolean;
+    maxEditSize?: number;
+    chunkSize?: number;
+    showMounts?: boolean;
+    /** Move/copy accept a destRoot different from root. */
+    crossRoot?: boolean;
+  };
   terminal?: { available: boolean; shell: string; tmux: boolean; sudo?: boolean; docker?: boolean; maxSessions?: number };
 }
 

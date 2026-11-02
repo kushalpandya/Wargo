@@ -46,6 +46,9 @@ path = "/DATA"
 
 [docker]
 socket = "/var/run/docker.sock"
+# Check container images for newer versions in the background (read-only
+# registry lookups; nothing is pulled). "0" disables.
+update_check_interval = "6h"
 
 [metrics]
 interval = "1s"
