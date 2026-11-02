@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { Columns2, Download, Search as SearchIcon, Square } from "lucide-react";
 import { useCapabilities } from "@/app/session";
@@ -14,6 +14,16 @@ type Tab = "search" | "downloads";
 type Layout = "tabs" | "split";
 
 const LAYOUT_KEY = "wargo.torrents.layout";
+
+/** Same-height heading for both split-view columns so they line up. */
+function ColumnHeading({ id, icon, children }: { id: string; icon: ReactNode; children: ReactNode }) {
+  return (
+    <h2 id={id} className="mb-2 flex h-4 items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle [&_svg]:size-3.5">
+      <span aria-hidden="true">{icon}</span>
+      {children}
+    </h2>
+  );
+}
 
 /**
  * Search (Prowlarr) and Downloads (Transmission) in one place: side by side
@@ -94,13 +104,16 @@ export default function Torrents() {
 
       {split ? (
         <div className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start gap-4">
-          <section aria-label="Search">
+          <section aria-labelledby="torrents-search">
+            <ColumnHeading id="torrents-search" icon={<SearchIcon />}>
+              Search
+            </ColumnHeading>
             <SearchPage embedded />
           </section>
-          <section aria-label="Downloads" className="sticky top-16">
-            <h2 className="mb-2 flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle">
-              <Download className="size-3.5" aria-hidden="true" /> Downloads
-            </h2>
+          <section aria-labelledby="torrents-downloads" className="sticky top-16">
+            <ColumnHeading id="torrents-downloads" icon={<Download />}>
+              Downloads
+            </ColumnHeading>
             <Downloads embedded />
           </section>
         </div>
