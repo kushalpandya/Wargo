@@ -8,8 +8,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
+	"unsafe"
 
 	"github.com/kushalpandya/wargo/internal/host"
 )
@@ -23,7 +25,7 @@ func openParent(root *os.Root, rel string) (*os.File, string, error) {
 		return nil, "", errors.New("invalid path: the root itself")
 	}
 	dir, base := path.Split(rel)
-	d, err := root.Open(Clean(dir))
+	d, err := OpenNonblock(root, Clean(dir))
 	if err != nil {
 		return nil, "", err
 	}
@@ -55,7 +57,8 @@ func RenameIn(root *os.Root, src, rel string) error {
 }
 
 // RenameOut moves rel inside root to the absolute path dst (e.g. a trash
-// folder). It fails with EXDEV across devices.
+// folder). It fails with EXDEV across devices and never replaces an
+// existing dst.
 func RenameOut(root *os.Root, rel, dst string) error {
 	d, base, err := openParent(root, rel)
 	if err != nil {
@@ -67,7 +70,7 @@ func RenameOut(root *os.Root, rel, dst string) error {
 		return err
 	}
 	defer dd.Close()
-	return renameat(int(d.Fd()), base, int(dd.Fd()), filepath.Base(dst))
+	return renameNoReplace(int(d.Fd()), base, int(dd.Fd()), filepath.Base(dst))
 }
 
 // RenameBetween moves src inside srcRoot to dst inside dstRoot without
@@ -85,6 +88,38 @@ func RenameBetween(srcRoot *os.Root, src string, dstRoot *os.Root, dst string) e
 	}
 	defer dd.Close()
 	return renameat(int(sd.Fd()), sb, int(dd.Fd()), db)
+}
+
+// RenameBetweenNoReplace is RenameBetween that fails with fs.ErrExist
+// instead of replacing an existing dst (atomically where the kernel and
+// filesystem support RENAME_NOREPLACE).
+func RenameBetweenNoReplace(srcRoot *os.Root, src string, dstRoot *os.Root, dst string) error {
+	sd, sb, err := openParent(srcRoot, src)
+	if err != nil {
+		return err
+	}
+	defer sd.Close()
+	dd, db, err := openParent(dstRoot, dst)
+	if err != nil {
+		return err
+	}
+	defer dd.Close()
+	return renameNoReplace(int(sd.Fd()), sb, int(dd.Fd()), db)
+}
+
+// RenameInNoReplace is RenameIn that never replaces an existing rel.
+func RenameInNoReplace(root *os.Root, src, rel string) error {
+	d, base, err := openParent(root, rel)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	sd, err := os.Open(filepath.Dir(src))
+	if err != nil {
+		return err
+	}
+	defer sd.Close()
+	return renameNoReplace(int(sd.Fd()), filepath.Base(src), int(d.Fd()), base)
 }
 
 // RealPath returns the absolute, symlink-free host path of rel (resolved
@@ -107,7 +142,7 @@ func RealPath(root *os.Root, rel string) (string, error) {
 }
 
 func fdPath(root *os.Root, rel string) (string, error) {
-	f, err := root.Open(rel)
+	f, err := OpenNonblock(root, rel)
 	if err != nil {
 		return "", err
 	}
@@ -144,6 +179,44 @@ func Dev(root *os.Root, rel string) (uint64, error) {
 		return uint64(s.Dev), nil
 	}
 	return 0, errors.ErrUnsupported
+}
+
+// sysRenameat2 is the renameat2(2) syscall number; package syscall doesn't
+// define it on every architecture. 0 means unknown (use the fallback).
+var sysRenameat2 = map[string]uintptr{
+	"amd64": 316, "386": 353, "arm": 382, "arm64": 276, "riscv64": 276, "loong64": 276,
+	"ppc64": 357, "ppc64le": 357, "s390x": 347,
+}[runtime.GOARCH]
+
+const flagRenameNoReplace = 1 // RENAME_NOREPLACE
+
+func renameNoReplace(oldfd int, oldname string, newfd int, newname string) error {
+	if sysRenameat2 != 0 {
+		op, err := syscall.BytePtrFromString(oldname)
+		if err != nil {
+			return err
+		}
+		np, err := syscall.BytePtrFromString(newname)
+		if err != nil {
+			return err
+		}
+		_, _, e := syscall.Syscall6(sysRenameat2, uintptr(oldfd), uintptr(unsafe.Pointer(op)),
+			uintptr(newfd), uintptr(unsafe.Pointer(np)), flagRenameNoReplace, 0)
+		switch e {
+		case 0:
+			return nil
+		case syscall.ENOSYS, syscall.EINVAL:
+			// Old kernel or a filesystem without RENAME_NOREPLACE: fall back.
+		default:
+			return &os.LinkError{Op: "rename", Old: oldname, New: newname, Err: e}
+		}
+	}
+	// Best effort (racy) check; newname is a single component, so the
+	// /proc path names the entry inside the open directory itself.
+	if _, err := os.Lstat("/proc/self/fd/" + strconv.Itoa(newfd) + "/" + newname); err == nil {
+		return &os.LinkError{Op: "rename", Old: oldname, New: newname, Err: syscall.EEXIST}
+	}
+	return renameat(oldfd, oldname, newfd, newname)
 }
 
 func renameat(oldfd int, oldname string, newfd int, newname string) error {

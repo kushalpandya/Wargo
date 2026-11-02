@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/fsops"
@@ -92,7 +93,7 @@ func (s *Service) handleArchive(w http.ResponseWriter, r *http.Request) error {
 func createArchive(ctx context.Context, root *os.Root, job *jobs.Job, paths []string, dest, format string) (map[string]any, error) {
 	job.Progress("Scanning", -1, "")
 	total, files, _ := measure(ctx, root, paths, 0, 0)
-	tmp := join(parentOf(dest), "."+baseName(dest)+".partial")
+	tmp := join(parentOf(dest), sideName(".", baseName(dest), ".partial"))
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return nil, err
@@ -191,7 +192,7 @@ func writeTar(ctx context.Context, tw *tar.Writer, root *os.Root, paths []string
 			if !info.Mode().IsRegular() {
 				return nil
 			}
-			f, err := root.Open(p)
+			f, _, err := openRegular(root, p)
 			if err != nil {
 				return err
 			}
@@ -249,14 +250,11 @@ func (s *Service) handleExtract(w http.ResponseWriter, r *http.Request) error {
 
 // sniffArchive identifies zip / tar / tar.gz by content.
 func sniffArchive(root *os.Root, p string) (string, error) {
-	f, err := root.Open(p)
+	f, _, err := openRegular(root, p)
 	if err != nil {
 		return "", fsErr(err, p)
 	}
 	defer f.Close()
-	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
-		return "", httpx.BadRequest("not a regular file")
-	}
 	head := make([]byte, 512)
 	n, _ := io.ReadFull(f, head)
 	head = head[:n]
@@ -378,15 +376,11 @@ func extract(ctx context.Context, root *os.Root, job *jobs.Job, p, dest, format 
 	if err := root.MkdirAll(dest, 0o755); err != nil {
 		return nil, err
 	}
-	f, err := root.Open(p)
+	f, st, err := openRegular(root, p)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
 	x := &extractor{ctx: ctx, root: root, job: job, dest: dest}
 	cr := &countingReader{r: f}
 	x.progress = func() {
@@ -432,6 +426,11 @@ func extractZip(x *extractor, ra io.ReaderAt, size int64) error {
 	}
 	if x.total > maxExtractBytes {
 		return errTooBig
+	}
+	// The declared sizes are known up front (and enforced by archive/zip
+	// while reading), so refuse early instead of filling the disk.
+	if free, ok := freeSpaceIn(x.root, x.dest); ok && uint64(x.total) > free {
+		return fmt.Errorf("not enough free space: the archive expands to %d bytes, %d available: %w", x.total, free, syscall.ENOSPC)
 	}
 	for _, zf := range zr.File {
 		if err := x.entry(); err != nil {
@@ -488,6 +487,21 @@ func extractTar(x *extractor, r io.Reader) error {
 			return err
 		}
 	}
+}
+
+// freeSpaceIn reports the space available to unprivileged users on the
+// filesystem holding dir inside root.
+func freeSpaceIn(root *os.Root, dir string) (uint64, bool) {
+	d, err := openDir(root, dir)
+	if err != nil {
+		return 0, false
+	}
+	defer d.Close()
+	var st syscall.Statfs_t
+	if syscall.Fstatfs(int(d.Fd()), &st) != nil {
+		return 0, false
+	}
+	return st.Bavail * uint64(st.Bsize), true
 }
 
 type countingReader struct {

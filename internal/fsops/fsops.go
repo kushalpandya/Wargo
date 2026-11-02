@@ -115,9 +115,13 @@ func (c *copier) tree(src, dst string) error {
 				c.made[id] = true
 			}
 		}
-		d, err := c.src.Open(src)
+		d, err := OpenNonblock(c.src, src)
 		if err != nil {
 			return err
+		}
+		if dst, err := d.Stat(); err != nil || !dst.IsDir() {
+			d.Close()
+			return errChanged(src, err)
 		}
 		ents, err := d.ReadDir(-1)
 		d.Close()
@@ -131,11 +135,16 @@ func (c *copier) tree(src, dst string) error {
 		}
 		return c.dst.Chmod(dst, st.Mode().Perm())
 	case st.Mode().IsRegular():
-		in, err := c.src.Open(src)
+		in, err := OpenNonblock(c.src, src)
 		if err != nil {
 			return err
 		}
 		defer in.Close()
+		// Re-check on the descriptor: the entry may have been replaced (e.g.
+		// by a FIFO or a symlink to a device) since the Lstat above.
+		if ist, err := in.Stat(); err != nil || !ist.Mode().IsRegular() {
+			return errChanged(src, err)
+		}
 		out, err := c.dst.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, st.Mode().Perm())
 		if err != nil {
 			return err
@@ -152,6 +161,20 @@ func (c *copier) tree(src, dst string) error {
 	default:
 		return nil // skip devices, sockets, fifos
 	}
+}
+
+// OpenNonblock opens name inside root read-only with O_NONBLOCK (and
+// O_NOCTTY), so that a FIFO can't block the caller indefinitely. For
+// regular files and directories the flags have no effect.
+func OpenNonblock(root *os.Root, name string) (*os.File, error) {
+	return root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
+}
+
+func errChanged(name string, err error) error {
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%s changed while being copied", name)
 }
 
 type countWriter struct {
@@ -214,7 +237,8 @@ func Move(root *os.Root, src, dst string) error {
 	if _, err := root.Lstat(dst); err == nil {
 		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
 	}
-	err := root.Rename(src, dst)
+	// No-replace: something created at dst since the check above is kept.
+	err := RenameBetweenNoReplace(root, src, root, dst)
 	if errors.Is(err, syscall.EXDEV) {
 		if err := Copy(root, src, dst, nil); err != nil {
 			return err

@@ -284,16 +284,11 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Service) list(root *os.Root, p string, hidden, dirsOnly bool) ([]Entry, bool, error) {
-	f, err := root.Open(p)
+	f, err := openDir(root, p)
 	if err != nil {
 		return nil, false, err
 	}
 	defer f.Close()
-	if st, err := f.Stat(); err != nil {
-		return nil, false, err
-	} else if !st.IsDir() {
-		return nil, false, syscall.ENOTDIR
-	}
 	out := []Entry{}
 	truncated := false
 	for !truncated {
@@ -323,18 +318,36 @@ func (s *Service) list(root *os.Root, p string, hidden, dirsOnly bool) ([]Entry,
 			return nil, false, err
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.isDir() != b.isDir() {
-			return a.isDir()
-		}
-		la, lb := strings.ToLower(a.Name), strings.ToLower(b.Name)
-		if la != lb {
-			return la < lb
-		}
-		return a.Name < b.Name
-	})
+	sortEntries(out)
 	return out, truncated, nil
+}
+
+// sortEntries orders folders first, then case-insensitively by name. The
+// lower-cased keys are computed once (not per comparison), which matters
+// for directories with tens of thousands of entries.
+func sortEntries(out []Entry) {
+	type keyed struct {
+		dir   bool
+		lower string
+		e     Entry
+	}
+	ks := make([]keyed, len(out))
+	for i, e := range out {
+		ks[i] = keyed{e.isDir(), strings.ToLower(e.Name), e}
+	}
+	sort.Slice(ks, func(i, j int) bool {
+		a, b := &ks[i], &ks[j]
+		if a.dir != b.dir {
+			return a.dir
+		}
+		if a.lower != b.lower {
+			return a.lower < b.lower
+		}
+		return a.e.Name < b.e.Name
+	})
+	for i := range ks {
+		out[i] = ks[i].e
+	}
 }
 
 func (s *Service) handleStat(w http.ResponseWriter, r *http.Request) error {

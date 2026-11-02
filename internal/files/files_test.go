@@ -346,7 +346,11 @@ func itoa(n int) string { return strconv.Itoa(n) }
 
 func TestUploadNameEscape(t *testing.T) {
 	e := newEnv(t)
-	w := e.do("POST", "/api/files/upload/init", map[string]any{"dir": "../..", "name": "../../x.txt", "size": 1})
+	// ".." in the name is rejected outright.
+	expectErr(t, e.do("POST", "/api/files/upload/init", map[string]any{"dir": ".", "name": "../../x.txt", "size": 1}), 400, "")
+	expectErr(t, e.do("POST", "/api/files/upload/init", map[string]any{"dir": ".", "name": "a/../../x.txt", "size": 1}), 400, "")
+	// ".." in the folder is folded into the root.
+	w := e.do("POST", "/api/files/upload/init", map[string]any{"dir": "../..", "name": "x.txt", "size": 1})
 	in := decodeJSON[initRes](t, w)
 	e.do("PUT", "/api/files/upload/"+in.UploadID+"?offset=0", []byte("x"))
 	e.do("POST", "/api/files/upload/"+in.UploadID+"/complete", nil)

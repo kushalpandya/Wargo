@@ -196,13 +196,16 @@ func (s *Service) Capabilities(ctx context.Context) (string, any) {
 func (s *Service) Run(ctx context.Context) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
-	s.uploads.expire(uploadTTL)
+	// The staging folder belongs to the admin (container mode): clean it up
+	// with the admin's identity rather than as root.
+	expire := func() { host.AsUser(func() error { s.uploads.expire(uploadTTL); return nil }) }
+	expire()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.uploads.expire(uploadTTL)
+			expire()
 		}
 	}
 }
@@ -480,9 +483,14 @@ func validName(name string) error {
 		return httpx.BadRequest(`name must not contain "/"`)
 	case len(name) > 255:
 		return httpx.BadRequest("name is too long")
+	case strings.IndexFunc(name, isControl) >= 0:
+		// Newlines, escapes etc. in names break terminals, scripts and logs.
+		return httpx.BadRequest("name must not contain control characters")
 	}
 	return nil
 }
+
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) }
 
 // cleanPaths normalises a list of client paths and rejects the root itself.
 func cleanPaths(in []string) ([]string, error) {

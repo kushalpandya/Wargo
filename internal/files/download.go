@@ -67,7 +67,7 @@ func (s *Service) handleDownload(w http.ResponseWriter, r *http.Request) error {
 	if !info.Mode().IsRegular() {
 		return httpx.BadRequest("not a regular file")
 	}
-	f, err := root.Open(p)
+	f, info, err := openRegular(root, p)
 	if err != nil {
 		return fsErr(err, p)
 	}
@@ -132,9 +132,17 @@ func (s *Service) handleDownloadZip(w http.ResponseWriter, r *http.Request) erro
 	if len(req.Paths) == 0 {
 		return httpx.BadRequest("no paths given")
 	}
+	if len(req.Paths) > maxZipPaths {
+		return httpx.BadRequest("too many paths")
+	}
 	paths := make([]string, 0, len(req.Paths))
+	seen := map[string]bool{}
 	for _, p := range req.Paths {
 		p = fsops.Clean(p)
+		if seen[p] {
+			continue // the same entry twice would produce a corrupt zip
+		}
+		seen[p] = true
 		if _, err := root.Lstat(p); err != nil {
 			return fsErr(err, p)
 		}
@@ -175,6 +183,9 @@ func (s *Service) streamZip(w http.ResponseWriter, r *http.Request, root *os.Roo
 	}
 	return nil
 }
+
+// maxZipPaths bounds the explicit selection of a zip download.
+const maxZipPaths = 10000
 
 // precompressed formats are stored instead of deflated.
 var precompressed = map[string]bool{
@@ -231,7 +242,7 @@ func writeZip(ctx context.Context, zw *zip.Writer, root *os.Root, paths []string
 			if precompressed[strings.ToLower(path.Ext(rel))] {
 				fh.Method = zip.Store
 			}
-			f, err := root.Open(p)
+			f, _, err := openRegular(root, p)
 			if err != nil {
 				return err
 			}

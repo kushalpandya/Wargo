@@ -336,12 +336,9 @@ func (s *Service) handleMove(w http.ResponseWriter, r *http.Request) error {
 	var cross []pair
 	moved := 0
 	for _, x := range pairs {
-		var err error
-		if t.cross {
-			err = fsops.RenameBetween(t.src, x.src, t.dst, x.dst)
-		} else {
-			err = t.src.Rename(x.src, x.dst)
-		}
+		// Never replace: plan() checked for conflicts, but something may have
+		// appeared at the destination since.
+		err := fsops.RenameBetweenNoReplace(t.src, x.src, t.dst, x.dst)
 		switch {
 		case err == nil:
 			moved++
@@ -556,15 +553,10 @@ func (s *Service) trash(w http.ResponseWriter, r *http.Request, root *os.Root, r
 	stamp := time.Now().Format("20060102-150405")
 	var moved []string
 	for _, p := range paths {
-		name := stamp + "-" + baseName(p)
-		dst := filepath.Join(trashDir, name)
-		for i := 2; ; i++ {
-			if _, err := os.Lstat(dst); errors.Is(err, fs.ErrNotExist) {
-				break
-			}
-			dst = filepath.Join(trashDir, fmt.Sprintf("%s-%d-%s", stamp, i, baseName(p)))
+		dst, err := trashName(trashDir, stamp, baseName(p))
+		if err == nil {
+			err = fsops.RenameOut(root, p, dst)
 		}
-		err := fsops.RenameOut(root, p, dst)
 		s.record(r, "files.trash", ref, p, err, map[string]string{"to": filepath.Join(s.trashDir, filepath.Base(dst))})
 		if err != nil {
 			return fsErr(err, p)
@@ -573,6 +565,27 @@ func (s *Service) trash(w http.ResponseWriter, r *http.Request, root *os.Root, r
 	}
 	httpx.OK(w, map[string]any{"deleted": len(moved), "trashed": moved})
 	return nil
+}
+
+// trashName picks a free name in trashDir for an item called name. The
+// stamp prefix is kept within the 255-byte name limit (long names used to
+// make every candidate fail with ENAMETOOLONG, and the search never ended).
+func trashName(trashDir, stamp, name string) (string, error) {
+	for i := 1; i <= 1000; i++ {
+		prefix := stamp + "-"
+		if i > 1 {
+			prefix = fmt.Sprintf("%s-%d-", stamp, i)
+		}
+		dst := filepath.Join(trashDir, sideName(prefix, name, ""))
+		_, err := os.Lstat(dst)
+		if errors.Is(err, fs.ErrNotExist) {
+			return dst, nil
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("trash: no free name for %s: %w", name, fs.ErrExist)
 }
 
 // ---- chmod / chown ---------------------------------------------------------

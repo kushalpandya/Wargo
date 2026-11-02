@@ -380,22 +380,41 @@ func removable(name string) bool {
 	return err == nil && strings.TrimSpace(string(b)) == "1"
 }
 
+var (
+	statfsMu    sync.Mutex
+	statfsCalls = map[string]*statfsCall{}
+)
+
+type statfsCall struct {
+	done chan struct{}
+	st   syscall.Statfs_t
+	err  error
+}
+
 // statfs is syscall.Statfs giving up after a second (stale network mounts
 // can block it indefinitely).
+//
+// A hung call can't be cancelled, so its goroutine stays blocked; callers
+// for the same path share the outstanding call instead of each leaving
+// another stuck goroutine behind.
 func statfs(p string) (syscall.Statfs_t, error) {
-	type res struct {
-		st  syscall.Statfs_t
-		err error
+	statfsMu.Lock()
+	c, ok := statfsCalls[p]
+	if !ok {
+		c = &statfsCall{done: make(chan struct{})}
+		statfsCalls[p] = c
+		go func() {
+			c.err = syscall.Statfs(p, &c.st)
+			statfsMu.Lock()
+			delete(statfsCalls, p)
+			statfsMu.Unlock()
+			close(c.done)
+		}()
 	}
-	ch := make(chan res, 1)
-	go func() {
-		var st syscall.Statfs_t
-		err := syscall.Statfs(p, &st)
-		ch <- res{st, err}
-	}()
+	statfsMu.Unlock()
 	select {
-	case r := <-ch:
-		return r.st, r.err
+	case <-c.done:
+		return c.st, c.err
 	case <-time.After(time.Second):
 		return syscall.Statfs_t{}, os.ErrDeadlineExceeded
 	}

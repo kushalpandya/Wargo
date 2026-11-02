@@ -32,6 +32,9 @@ const (
 	uploadTTL = 24 * time.Hour
 )
 
+// maxUploads bounds unfinished uploads (each holds staging files).
+var maxUploads = 1000
+
 // upload is a resumable upload in progress. The data accumulates in
 // <dataDir>/uploads/<id>.part, described by <id>.json.
 type upload struct {
@@ -168,6 +171,13 @@ func freeSpaceLocal(p string) (uint64, bool) {
 
 // uploadTarget validates dir/name and returns the root-relative target.
 func uploadTarget(dir, name string) (string, error) {
+	// Reject ".." outright rather than letting Clean fold it away, so a
+	// crafted folder upload can't land somewhere other than it claims.
+	for _, seg := range strings.Split(strings.ReplaceAll(name, "\\", "/"), "/") {
+		if seg == ".." {
+			return "", httpx.BadRequest("invalid name")
+		}
+	}
 	rel := fsops.Clean(name)
 	if rel == "." {
 		return "", httpx.BadRequest("name required")
@@ -237,7 +247,11 @@ func (s *Service) handleUploadInit(w http.ResponseWriter, r *http.Request) error
 		httpx.OK(w, map[string]any{"uploadId": up.ID, "chunkSize": chunkSize, "received": s.uploads.received(up.ID), "size": up.Size, "resumed": true})
 		return nil
 	}
+	inFlight := len(s.uploads.m)
 	s.uploads.mu.Unlock()
+	if inFlight >= maxUploads {
+		return httpx.Errorf(http.StatusTooManyRequests, "too_many_uploads", "Too many unfinished uploads; finish or cancel some first")
+	}
 
 	if free, ok := freeSpace(ref.Path); ok && uint64(req.Size) > free {
 		return httpx.Errorf(http.StatusInsufficientStorage, "no_space", "Not enough free space in "+ref.Name)
@@ -403,7 +417,11 @@ func (s *Service) placeUpload(root *os.Root, up *upload, target string) error {
 	if err := os.Chmod(part, 0o644); err != nil {
 		return err
 	}
-	err := fsops.RenameIn(root, part, target)
+	rename := fsops.RenameIn
+	if !up.Overwrite {
+		rename = fsops.RenameInNoReplace // a file created meanwhile is kept
+	}
+	err := rename(root, part, target)
 	if !errors.Is(err, syscall.EXDEV) {
 		return err
 	}
@@ -414,7 +432,7 @@ func (s *Service) placeUpload(root *os.Root, up *upload, target string) error {
 		return err
 	}
 	defer in.Close()
-	tmp := join(parentOf(target), "."+baseName(target)+".upload-"+up.ID[:8])
+	tmp := join(parentOf(target), sideName(".", baseName(target), ".upload-"+up.ID[:8]))
 	out, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
@@ -424,7 +442,11 @@ func (s *Service) placeUpload(root *os.Root, up *upload, target string) error {
 		err = cerr
 	}
 	if err == nil {
-		err = root.Rename(tmp, target)
+		if up.Overwrite {
+			err = root.Rename(tmp, target)
+		} else {
+			err = fsops.RenameBetweenNoReplace(root, tmp, root, target)
+		}
 	}
 	if err != nil {
 		root.Remove(tmp)

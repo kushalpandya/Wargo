@@ -60,9 +60,12 @@ func (s *Service) handleGetContent(w http.ResponseWriter, r *http.Request) error
 		return httpx.Errorf(http.StatusRequestEntityTooLarge, "too_large", "File is too large to edit").
 			With(map[string]int64{"size": st.Size(), "max": s.maxEdit})
 	}
-	data, err := root.ReadFile(p)
+	data, err := readRegular(root, p, s.maxEdit)
 	if err != nil && isPerm(err) {
 		data, err = s.elevatedOut(r, ref, "read", p)
+		if err == nil && int64(len(data)) > s.maxEdit {
+			err = errTooLargeToEdit
+		}
 	}
 	if err != nil {
 		return fsErr(err, p)
@@ -129,8 +132,12 @@ func (s *Service) handlePutContent(w http.ResponseWriter, r *http.Request) error
 	if p == "." {
 		return httpx.BadRequest("path required")
 	}
-	if err := validName(baseName(p)); err != nil {
-		return err
+	if req.Create {
+		// Only new names are validated: existing files may be edited
+		// whatever they are called.
+		if err := validName(baseName(p)); err != nil {
+			return err
+		}
 	}
 	st, err := root.Stat(p)
 	switch {
@@ -178,11 +185,20 @@ func writeAtomic(root *os.Root, p string, data []byte, st fs.FileInfo) error {
 		mode = st.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
 		// Respect the file's own permissions: the rename below would otherwise
 		// let us replace a read-only file in a writable folder.
-		f, err := root.OpenFile(p, os.O_WRONLY, 0)
+		// O_NONBLOCK: a FIFO swapped in since the Stat fails (ENXIO) instead
+		// of blocking until a reader appears.
+		f, err := root.OpenFile(p, os.O_WRONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 		if err != nil {
 			return err
 		}
+		fst, err := f.Stat()
 		f.Close()
+		if err != nil {
+			return err
+		}
+		if !fst.Mode().IsRegular() {
+			return httpx.BadRequest("not a regular file")
+		}
 	}
 	inPlace := false
 	if lst, err := root.Lstat(p); err == nil && lst.Mode()&fs.ModeSymlink != 0 {
@@ -191,7 +207,7 @@ func writeAtomic(root *os.Root, p string, data []byte, st fs.FileInfo) error {
 	if !inPlace {
 		b := make([]byte, 6)
 		rand.Read(b)
-		tmp := join(parentOf(p), "."+baseName(p)+".wargo-"+hex.EncodeToString(b))
+		tmp := join(parentOf(p), sideName(".", baseName(p), ".wargo-"+hex.EncodeToString(b)))
 		f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err == nil {
 			_, err = f.Write(data)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -135,4 +136,53 @@ func TestBetweenRoots(t *testing.T) {
 	if err := CopyBetween(context.Background(), ra, "d", inner, "e/copy", nil); !errors.Is(err, ErrIntoSelf) {
 		t.Fatal("expected into-self", err)
 	}
+}
+
+func TestNoReplace(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a"), []byte("a"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b"), []byte("b"), 0o644)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := RenameBetweenNoReplace(root, "a", root, "b"); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("err = %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "b")); string(b) != "b" {
+		t.Fatal("b was replaced")
+	}
+	if err := RenameBetweenNoReplace(root, "a", root, "c"); err != nil {
+		t.Fatal(err)
+	}
+	trash := t.TempDir()
+	os.WriteFile(filepath.Join(trash, "x"), []byte("keep"), 0o644)
+	if err := RenameOut(root, "c", filepath.Join(trash, "x")); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("RenameOut over existing: %v", err)
+	}
+	// The fallback path (no renameat2) behaves the same.
+	old := sysRenameat2
+	sysRenameat2 = 0
+	defer func() { sysRenameat2 = old }()
+	if err := RenameBetweenNoReplace(root, "c", root, "b"); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("fallback: %v", err)
+	}
+	if err := RenameBetweenNoReplace(root, "c", root, "d"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCopySkipsSwappedFIFO(t *testing.T) {
+	dir := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(dir, "p"), 0o644); err != nil {
+		t.Skip(err)
+	}
+	root, _ := os.OpenRoot(dir)
+	defer root.Close()
+	f, err := OpenNonblock(root, "p")
+	if err != nil {
+		t.Fatal("open of FIFO should not block or fail:", err)
+	}
+	f.Close()
 }
