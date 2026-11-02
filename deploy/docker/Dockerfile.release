@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Release image used by CI: it packages the container-mode binaries that
+# the native amd64/arm64 build jobs already compiled (with
+# -tags wargo_container), so nothing is compiled under emulation. The
+# build context holds <arch>/container/wargo for each platform.
+#
+# The runtime stage mirrors the one in the top-level Dockerfile (which
+# builds from source); keep the two in sync.
+FROM debian:bookworm-slim
+ARG TARGETARCH
+ARG VERSION=dev
+ARG REVISION=unknown
+LABEL org.opencontainers.image.title="Wargo" \
+      org.opencontainers.image.description="Single-binary homelab dashboard: system, processes, containers, terminal, files, OS updates" \
+      org.opencontainers.image.source="https://github.com/kushalpandya/wargo" \
+      org.opencontainers.image.url="https://github.com/kushalpandya/wargo" \
+      org.opencontainers.image.documentation="https://github.com/kushalpandya/wargo/blob/main/docs/DOCKER.md" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
+# util-linux: nsenter (host namespaces) and setpriv; tini reaps children.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      util-linux libpam0g libcrypt1 ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
+COPY --chmod=0755 ${TARGETARCH}/container/wargo /usr/local/bin/wargo
+ENV WARGO_HOST_ROOT=/host \
+    WARGO_DATA_DIR=/data
+VOLUME ["/data"]
+EXPOSE 2207
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["/usr/local/bin/wargo", "health"]
+# -s: tini is not PID 1 with pid: host, so register as a subreaper.
+ENTRYPOINT ["tini", "-s", "--", "/usr/local/bin/wargo"]
+CMD ["serve"]

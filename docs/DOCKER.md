@@ -47,8 +47,8 @@ LAN access set `WARGO_LISTEN=0.0.0.0:2207`, but only behind TLS: passkeys and
 
 Sign in with your **host** account's password (then set up TOTP or a
 passkey, as natively). Image tags: `vX.Y.Z[-pre]` per release, `latest` and
-`next` for the newest release (until 1.0, `latest` includes pre-releases),
-`edge` for `main`. Pin a version with `WARGO_TAG=v1.0.0-alpha.1`. Images are built for amd64 and
+`next` for the newest release (until 1.0, `latest` includes pre-releases).
+Pin a version with `WARGO_TAG=v1.0.0-alpha.1`. Images are built for amd64 and
 arm64.
 
 ## Configuration
