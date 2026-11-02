@@ -8,13 +8,15 @@ import {
   Download,
   FolderTree,
   Gauge,
+  House,
   LayoutGrid,
-  ListTree,
   LogOut,
   Menu as MenuIcon,
   Monitor,
   Moon,
   PackageCheck,
+  PanelLeftClose,
+  PanelLeftOpen,
   Search,
   Settings2,
   SquareTerminal,
@@ -46,13 +48,13 @@ function useNav(): { section?: string; items: NavItem[] }[] {
   return [
     {
       items: [
-        { to: "/", label: "Overview", icon: <Gauge /> },
-        { to: "/apps", label: "Apps", icon: <LayoutGrid />, show: caps?.launcher?.enabled && caps.launcher.placement === "page" },
-        { to: "/processes", label: "Processes", icon: <ListTree /> },
+        { to: "/", label: "Home", icon: <House /> },
         { to: "/containers", label: "Containers", icon: <Boxes /> },
-        { to: "/terminal", label: "Terminal", icon: <SquareTerminal /> },
+        { to: "/system", label: "System", icon: <Gauge /> },
         { to: "/files", label: "Files", icon: <FolderTree /> },
+        { to: "/terminal", label: "Terminal", icon: <SquareTerminal /> },
         { to: "/updates", label: "Updates", icon: <PackageCheck />, badge: <UpdatesBadge /> },
+        { to: "/apps", label: "Apps", icon: <LayoutGrid />, show: caps?.launcher?.enabled && caps.launcher.placement === "page" },
       ],
     },
     {
@@ -190,47 +192,111 @@ function ConnectionStatus() {
   );
 }
 
+const SIDEBAR_KEY = "wargo.sidebar";
+
+/** Collapsed (icon rail) vs expanded sidebar, remembered per browser. */
+function useSidebarCollapsed(): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(() => {
+    const v = localStorage.getItem(SIDEBAR_KEY);
+    if (v === "collapsed") return true;
+    if (v === "expanded") return false;
+    // No preference yet: rail on tablets, full sidebar on desktops.
+    return !window.matchMedia("(min-width: 1024px)").matches;
+  });
+  const toggle = () =>
+    setCollapsed((c) => {
+      localStorage.setItem(SIDEBAR_KEY, c ? "expanded" : "collapsed");
+      return !c;
+    });
+  return [collapsed, toggle];
+}
+
 export function Layout() {
   const [drawer, setDrawer] = useState(false);
+  const [collapsed, toggleCollapsed] = useSidebarCollapsed();
   const loc = useLocation();
   const { data: me } = useMe();
   const { data: caps } = useCapabilities();
   useEffect(() => setDrawer(false), [loc.pathname]);
 
+  // Ctrl/Cmd+B toggles the sidebar (outside text fields and the terminal).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") {
+        const t = e.target as HTMLElement | null;
+        if (t?.closest("input, textarea, [contenteditable=true], .xterm, .cm-editor")) return;
+        e.preventDefault();
+        toggleCollapsed();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const toggleLabel = collapsed ? "Expand sidebar" : "Collapse sidebar";
+
   return (
     <div className="flex min-h-dvh">
-      {/* Sidebar: icon rail on md, full on lg+ */}
-      <aside className="sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-border bg-surface md:flex md:w-14 lg:w-52">
-        <div className="flex h-12 items-center gap-2 border-b border-border px-3.5 max-lg:justify-center max-lg:px-0">
-          <Logo className="size-6" />
-          <span className="hidden text-[0.9375rem] font-semibold tracking-tight lg:inline">Wargo</span>
-          {me?.dev && (
-            <Badge tone="warn" className="ml-auto hidden lg:inline-flex">
-              Dev
-            </Badge>
+      <aside
+        className={cn(
+          "sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200 md:flex",
+          collapsed ? "w-14" : "w-52",
+        )}
+        aria-label="Sidebar"
+      >
+        <div className={cn("flex h-12 items-center gap-2 border-b border-border", collapsed ? "justify-center px-0" : "px-3.5")}>
+          <Logo className="size-6 shrink-0" />
+          {!collapsed && (
+            <>
+              <span className="text-[0.9375rem] font-semibold tracking-tight">Wargo</span>
+              {me?.dev && <Badge tone="warn">Dev</Badge>}
+              <Tooltip content={`${toggleLabel} (Ctrl+B)`} side="right">
+                <IconButton label={toggleLabel} size="sm" className="ml-auto" onClick={toggleCollapsed} aria-expanded={!collapsed}>
+                  <PanelLeftClose />
+                </IconButton>
+              </Tooltip>
+            </>
           )}
         </div>
-        <div className="scroll-area flex-1 p-2 max-lg:hidden">
-          <NavLinks />
-        </div>
-        <div className="scroll-area flex-1 p-2 lg:hidden">
-          <NavLinks compact />
+        {collapsed && (
+          <div className="flex justify-center border-b border-border py-1.5">
+            <Tooltip content={`${toggleLabel} (Ctrl+B)`} side="right">
+              <IconButton label={toggleLabel} size="sm" onClick={toggleCollapsed} aria-expanded={!collapsed}>
+                <PanelLeftOpen />
+              </IconButton>
+            </Tooltip>
+          </div>
+        )}
+        <div className="scroll-area flex-1 p-2">
+          <NavLinks compact={collapsed} />
         </div>
         <div className="border-t border-border p-2">
-          <NavLink
-            to="/settings"
-            className={({ isActive }) =>
-              cn(
-                "flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[0.8125rem] font-medium [&_svg]:size-4 max-lg:justify-center max-lg:px-0",
-                isActive ? "bg-surface-3 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
-              )
-            }
-            aria-label="Settings"
-          >
-            <Settings2 className="text-subtle" />
-            <span className="max-lg:sr-only">Settings</span>
-          </NavLink>
-          <div className="num mt-1 px-2.5 text-2xs text-subtle max-lg:hidden">v{caps?.version ?? ""}</div>
+          {(() => {
+            const link = (
+              <NavLink
+                to="/settings"
+                className={({ isActive }) =>
+                  cn(
+                    "flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[0.8125rem] font-medium [&_svg]:size-4",
+                    collapsed && "justify-center px-0",
+                    isActive ? "bg-surface-3 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
+                  )
+                }
+                aria-label="Settings"
+              >
+                <Settings2 className="text-subtle" />
+                <span className={cn(collapsed && "sr-only")}>Settings</span>
+              </NavLink>
+            );
+            return collapsed ? (
+              <Tooltip content="Settings" side="right">
+                {link}
+              </Tooltip>
+            ) : (
+              link
+            );
+          })()}
+          {!collapsed && <div className="num mt-1 px-2.5 text-2xs text-subtle">v{caps?.version ?? ""}</div>}
         </div>
       </aside>
 
