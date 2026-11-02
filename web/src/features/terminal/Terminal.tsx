@@ -95,6 +95,7 @@ export default function TerminalPage() {
   const phone = useMedia("(max-width: 639px)");
   const vh = useVisualHeight(phone);
 
+  const deepLink = useRef(new URLSearchParams(location.search).get("container"));
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -174,6 +175,13 @@ export default function TerminalPage() {
         if (!cancelled) toast.error("Could not load terminal sessions", e);
       } finally {
         if (!cancelled) setLoading(false);
+      }
+      // Deep link from Containers → "Open shell": /terminal?container=<name>
+      const target = deepLink.current;
+      if (!cancelled && target) {
+        deepLink.current = null;
+        history.replaceState(null, "", location.pathname);
+        openRef.current("container", target);
       }
     })();
     return () => {
@@ -255,6 +263,9 @@ export default function TerminalPage() {
       setBusy(false);
     }
   };
+
+  const openRef = useRef(open);
+  openRef.current = open;
 
   const removeTab = (tab: Tab) => {
     tab.sess.dispose();

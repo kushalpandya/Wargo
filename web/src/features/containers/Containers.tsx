@@ -6,6 +6,7 @@ import {
   ArrowUpCircle,
   Boxes,
   FileText,
+  SquareTerminal,
   Info,
   Layers,
   MoreHorizontal,
@@ -200,6 +201,7 @@ function ActionMenu({
   busy?: boolean;
 }) {
   const running = c.state === "running" || c.state === "restarting";
+  const nav = useNavigate();
   return (
     <Menu
       trigger={
@@ -219,6 +221,11 @@ function ActionMenu({
       <MenuItem icon={<FileText />} onSelect={() => onOpen("logs")}>
         Logs
       </MenuItem>
+      {c.state === "running" && (
+        <MenuItem icon={<SquareTerminal />} onSelect={() => nav(`/terminal?container=${encodeURIComponent(c.name)}`)}>
+          Open shell
+        </MenuItem>
+      )}
       <MenuSeparator />
       {running ? (
         <>
