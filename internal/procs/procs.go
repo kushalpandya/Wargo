@@ -384,7 +384,7 @@ func (s *Service) handleSignal(w http.ResponseWriter, r *http.Request) error {
 		return httpx.ErrNotFound
 	}
 	target := fmt.Sprintf("SIG%s pid %d (%s, user %s)", name, pid, p.Name, p.User)
-	err = signalVerified(pid, sig, func() error { return s.verifyTarget(p) })
+	err = host.SignalVerified(pid, sig, func() error { return s.verifyTarget(p) })
 	switch {
 	case err == nil:
 		s.audit.Record(r, "procs.signal", target, nil, map[string]any{"pid": pid, "signal": name})

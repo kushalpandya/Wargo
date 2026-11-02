@@ -9,12 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-)
 
-// Same numbers on every Linux architecture (post-5.1 unified table).
-const (
-	sysPidfdSendSignal = 424
-	sysPidfdOpen       = 434
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 // procStartTime reads field 22 (starttime, clock ticks since boot) of
@@ -52,25 +48,5 @@ func signalPID(pid int, sig syscall.Signal, wantStart uint64) error {
 		}
 		return nil
 	}
-	r, _, e := syscall.Syscall(sysPidfdOpen, uintptr(pid), 0, 0)
-	if e == syscall.ENOSYS || e == syscall.EPERM {
-		if err := verify(); err != nil {
-			return err
-		}
-		return syscall.Kill(pid, sig)
-	}
-	if e != 0 {
-		return e
-	}
-	fd := int(r)
-	defer syscall.Close(fd)
-	// /proc/<pid> now shows the pidfd's process or, if it already exited,
-	// a newer one — then the signal below fails with ESRCH.
-	if err := verify(); err != nil {
-		return err
-	}
-	if _, _, e := syscall.Syscall6(sysPidfdSendSignal, uintptr(fd), uintptr(sig), 0, 0, 0, 0); e != 0 {
-		return e
-	}
-	return nil
+	return host.SignalVerified(pid, sig, verify)
 }
