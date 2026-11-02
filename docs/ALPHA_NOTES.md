@@ -30,6 +30,7 @@ needs `/etc/pam.d/wargo` (from `deploy/pam/wargo`).
 | Prowlarr search, magnet, .torrent, queue | Done | Real Prowlarr (search/magnet read-only); queue via fakes |
 | Transmission downloads (pause, resume, remove dialog) | Done | Fake Transmission RPC (real one needs your RPC password) |
 | App launcher | Done | Real container suggestions |
+| System events (journal, kernel, containers, Wargo) | Done | Real journal on Manjaro; Docker events via a fake daemon |
 | Settings (appearance, security, integrations, launcher, audit, about) | Done | Dev instance + virtual authenticator |
 | Auth: PAM + TOTP, passkeys, recovery codes, sessions | Done | Unit tests + virtual authenticator; PAM login **not** exercised (needs your password) |
 | Admin approval via sudo | Done | Prompt flow verified; no sudo ever executed |
@@ -66,10 +67,11 @@ terminal, editor and charts load on demand.
 - **Files:** no server-side thumbnails (grid loads full images). Recursive
   chmod/chown and trash moves don't elevate. Listings cap at 20k entries.
   Interrupted uploads need the file re-selected after a reload.
-- **System → Events (planned):** a third tab beside Activity Monitor and
-  Processes listing system events, especially errors and warnings reported
-  by the OS (journal, kernel), plus notable events Wargo itself gathers
-  (failed sign-ins, container health changes, update results).
+- **System → Events:** reads the systemd journal (no journal on
+  non-systemd hosts), Docker's in-memory event history (only recent events
+  survive a daemon restart) and Wargo's audit log. Natively, system and
+  kernel messages need the account in `systemd-journal`, `adm` or `wheel`.
+  Container health changes seen only by Wargo's own probe aren't recorded yet.
 - **Terminal:** tmux mode untested (tmux not installed). Tab names stored per
   browser.
 - **Torrents:** some indexers report a .torrent link that actually redirects

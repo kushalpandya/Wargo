@@ -2,7 +2,7 @@
 import { useMemo } from "react";
 import { Navigate, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Activity, HardDrive, ListTree, Network } from "lucide-react";
+import { ArrowDown, ArrowUp, Activity, HardDrive, ListTree, Network, ScrollText } from "lucide-react";
 import { api } from "@/lib/api";
 import { useIsDark } from "@/lib/theme";
 import { NavTabs } from "@/components/ui/tabs";
@@ -16,6 +16,7 @@ import { StorageCard } from "@/features/system/Storage";
 import { SensorsCard } from "@/features/system/Sensors";
 import { ProcessesPanel } from "@/features/processes/Processes";
 import { SummaryTiles } from "./Tiles";
+import { EventsPanel } from "./Events";
 import { LinkIcon, linkDetails, linkName } from "./LinkLabel";
 
 const toneOf = (p: number) => level(p);
@@ -268,22 +269,29 @@ function ActivityMonitor() {
 
 export default function System() {
   const { "*": sub } = useParams();
-  if (sub && sub !== "processes") return <Navigate to="/system" replace />;
-  const processes = sub === "processes";
+  if (sub && sub !== "processes" && sub !== "events") return <Navigate to="/system" replace />;
+  const tab = sub || "activity";
   return (
     <div className="mx-auto max-w-[1600px]">
       <PageHeader
         title="System"
-        description={processes ? "Everything running on this host." : "Live resource usage, hardware sensors, network and storage."}
+        description={
+          tab === "processes"
+            ? "Everything running on this host."
+            : tab === "events"
+              ? "Recent errors and warnings from the system, the kernel, containers and Wargo."
+              : "Live resource usage, hardware sensors, network and storage."
+        }
       />
       <NavTabs
         label="System sections"
         items={[
           { to: "/system", end: true, label: <><Activity /> Activity Monitor</> },
           { to: "/system/processes", label: <><ListTree /> Processes</> },
+          { to: "/system/events", label: <><ScrollText /> Events</> },
         ]}
       />
-      {processes ? <ProcessesPanel embedded /> : <ActivityMonitor />}
+      {tab === "processes" ? <ProcessesPanel embedded /> : tab === "events" ? <EventsPanel /> : <ActivityMonitor />}
     </div>
   );
 }

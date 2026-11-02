@@ -14,6 +14,7 @@
 package docker
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -281,4 +283,55 @@ func (c *Client) ContainerName(ctx context.Context, id string) (string, error) {
 		return "", err
 	}
 	return strings.TrimPrefix(v.Name, "/"), nil
+}
+
+// ContainerEvent is one entry from the daemon's event history.
+type ContainerEvent struct {
+	Action string // e.g. "die", "oom", "health_status: unhealthy"
+	ID     string
+	Name   string
+	Image  string
+	Exit   string // exit code for "die"
+	Time   time.Time
+}
+
+// RecentEvents returns container events between since and until from the
+// daemon's in-memory event history (it keeps only the most recent ones).
+// actions limits the event types, e.g. "die", "oom", "health_status".
+func (c *Client) RecentEvents(ctx context.Context, since, until time.Time, actions ...string) ([]ContainerEvent, error) {
+	f := map[string][]string{"type": {"container"}}
+	if len(actions) > 0 {
+		f["event"] = actions
+	}
+	fj, _ := json.Marshal(f)
+	q := url.Values{}
+	q.Set("since", strconv.FormatInt(since.Unix(), 10))
+	q.Set("until", strconv.FormatInt(until.Unix(), 10))
+	q.Set("filters", string(fj))
+	body, err := c.stream(ctx, http.MethodGet, "/events?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	var out []ContainerEvent
+	sc := bufio.NewScanner(body)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() && len(out) < 5000 {
+		var ev struct {
+			Action   string `json:"Action"`
+			TimeNano int64  `json:"timeNano"`
+			Actor    struct {
+				ID         string            `json:"ID"`
+				Attributes map[string]string `json:"Attributes"`
+			} `json:"Actor"`
+		}
+		if json.Unmarshal(sc.Bytes(), &ev) != nil {
+			continue
+		}
+		out = append(out, ContainerEvent{
+			Action: ev.Action, ID: ev.Actor.ID, Name: ev.Actor.Attributes["name"], Image: ev.Actor.Attributes["image"],
+			Exit: ev.Actor.Attributes["exitCode"], Time: time.Unix(0, ev.TimeNano),
+		})
+	}
+	return out, sc.Err()
 }
