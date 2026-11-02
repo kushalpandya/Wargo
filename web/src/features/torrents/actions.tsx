@@ -54,10 +54,34 @@ export function MagnetDialog({ magnet, title, onClose }: { magnet: string | null
 
 export type RowAction = "magnet" | "torrent" | "queue";
 
-/** Per-result actions with per-row busy state; shared by table and cards. */
-export function useResultActions() {
+// Results known to only offer magnets; kept for the page's lifetime so
+// the hint survives navigating away and back.
+const magnetOnlyIds: Record<string, boolean> = {};
+
+/**
+ * Per-result actions with per-row busy state; shared by table and cards.
+ * Result IDs live on the server for a limited time; when one has expired
+ * `refresh` re-runs the search (IDs are stable) and the action is retried
+ * once.
+ */
+export function useResultActions(refresh?: () => Promise<unknown>) {
   const [busy, setBusy] = useState<Record<string, RowAction | undefined>>({});
-  const [magnetOnly, setMagnetOnly] = useState<Record<string, boolean>>({});
+  const [magnetOnly, setMagnetOnlyState] = useState<Record<string, boolean>>(() => ({ ...magnetOnlyIds }));
+  const setMagnetOnly = (fn: (m: Record<string, boolean>) => Record<string, boolean>) =>
+    setMagnetOnlyState((m) => {
+      const next = fn(m);
+      Object.assign(magnetOnlyIds, next);
+      return next;
+    });
+  const retrying = async <T,>(call: () => Promise<T>): Promise<T> => {
+    try {
+      return await call();
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === "result_expired") || !refresh) throw e;
+      await refresh();
+      return call();
+    }
+  };
   const [dialog, setDialog] = useState<{
     magnet: string;
     title: string;
@@ -75,7 +99,7 @@ export function useResultActions() {
   const copyMagnet = (id: string, title: string) =>
     run(id, "magnet", async () => {
       try {
-        const { magnet } = await api.get<{ magnet: string }>(`/api/prowlarr/results/${encodeURIComponent(id)}/magnet`);
+        const { magnet } = await retrying(() => api.get<{ magnet: string }>(`/api/prowlarr/results/${encodeURIComponent(id)}/magnet`));
         if (await copyText(magnet)) toast.ok("Magnet link copied");
         else setDialog({ magnet, title });
       } catch (e) {
@@ -86,7 +110,7 @@ export function useResultActions() {
   const downloadTorrent = (id: string, title: string) =>
     run(id, "torrent", async () => {
       try {
-        const res = await api.request<Response>(`/api/prowlarr/results/${encodeURIComponent(id)}/torrent`, { response: true });
+        const res = await retrying(() => api.request<Response>(`/api/prowlarr/results/${encodeURIComponent(id)}/torrent`, { response: true }));
         const blob = await res.blob();
         const cd = res.headers.get("Content-Disposition") ?? "";
         const name = /filename="([^"]+)"/.exec(cd)?.[1] ?? "download.torrent";
@@ -109,7 +133,7 @@ export function useResultActions() {
   const queue = (id: string, title: string) =>
     run(id, "queue", async () => {
       try {
-        const r = await api.post<{ via: "prowlarr" | "transmission" }>(`/api/prowlarr/results/${encodeURIComponent(id)}/queue`);
+        const r = await retrying(() => api.post<{ via: "prowlarr" | "transmission" }>(`/api/prowlarr/results/${encodeURIComponent(id)}/queue`));
         toast.ok("Queued in Transmission", r.via === "prowlarr" ? `Sent via Prowlarr: ${title}` : title);
       } catch (e) {
         toast.error("Could not queue torrent", errorMessage(e));

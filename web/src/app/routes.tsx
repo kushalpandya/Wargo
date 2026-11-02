@@ -15,8 +15,7 @@ const Containers = lazy(() => import("@/features/containers/Containers"));
 const Terminal = lazy(() => import("@/features/terminal/Terminal"));
 const Files = lazy(() => import("@/features/files/Files"));
 const Updates = lazy(() => import("@/features/updates/Updates"));
-const TorrentSearch = lazy(() => import("@/features/torrents/Search"));
-const Downloads = lazy(() => import("@/features/torrents/Downloads"));
+const Torrents = lazy(() => import("@/features/torrents/Torrents"));
 const Apps = lazy(() => import("@/features/launcher/Apps"));
 const Settings = lazy(() => import("@/features/settings/Settings"));
 
@@ -78,8 +77,9 @@ export const router = createBrowserRouter([
           { path: "terminal", element: <Terminal /> },
           { path: "files/*", element: <Files /> },
           { path: "updates", element: <Updates /> },
-          { path: "torrents/search", element: <TorrentSearch /> },
-          { path: "torrents/downloads", element: <Downloads /> },
+          { path: "torrents", element: <Torrents /> },
+          { path: "torrents/search", element: <Navigate to="/torrents" replace /> },
+          { path: "torrents/downloads", element: <Navigate to="/torrents?tab=downloads" replace /> },
           { path: "settings/*", element: <Settings /> },
           { path: "*", element: <Navigate to="/" replace /> },
         ],

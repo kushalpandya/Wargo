@@ -92,7 +92,9 @@ type Service struct {
 func New(cfg config.Config, st *store.Store, hub *events.Hub, al *audit.Log) *Service {
 	s := &Service{
 		st: st, hub: hub, audit: al, socket: cfg.Docker.Socket,
-		cache:   prowlarr.NewCache(4000, time.Hour),
+		// Bounded by count; the sliding 6 h TTL keeps results usable while
+		// the browser still shows them (the UI re-searches if one expires).
+		cache:   prowlarr.NewCache(4000, 6*time.Hour),
 		limiter: newLimiter(20, time.Minute),
 		// a few recent responses (results reference entries in cache)
 		searchCache: &responseCache{ttl: 5 * time.Minute, max: 16},

@@ -49,7 +49,7 @@ func (e *Entry) SetMagnet(m string) {
 	e.mu.Unlock()
 }
 
-// Cache is a bounded LRU of result entries with a TTL.
+// Cache is a bounded LRU of result entries with a sliding TTL.
 type Cache struct {
 	mu    sync.Mutex
 	max   int
@@ -116,6 +116,8 @@ func (c *Cache) Get(id string) (*Entry, bool) {
 		delete(c.items, id)
 		return nil, false
 	}
+	// Sliding expiry: results someone is still acting on stay available.
+	it.expires = c.now().Add(c.ttl)
 	c.ll.MoveToFront(el)
 	return it.e, true
 }

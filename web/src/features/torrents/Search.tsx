@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
 import { AlertTriangle, Download, ExternalLink, Magnet, Search as SearchIcon, SendToBack } from "lucide-react";
 import { api, qs } from "@/lib/api";
@@ -13,7 +13,7 @@ import { Select, SearchInput } from "@/components/ui/form";
 import { EmptyState, ErrorNote, PageHeader, Spinner } from "@/components/ui/misc";
 import { SortTh, Table, Td, Th, THead, Tr, useSort } from "@/components/ui/table";
 import { CATEGORIES, type IndexerRef, type SearchResponse, type SearchResult } from "./api";
-import { IndexerPicker, LinkButton, useResultActions, WithReason, type RowAction } from "./actions";
+import { IndexerPicker, useResultActions, WithReason, type RowAction } from "./actions";
 
 type SortKey = "seeders" | "size" | "age" | "name";
 const PAGE = 100;
@@ -44,15 +44,40 @@ function useElapsed(active: boolean) {
   return s;
 }
 
-export default function SearchPage() {
+// The last search (query + filters) is remembered for the lifetime of the
+// page so results survive navigating away; React Query keeps the data.
+const last = { params: "", filter: "" };
+
+export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
   const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    if (!params.get("q") && last.params) {
+      const next = new URLSearchParams(params);
+      for (const [k, v] of new URLSearchParams(last.params)) next.set(k, v);
+      setParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const q = params.get("q") ?? "";
   const cats = parseList(params.get("cat"));
   const idx = parseList(params.get("idx"));
   const catKey = cats.join(",");
   const idxKey = idx.join(",");
   const [draft, setDraft] = useState(q);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilterState] = useState(last.filter);
+  const setFilter = (v: string) => {
+    last.filter = v;
+    setFilterState(v);
+  };
+  useEffect(() => {
+    if (!q) return;
+    const keep = new URLSearchParams();
+    for (const k of ["q", "cat", "idx"]) {
+      const v = params.get(k);
+      if (v) keep.set(k, v);
+    }
+    last.params = keep.toString();
+  }, [q, params]);
   const [limit, setLimit] = useState(PAGE);
   useEffect(() => setDraft(q), [q]);
 
@@ -72,12 +97,24 @@ export default function SearchPage() {
     queryKey: ["prowlarr", "search", q, catKey, idxKey],
     queryFn: ({ signal }) => api.get<SearchResponse>(`/api/prowlarr/search${qs({ q, categories: catKey, indexers: idxKey })}`, signal),
     enabled: q.trim() !== "",
-    staleTime: 10 * 60_000,
-    gcTime: 30 * 60_000,
+    // Keep results until the page is reloaded; "Search" refetches explicitly.
+    staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
     refetchOnWindowFocus: false,
   });
   const elapsed = useElapsed(search.isFetching);
+
+  // Keep only the five most recent searches in memory.
+  const qc = useQueryClient();
+  useEffect(() => {
+    const old = qc
+      .getQueryCache()
+      .findAll({ queryKey: ["prowlarr", "search"] })
+      .sort((a, b) => b.state.dataUpdatedAt - a.state.dataUpdatedAt)
+      .slice(5);
+    old.forEach((query) => qc.removeQueries({ queryKey: query.queryKey, exact: true }));
+  }, [qc, search.dataUpdatedAt]);
 
   const update = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
@@ -118,7 +155,7 @@ export default function SearchPage() {
       name: (r) => r.title,
     },
   );
-  const actions = useResultActions();
+  const actions = useResultActions(() => search.refetch());
   const shown = sorted.slice(0, limit);
   const indexerList = indexers.data?.indexers ?? search.data?.indexers ?? [];
   const indexerCount = idx.length || indexerList.length;
@@ -129,18 +166,8 @@ export default function SearchPage() {
   };
 
   return (
-    <div>
-      <PageHeader
-        title="Torrent search"
-        description={`Searches ${idx.length ? "the selected" : "all enabled"} Prowlarr indexers.`}
-        actions={
-          caps?.transmission?.available && (
-            <LinkButton to="/torrents/downloads" icon={<Download />}>
-              Downloads
-            </LinkButton>
-          )
-        }
-      />
+    <div className="@container">
+      {!embedded && <PageHeader title="Torrent search" description={`Searches ${idx.length ? "the selected" : "all enabled"} Prowlarr indexers.`} />}
 
       <Card>
         <form onSubmit={submit} role="search" className="flex flex-wrap items-center gap-2 border-b border-border p-3">
@@ -195,9 +222,9 @@ export default function SearchPage() {
                 onChange={(v) => (setFilter(v), setLimit(PAGE))}
                 placeholder="Filter results…"
                 label="Filter results"
-                className="min-w-0 flex-1 basis-48 sm:max-w-xs"
+                className="min-w-0 flex-1 basis-48 @2xl:max-w-xs"
               />
-              <div className="flex items-center gap-1.5 md:hidden">
+              <div className="flex items-center gap-1.5 @3xl:hidden">
                 <label htmlFor="sort-results" className="text-2xs font-semibold uppercase tracking-wider text-subtle">
                   Sort
                 </label>
@@ -229,7 +256,7 @@ export default function SearchPage() {
               </EmptyState>
             ) : (
               <>
-                <div className="max-md:hidden">
+                <div className="@max-3xl:hidden">
                   <Table className="table-fixed">
                     <THead>
                       <tr>
@@ -242,7 +269,7 @@ export default function SearchPage() {
                         <SortTh k="seeders" sort={sort} onSort={toggle} align="right" className="w-24">
                           S / L
                         </SortTh>
-                        <SortTh k="age" sort={sort} onSort={toggle} align="right" className="w-28 max-lg:hidden">
+                        <SortTh k="age" sort={sort} onSort={toggle} align="right" className="w-28 @max-5xl:hidden">
                           Age
                         </SortTh>
                         <Th className="w-[7.5rem] text-right">
@@ -264,7 +291,7 @@ export default function SearchPage() {
                     </tbody>
                   </Table>
                 </div>
-                <ul className="md:hidden" aria-label="Search results">
+                <ul className="@3xl:hidden" aria-label="Search results">
                   {shown.map((r) => (
                     <ResultCard key={r.id} r={r} busy={actions.busy[r.id]} magnetOnly={actions.magnetOnly[r.id]} actions={actions} queueReason={queueReason} />
                   ))}
@@ -293,7 +320,7 @@ function CatChip({ active, onClick, children }: { active: boolean; onClick: () =
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-medium transition-colors max-md:h-8",
+        "inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-medium transition-colors @max-3xl:h-8",
         active ? "border-accent/40 bg-accent-soft text-accent" : "border-border bg-surface-2 text-muted hover:border-border-strong hover:text-fg",
       )}
     >
@@ -360,7 +387,7 @@ function Title({ r }: { r: SearchResult }) {
             href={r.infoUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="-my-2 ml-0.5 inline-flex size-6 items-center justify-center rounded align-middle text-subtle hover:text-frost max-md:size-8"
+            className="-my-2 ml-0.5 inline-flex size-6 items-center justify-center rounded align-middle text-subtle hover:text-frost @max-3xl:size-8"
             aria-label={`Open on ${r.indexer}`}
             title={`Open on ${r.indexer}`}
           >
@@ -405,7 +432,7 @@ function ResultRow({ r, busy, magnetOnly, actions, queueReason }: RowProps) {
       <Td className="py-2 text-right">
         <Peers r={r} />
       </Td>
-      <Td className="num py-2 text-right text-xs text-muted max-lg:hidden" title={r.age ? new Date(r.age).toLocaleString() : undefined}>
+      <Td className="num py-2 text-right text-xs text-muted @max-5xl:hidden" title={r.age ? new Date(r.age).toLocaleString() : undefined}>
         {ago(r.age)}
       </Td>
       <Td className="py-1.5 text-right">

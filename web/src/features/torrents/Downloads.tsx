@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { ArrowDown, ArrowUp, Download, HardDrive, Pause, Play, Search as SearchIcon, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, HardDrive, Pause, Play, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useTopic } from "@/lib/ws";
 import { bytes, duration, rate } from "@/lib/format";
@@ -16,7 +16,6 @@ import { Badge, EmptyState, ErrorNote, Meter, PageHeader, Skeleton, Spinner, typ
 import { SortTh, Table, Td, Th, THead, Tr, useSort } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
 import { errorMessage, type Torrent, type TorrentStatus, type TransmissionPayload } from "./api";
-import { LinkButton } from "./actions";
 
 type Filter = "all" | "downloading" | "seeding" | "paused" | "errors";
 type SortKey = "name" | "status" | "progress" | "down" | "up" | "eta" | "size" | "ratio" | "added";
@@ -85,7 +84,7 @@ function ratio(r: number) {
 
 const meterTone = (t: Torrent) => (t.error ? "crit" : t.percentDone >= 1 ? "ok" : t.status === "stopped" ? "accent" : "frost");
 
-export default function Downloads() {
+export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
   const qc = useQueryClient();
   const caps = useCapabilities().data;
   const initial = useQuery({
@@ -161,18 +160,13 @@ export default function Downloads() {
   const notReady = caps && !caps.transmission?.configured;
 
   return (
-    <div>
-      <PageHeader
-        title="Downloads"
-        description={`Live view of Transmission${caps?.transmission?.version ? ` ${caps.transmission.version.split(" ")[0]}` : ""}.`}
-        actions={
-          caps?.prowlarr?.available && (
-            <LinkButton to="/torrents/search" icon={<SearchIcon />}>
-              Search torrents
-            </LinkButton>
-          )
-        }
-      />
+    <div className="@container">
+      {!embedded && (
+        <PageHeader
+          title="Downloads"
+          description={`Live view of Transmission${caps?.transmission?.version ? ` ${caps.transmission.version.split(" ")[0]}` : ""}.`}
+        />
+      )}
 
       {notReady ? (
         <Card>
@@ -190,26 +184,26 @@ export default function Downloads() {
         </Card>
       ) : (
         <>
-          <Card className="mb-4 grid grid-cols-2 sm:grid-cols-4 sm:divide-x sm:divide-border">
+          <Card className="mb-4 grid grid-cols-2 @2xl:grid-cols-4 @2xl:divide-x @2xl:divide-border">
             <StatCell label="Download" icon={<ArrowDown />} value={stats ? rate(stats.downloadSpeed) : undefined} tone="text-frost" />
             <StatCell
               label="Upload"
               icon={<ArrowUp />}
               value={stats ? rate(stats.uploadSpeed) : undefined}
               tone="text-ok"
-              className="max-sm:border-l max-sm:border-border"
+              className="@max-2xl:border-l @max-2xl:border-border"
             />
             <StatCell
               label="Active"
               value={stats ? String(stats.activeTorrentCount) : undefined}
               sub={stats ? `${stats.pausedTorrentCount} paused · ${torrents?.length ?? 0} total` : undefined}
-              className="max-sm:border-t max-sm:border-border"
+              className="@max-2xl:border-t @max-2xl:border-border"
             />
             <StatCell
               label="Free space"
               icon={<HardDrive />}
               value={stats ? (stats.freeSpace !== undefined ? bytes(stats.freeSpace) : "—") : undefined}
-              className="max-sm:border-l max-sm:border-t max-sm:border-border"
+              className="@max-2xl:border-l @max-2xl:border-t @max-2xl:border-border"
             />
           </Card>
 
@@ -217,7 +211,7 @@ export default function Downloads() {
 
           <Card>
             <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
-              <div className="flex items-center gap-1.5 sm:hidden">
+              <div className="flex items-center gap-1.5 @2xl:hidden">
                 <label htmlFor="filter-torrents" className="text-2xs font-semibold uppercase tracking-wider text-subtle">
                   Show
                 </label>
@@ -229,7 +223,7 @@ export default function Downloads() {
                   ))}
                 </Select>
               </div>
-              <div className="max-sm:hidden">
+              <div className="@max-2xl:hidden">
                 <Segmented<Filter>
                   label="Filter torrents"
                   value={filter}
@@ -250,9 +244,9 @@ export default function Downloads() {
                 onChange={setQ}
                 placeholder="Filter by name…"
                 label="Filter torrents by name"
-                className="min-w-0 flex-1 basis-44 max-sm:order-last max-sm:basis-full lg:max-w-xs"
+                className="min-w-0 flex-1 basis-44 @max-2xl:order-last @max-2xl:basis-full @5xl:max-w-xs"
               />
-              <div className="flex items-center gap-1.5 md:hidden">
+              <div className="flex items-center gap-1.5 @3xl:hidden">
                 <label htmlFor="sort-torrents" className="text-2xs font-semibold uppercase tracking-wider text-subtle">
                   Sort
                 </label>
@@ -292,7 +286,7 @@ export default function Downloads() {
               </EmptyState>
             ) : (
               <>
-                <div className="max-md:hidden">
+                <div className="@max-3xl:hidden">
                   <Table className="table-fixed">
                     <THead>
                       <tr>
@@ -302,22 +296,22 @@ export default function Downloads() {
                         <SortTh k="status" sort={sort} onSort={toggle} defaultDir="asc" className="w-32">
                           Status
                         </SortTh>
-                        <SortTh k="progress" sort={sort} onSort={toggle} className="w-40 xl:w-48">
+                        <SortTh k="progress" sort={sort} onSort={toggle} className="w-40 @7xl:w-48">
                           Progress
                         </SortTh>
                         <SortTh k="down" sort={sort} onSort={toggle} align="right" className="w-24">
                           ↓ Rate
                         </SortTh>
-                        <SortTh k="up" sort={sort} onSort={toggle} align="right" className="w-24 max-lg:hidden">
+                        <SortTh k="up" sort={sort} onSort={toggle} align="right" className="w-24 @max-5xl:hidden">
                           ↑ Rate
                         </SortTh>
-                        <SortTh k="eta" sort={sort} onSort={toggle} defaultDir="asc" align="right" className="w-20 max-xl:hidden">
+                        <SortTh k="eta" sort={sort} onSort={toggle} defaultDir="asc" align="right" className="w-20 @max-7xl:hidden">
                           ETA
                         </SortTh>
-                        <SortTh k="size" sort={sort} onSort={toggle} align="right" className="w-24 max-lg:hidden">
+                        <SortTh k="size" sort={sort} onSort={toggle} align="right" className="w-24 @max-5xl:hidden">
                           Size
                         </SortTh>
-                        <SortTh k="ratio" sort={sort} onSort={toggle} align="right" className="w-20 max-xl:hidden">
+                        <SortTh k="ratio" sort={sort} onSort={toggle} align="right" className="w-20 @max-7xl:hidden">
                           Ratio
                         </SortTh>
                         <Th className="w-[4.75rem]">
@@ -332,7 +326,7 @@ export default function Downloads() {
                     </tbody>
                   </Table>
                 </div>
-                <ul className="md:hidden" aria-label="Torrents">
+                <ul className="@3xl:hidden" aria-label="Torrents">
                   {sorted.map((t) => (
                     <TorrentCard key={t.id} t={t} pending={pending[t.id]} onAct={act} onRemove={() => setRemoving(t)} />
                   ))}
@@ -446,10 +440,10 @@ function TorrentRow(props: RowProps) {
         <Progress t={t} />
       </Td>
       <Td className={cn("num text-right", t.rateDownload ? "text-frost" : "text-subtle")}>{t.rateDownload ? rate(t.rateDownload) : "—"}</Td>
-      <Td className={cn("num text-right max-lg:hidden", t.rateUpload ? "text-ok" : "text-subtle")}>{t.rateUpload ? rate(t.rateUpload) : "—"}</Td>
-      <Td className="num text-right text-muted max-xl:hidden">{eta(t)}</Td>
-      <Td className="num text-right text-muted max-lg:hidden">{bytes(t.sizeWhenDone)}</Td>
-      <Td className="num text-right text-muted max-xl:hidden">{ratio(t.uploadRatio)}</Td>
+      <Td className={cn("num text-right @max-5xl:hidden", t.rateUpload ? "text-ok" : "text-subtle")}>{t.rateUpload ? rate(t.rateUpload) : "—"}</Td>
+      <Td className="num text-right text-muted @max-7xl:hidden">{eta(t)}</Td>
+      <Td className="num text-right text-muted @max-5xl:hidden">{bytes(t.sizeWhenDone)}</Td>
+      <Td className="num text-right text-muted @max-7xl:hidden">{ratio(t.uploadRatio)}</Td>
       <Td className="py-1">
         <RowActions {...props} />
       </Td>
