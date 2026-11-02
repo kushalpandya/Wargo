@@ -4,6 +4,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -234,5 +235,185 @@ func TestDevBypassOnlyOnLoopback(t *testing.T) {
 	cfg.Listen = "127.0.0.1:2207"
 	if !New(cfg, st, audit.New(st, proxy), proxy).Bypass() {
 		t.Fatal("bypass expected on loopback")
+	}
+}
+
+func TestThrottleParallelBurstIsBounded(t *testing.T) {
+	th := NewThrottle()
+	ok := 0
+	for i := 0; i < 20; i++ {
+		// Attempts in flight (no Fail yet) must count.
+		if a, _ := th.Allow("1.2.3.4"); a {
+			ok++
+		}
+	}
+	if ok != th.MaxInflight {
+		t.Fatalf("%d parallel attempts allowed, want %d", ok, th.MaxInflight)
+	}
+	th.Release("1.2.3.4")
+	if a, _ := th.Allow("1.2.3.4"); !a {
+		t.Fatal("released slot should be reusable")
+	}
+}
+
+func TestThrottleGlobalCountsInflight(t *testing.T) {
+	th := NewThrottle()
+	th.GlobalPerMinute = 3
+	for i := 0; i < 3; i++ {
+		if a, _ := th.Allow(fmt.Sprintf("10.0.0.%d", i)); !a {
+			t.Fatal("should be allowed")
+		}
+	}
+	if a, _ := th.Allow("10.0.0.99"); a {
+		t.Fatal("in-flight attempts must count towards the global budget")
+	}
+}
+
+func TestThrottleIPv6Slash64(t *testing.T) {
+	th := NewThrottle()
+	for i := 1; i <= 4; i++ {
+		ip := fmt.Sprintf("2001:db8:1:2::%x", i)
+		th.Allow(ip)
+		th.Fail(ip)
+	}
+	if a, _ := th.Allow("2001:db8:1:2:ffff::1"); a {
+		t.Fatal("rotating addresses inside one /64 must share a bucket")
+	}
+	if a, _ := th.Allow("2001:db8:1:3::1"); !a {
+		t.Fatal("another /64 must not be affected")
+	}
+}
+
+func TestThrottleGlobalBudgetCannotLockOutKnownUser(t *testing.T) {
+	th := NewThrottle()
+	th.GlobalPerMinute = 5
+	th.Allow("192.0.2.1")
+	th.Success("192.0.2.1")
+	for i := 0; i < 5; i++ {
+		th.Fail(fmt.Sprintf("198.51.100.%d", i))
+	}
+	if a, _ := th.Allow("203.0.113.1"); a {
+		t.Fatal("unknown client should hit the global budget")
+	}
+	if a, _ := th.Allow("192.0.2.1"); !a {
+		t.Fatal("recently successful client must be exempt from the global budget")
+	}
+	th.Release("192.0.2.1")
+	if a, _ := th.AllowLocal("203.0.113.1"); !a {
+		t.Fatal("passkey sign-in must not be subject to the global budget")
+	}
+}
+
+func TestHostAllowedDNSRebinding(t *testing.T) {
+	s, _ := newTestService(t)
+	s.cfg.Auth.Origins = []string{"https://wargo.example.com"}
+	for host, want := range map[string]bool{
+		"127.0.0.1:2207":         true,
+		"[::1]:2207":             true,
+		"192.168.1.10:2207":      true,
+		"localhost:2207":         true,
+		"nas":                    true,
+		"nas.lan:2207":           true,
+		"nas.home.arpa":          true,
+		"wargo.example.com":      true,
+		"WARGO.example.com:443":  true,
+		"evil.example.net:2207":  false,
+		"wargo.example.com.evil": false,
+		"":                       false,
+	} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Host = host
+		if got := s.HostAllowed(r); got != want {
+			t.Errorf("%q: got %v want %v", host, got, want)
+		}
+	}
+	// The rebinding attack: Origin equals Host, both the attacker's name.
+	r := httptest.NewRequest("POST", "/", nil)
+	r.Host = "evil.example.net:2207"
+	if s.AllowedOrigin(r, "http://evil.example.net:2207") {
+		t.Fatal("same-host origin on an unknown host must be rejected")
+	}
+}
+
+func TestDevBypassOnlyForDirectLocalRequests(t *testing.T) {
+	s, _ := newTestService(t)
+	s.bypass = true
+	h := s.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	do := func(host string, hdr map[string]string) int {
+		r := httptest.NewRequest("GET", "/api/x", nil)
+		r.Host = host
+		for k, v := range hdr {
+			r.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if got := do("127.0.0.1:2207", nil); got != 204 {
+		t.Fatalf("direct local request: %d", got)
+	}
+	if got := do("localhost:5173", nil); got != 204 {
+		t.Fatalf("localhost: %d", got)
+	}
+	// Published through cloudflared/nginx on the same host.
+	if got := do("wargo.example.com", map[string]string{"X-Forwarded-For": "203.0.113.5"}); got != 401 {
+		t.Fatalf("proxied request got the bypass: %d", got)
+	}
+	if got := do("127.0.0.1:2207", map[string]string{"CF-Connecting-IP": "203.0.113.5"}); got != 401 {
+		t.Fatalf("tunnelled request got the bypass: %d", got)
+	}
+}
+
+func TestLimitedSessionCannotEnrolOtherFactors(t *testing.T) {
+	s, _ := newTestService(t)
+	c, sess := sessionCookies(t, s, MethodPassword)
+	h := s.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	for _, tc := range []struct {
+		method, path string
+		want         int
+	}{
+		{"POST", "/api/auth/passkeys/register/begin", 403},
+		{"POST", "/api/auth/recovery-codes", 403},
+		{"POST", "/api/auth/sessions/revoke-others", 403},
+		{"GET", "/ws/events", 403},
+		{"POST", "/api/auth/totp/setup", 204},
+		{"POST", "/api/auth/totp/enable", 204},
+	} {
+		r := httptest.NewRequest(tc.method, "http://127.0.0.1"+tc.path, nil)
+		r.AddCookie(c)
+		r.Header.Set(CSRFHeader, sess.CSRF)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != tc.want {
+			t.Errorf("%s %s: got %d want %d", tc.method, tc.path, rec.Code, tc.want)
+		}
+	}
+}
+
+func TestPasskeyAccountNeedsSecondFactor(t *testing.T) {
+	s, st := newTestService(t)
+	ctx := context.Background()
+	if s.needsSecondFactor(ctx) {
+		t.Fatal("fresh install: password + TOTP enrolment")
+	}
+	st.DB.Exec(`INSERT INTO webauthn_credentials(id, name, data, rp_id, created_at) VALUES('x','k','{}','example.com',0)`)
+	if !s.needsSecondFactor(ctx) {
+		t.Fatal("with a passkey registered a password alone must not create a session")
+	}
+}
+
+func TestWebSocketUpgradeOriginChecked(t *testing.T) {
+	s, _ := newTestService(t)
+	s.cfg.Auth.RequireTOTP = false
+	c, _ := sessionCookies(t, s, MethodPasswordTOTP)
+	h := s.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	r := httptest.NewRequest("GET", "http://wargo.lan/ws/term", nil)
+	r.AddCookie(c)
+	r.Header.Set("Upgrade", "websocket")
+	r.Header.Set("Origin", "https://other.lan")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != 403 {
+		t.Fatalf("cross-origin WebSocket upgrade: %d", rec.Code)
 	}
 }

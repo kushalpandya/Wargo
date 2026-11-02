@@ -66,7 +66,11 @@ func FromContext(ctx context.Context) *Session {
 type pendingLogin struct {
 	ip      string
 	expires time.Time
+	fails   int
 }
+
+// maxSecondFactorFails bounds TOTP/recovery guesses per password entry.
+const maxSecondFactorFails = 5
 
 type Service struct {
 	cfg      config.Config
@@ -100,6 +104,9 @@ func New(cfg config.Config, st *store.Store, al *audit.Log, proxy *httpx.ProxyTr
 
 // Bypass reports whether dev auth bypass is active.
 func (s *Service) Bypass() bool { return s.bypass }
+
+// bypassFor reports whether the dev bypass applies to r (see bypassAllowed).
+func (s *Service) bypassFor(r *http.Request) bool { return s.bypass && s.bypassAllowed(r) }
 
 func randToken(n int) string {
 	b := make([]byte, n)
@@ -175,6 +182,12 @@ func (s *Service) VerifyAdminPassword(password string) error {
 	return s.passwordAuthenticate(s.cfg.Auth.User, password)
 }
 
+func (s *Service) hasRecoveryCodes(ctx context.Context) bool {
+	var n int
+	s.st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM recovery_codes WHERE used_at IS NULL`).Scan(&n)
+	return n > 0
+}
+
 // HasPasskeys reports whether any passkey is registered.
 func (s *Service) HasPasskeys(ctx context.Context) bool {
 	var n int
@@ -186,18 +199,20 @@ func (s *Service) HasPasskeys(ctx context.Context) bool {
 func (s *Service) IsAdmin(name string) error { return s.userIsAdmin(name) }
 
 // AllowedOrigin reports whether origin may talk to us for request r.
+// Same-host origins are accepted, which is only safe because every request
+// first passes HostAllowed (DNS-rebinding protection).
 func (s *Service) AllowedOrigin(r *http.Request, origin string) bool {
 	if origin == "" {
 		return true
 	}
 	u, err := url.Parse(origin)
-	if err != nil {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return false
 	}
-	if strings.EqualFold(u.Host, r.Host) {
+	if strings.EqualFold(u.Host, r.Host) && s.HostAllowed(r) {
 		return true
 	}
-	for _, o := range append(slices.Clone(s.cfg.Auth.Origins), s.cfg.Dev.Origins...) {
+	for _, o := range s.allOrigins() {
 		if strings.EqualFold(strings.TrimRight(o, "/"), origin) {
 			return true
 		}
@@ -208,7 +223,7 @@ func (s *Service) AllowedOrigin(r *http.Request, origin string) bool {
 // OriginPatterns returns host patterns for websocket.Accept.
 func (s *Service) OriginPatterns() []string {
 	var out []string
-	for _, o := range append(slices.Clone(s.cfg.Auth.Origins), s.cfg.Dev.Origins...) {
+	for _, o := range s.allOrigins() {
 		if u, err := url.Parse(o); err == nil && u.Host != "" {
 			out = append(out, u.Host)
 		}
@@ -289,16 +304,34 @@ func (s *Service) limited(ctx context.Context, sess *Session) bool {
 	return !s.totpEnabled(ctx)
 }
 
+// limitedRoutes are the only endpoints a password-only session may use
+// while TOTP enrolment is pending. In particular it can't register a
+// passkey, regenerate recovery codes or open a WebSocket.
+var limitedRoutes = map[string]bool{
+	"GET /api/auth/me":           true,
+	"POST /api/auth/totp/setup":  true,
+	"POST /api/auth/totp/enable": true,
+}
+
+// isWebSocket reports whether r is a WebSocket upgrade.
+func isWebSocket(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
 // Require wraps next so it only runs for authenticated, CSRF-checked requests.
 func (s *Service) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		unsafe := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
-		if unsafe && !s.AllowedOrigin(r, r.Header.Get("Origin")) {
+		// WebSocket upgrades are GETs but carry the session like a
+		// state-changing request (terminal input!): check Origin for them
+		// too, in addition to the check websocket.Accept does
+		// (cross-site WebSocket hijacking).
+		if (unsafe || isWebSocket(r)) && !s.AllowedOrigin(r, r.Header.Get("Origin")) {
 			httpx.Fail(w, r, httpx.Errorf(http.StatusForbidden, "bad_origin", "Cross-origin request rejected"))
 			return
 		}
 		var sess *Session
-		if s.bypass {
+		if s.bypassFor(r) {
 			sess = s.devSession()
 		} else {
 			var err error
@@ -311,7 +344,7 @@ func (s *Service) Require(next http.Handler) http.Handler {
 				httpx.Fail(w, r, httpx.Errorf(http.StatusForbidden, "csrf", "Missing or invalid CSRF token"))
 				return
 			}
-			if s.limited(r.Context(), sess) && !strings.HasPrefix(r.URL.Path, "/api/auth/") {
+			if s.limited(r.Context(), sess) && !limitedRoutes[r.Method+" "+r.URL.Path] {
 				httpx.Fail(w, r, httpx.Errorf(http.StatusForbidden, "totp_setup_required", "Set up two-factor authentication to continue"))
 				return
 			}
@@ -358,7 +391,11 @@ func (s *Service) checkPassword(r *http.Request, username, password string) erro
 		slog.Info("password check failed", "ip", ip, "err", err)
 		return invalid
 	}
-	s.throttle.Success(ip)
+	// Not Success: a correct password is only half of a sign-in when a
+	// second factor follows, and clearing the backoff here would give
+	// someone who knows the password fresh TOTP guesses after every
+	// re-login. Callers call throttle.Success once fully authenticated.
+	s.throttle.Release(ip)
 	return nil
 }
 
@@ -395,7 +432,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 }
 
 func (s *Service) handleState(w http.ResponseWriter, r *http.Request) error {
-	authed := s.bypass
+	authed := s.bypassFor(r)
 	if !authed {
 		if _, err := s.lookup(r); err == nil {
 			authed = true
@@ -405,7 +442,7 @@ func (s *Service) handleState(w http.ResponseWriter, r *http.Request) error {
 	s.st.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM webauthn_credentials`).Scan(&n)
 	httpx.OK(w, map[string]any{
 		"authenticated": authed,
-		"dev":           s.bypass,
+		"dev":           s.bypassFor(r),
 		"pam":           passwordAvailable(),
 		"container":     host.Container(),
 		"passkeys":      n > 0,
@@ -422,20 +459,44 @@ func isLocalhost(r *http.Request) bool {
 	return h == "localhost" || h == "127.0.0.1" || h == "[::1]"
 }
 
+var errBadOrigin = httpx.Errorf(http.StatusForbidden, "bad_origin", "Cross-origin request rejected")
+
+// isThrottled reports whether err is the throttle's 429 (not audited: it
+// carries no information and would let anyone flood the audit log).
+func isThrottled(err error) bool {
+	var e *httpx.Error
+	return errors.As(err, &e) && e.Code == "throttled"
+}
+
+// needsSecondFactor reports whether a correct password alone must not
+// yield a session: once any second factor exists (TOTP or a passkey), the
+// password is only half of a sign-in. Without this, an attacker who knows
+// the password of a passkey-only account would get a "TOTP setup" session
+// and could enrol their own TOTP.
+func (s *Service) needsSecondFactor(ctx context.Context) bool {
+	return s.totpEnabled(ctx) || s.HasPasskeys(ctx)
+}
+
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) error {
 	if !s.AllowedOrigin(r, r.Header.Get("Origin")) {
-		return httpx.Errorf(http.StatusForbidden, "bad_origin", "Cross-origin request rejected")
+		return errBadOrigin
 	}
 	var req loginReq
 	if err := httpx.Decode(r, &req); err != nil {
 		return err
 	}
-	err := s.checkPassword(r, strings.TrimSpace(req.Username), req.Password)
-	s.audit.Record(r, "auth.password", req.Username, err, nil)
+	user := strings.TrimSpace(req.Username)
+	err := s.checkPassword(r, user, req.Password)
+	if !isThrottled(err) {
+		s.audit.Record(r, "auth.password", user, err, nil)
+	}
 	if err != nil {
 		return err
 	}
-	if s.totpEnabled(r.Context()) {
+	if s.needsSecondFactor(r.Context()) {
+		if !s.totpEnabled(r.Context()) && !s.hasRecoveryCodes(r.Context()) {
+			return httpx.Errorf(http.StatusConflict, "passkey_required", "This account signs in with a passkey. Use “Sign in with a passkey”.")
+		}
 		tok := randToken(24)
 		s.mu.Lock()
 		s.gcPending()
@@ -447,6 +508,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) error {
 	if _, err := s.createSession(w, r, MethodPassword); err != nil {
 		return err
 	}
+	s.throttle.Success(s.proxy.ClientIP(r))
 	next := "done"
 	if s.cfg.Auth.RequireTOTP {
 		next = "totp-setup"
@@ -456,6 +518,9 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Service) handleSecondFactor(w http.ResponseWriter, r *http.Request) error {
+	if !s.AllowedOrigin(r, r.Header.Get("Origin")) {
+		return errBadOrigin
+	}
 	var req struct {
 		Token    string `json:"token"`
 		Code     string `json:"code"`
@@ -475,6 +540,7 @@ func (s *Service) handleSecondFactor(w http.ResponseWriter, r *http.Request) err
 	}
 	s.mu.Unlock()
 	if !ok {
+		s.throttle.Release(ip)
 		return httpx.Errorf(http.StatusUnauthorized, "login_expired", "Login expired, start again")
 	}
 	method := MethodPasswordTOTP
@@ -488,6 +554,18 @@ func (s *Service) handleSecondFactor(w http.ResponseWriter, r *http.Request) err
 	s.audit.Record(r, "auth.second_factor", method, err, nil)
 	if err != nil {
 		s.throttle.Fail(ip)
+		// A pending login allows a few guesses only; then the password
+		// must be entered again.
+		s.mu.Lock()
+		if p, ok := s.pending[req.Token]; ok {
+			p.fails++
+			if p.fails >= maxSecondFactorFails {
+				delete(s.pending, req.Token)
+			} else {
+				s.pending[req.Token] = p
+			}
+		}
+		s.mu.Unlock()
 		return httpx.Errorf(http.StatusUnauthorized, "invalid_code", "Invalid code")
 	}
 	s.throttle.Success(ip)
@@ -502,6 +580,9 @@ func (s *Service) handleSecondFactor(w http.ResponseWriter, r *http.Request) err
 }
 
 func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) error {
+	if !s.AllowedOrigin(r, r.Header.Get("Origin")) {
+		return errBadOrigin
+	}
 	if c, err := r.Cookie(SessionCookie); err == nil {
 		s.st.DB.ExecContext(r.Context(), `DELETE FROM sessions WHERE id_hash = ?`, hashToken(c.Value))
 	}
@@ -522,7 +603,7 @@ func (s *Service) handleMe(w http.ResponseWriter, r *http.Request) error {
 		"user":              s.cfg.Auth.User,
 		"adminGroup":        s.AdminGroup(),
 		"method":            sess.Method,
-		"dev":               s.bypass,
+		"dev":               sess.Method == MethodDev,
 		"csrf":              sess.CSRF,
 		"totpEnabled":       s.totpEnabled(r.Context()),
 		"totpSetupRequired": s.limited(r.Context(), sess),
@@ -580,10 +661,14 @@ func (s *Service) handleRevokeOthers(w http.ResponseWriter, r *http.Request) err
 
 // reauth checks the password supplied for sensitive account changes.
 func (s *Service) reauth(r *http.Request, password string) error {
-	if s.bypass {
+	if sess := FromContext(r.Context()); sess != nil && sess.Method == MethodDev {
 		return nil
 	}
-	return s.checkPassword(r, s.cfg.Auth.User, password)
+	if err := s.checkPassword(r, s.cfg.Auth.User, password); err != nil {
+		return err
+	}
+	s.throttle.Success(s.proxy.ClientIP(r))
+	return nil
 }
 
 // ResetAll wipes every second factor and session (used by `wargo admin reset-auth`).

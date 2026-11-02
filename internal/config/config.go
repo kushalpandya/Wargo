@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -309,6 +310,31 @@ func (c Config) Validate() error {
 			return fmt.Errorf("auth.trusted_proxies: %w", err)
 		}
 	}
+	for _, list := range []struct {
+		name string
+		v    []string
+	}{{"auth.origins", c.Auth.Origins}, {"dev.origins", c.Dev.Origins}} {
+		for _, o := range list.v {
+			if err := validOrigin(o); err != nil {
+				return fmt.Errorf("%s: %w", list.name, err)
+			}
+		}
+	}
+	if c.Auth.SessionIdle.Duration <= 0 || c.Auth.SessionMax.Duration <= 0 {
+		return errors.New("auth.session_idle and auth.session_max must be positive")
+	}
+	return nil
+}
+
+// validOrigin accepts scheme://host[:port] with http or https (a trailing
+// slash is tolerated). Origins are allow-list entries for CSRF, WebSocket,
+// WebAuthn and Host checks, so anything vaguer is a mistake.
+func validOrigin(o string) error {
+	u, err := url.Parse(strings.TrimRight(o, "/"))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" ||
+		u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || strings.Contains(u.Host, "*") {
+		return fmt.Errorf("%q must look like https://wargo.example.com[:port]", o)
+	}
 	return nil
 }
 
@@ -335,6 +361,17 @@ func (c Config) LoopbackOnly() bool {
 		return false
 	}
 	if host == "localhost" {
+		// net.Listen binds whatever localhost resolves to; make sure that
+		// really is loopback only (a broken /etc/hosts could say otherwise).
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			return false
+		}
+		for _, ip := range ips {
+			if !ip.IsLoopback() {
+				return false
+			}
+		}
 		return true
 	}
 	ip := net.ParseIP(host)

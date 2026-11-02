@@ -15,9 +15,30 @@ func TestClientIPTrust(t *testing.T) {
 	if got := trust.ClientIP(r); got != "203.0.113.9" {
 		t.Fatalf("trusted proxy: %s", got)
 	}
+	// A client-supplied CF-Connecting-IP passed through a non-Cloudflare
+	// proxy must not override the proxy's own X-Forwarded-For.
 	r.Header.Set("CF-Connecting-IP", "198.51.100.7")
+	if got := trust.ClientIP(r); got != "203.0.113.9" {
+		t.Fatalf("CF-Connecting-IP overrode X-Forwarded-For: %s", got)
+	}
+	r.Header.Del("X-Forwarded-For")
 	if got := trust.ClientIP(r); got != "198.51.100.7" {
 		t.Fatalf("cloudflare header: %s", got)
+	}
+	r.Header.Set("CF-Connecting-IP", "not-an-ip")
+	if got := trust.ClientIP(r); got != "127.0.0.1" {
+		t.Fatalf("garbage header accepted: %s", got)
+	}
+	// Spoofed left-most entries are ignored; the right-most untrusted wins.
+	r.Header.Set("X-Forwarded-For", "1.1.1.1, 203.0.113.9")
+	if got := trust.ClientIP(r); got != "203.0.113.9" {
+		t.Fatalf("spoofed XFF: %s", got)
+	}
+	// Several XFF header lines are one list.
+	r.Header.Set("X-Forwarded-For", "1.1.1.1")
+	r.Header.Add("X-Forwarded-For", "203.0.113.10")
+	if got := trust.ClientIP(r); got != "203.0.113.10" {
+		t.Fatalf("multi-line XFF: %s", got)
 	}
 	r.RemoteAddr = "10.0.0.5:5000"
 	if got := trust.ClientIP(r); got != "10.0.0.5" {

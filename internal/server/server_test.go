@@ -96,3 +96,39 @@ func TestDevBypassServesAPI(t *testing.T) {
 		t.Fatalf("unknown API route: %d", res2.StatusCode)
 	}
 }
+
+// DNS rebinding: a page on http://evil.example:2207 re-pointed at our
+// address sends Host: evil.example:2207 (and a matching Origin). Even with
+// the dev bypass on, nothing must be served for it.
+func TestUnknownHostRejected(t *testing.T) {
+	ts := newTestServer(t, true)
+	for _, path := range []string{"/api/capabilities", "/api/auth/state", "/"} {
+		req, _ := http.NewRequest("GET", ts.URL+path, nil)
+		req.Host = "evil.example:2207"
+		req.Header.Set("Origin", "http://evil.example:2207")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusMisdirectedRequest {
+			t.Errorf("%s: got %d", path, res.StatusCode)
+		}
+		if res.Header.Get("X-Frame-Options") != "DENY" {
+			t.Errorf("%s: security headers missing on rejection", path)
+		}
+	}
+}
+
+func TestPublicBodyLimit(t *testing.T) {
+	ts := newTestServer(t, false)
+	big := `{"username":"` + strings.Repeat("a", 1<<20) + `","password":"x"}`
+	res, err := http.Post(ts.URL+"/api/auth/login", "application/json", strings.NewReader(big))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("oversized unauthenticated body: %d", res.StatusCode)
+	}
+}

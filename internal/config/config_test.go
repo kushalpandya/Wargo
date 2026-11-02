@@ -132,3 +132,23 @@ func TestContainerLoadNoTrashDefault(t *testing.T) {
 		t.Fatalf("trash=%q data=%q", c.Files.TrashDir, c.DataDir)
 	}
 }
+
+func TestValidateOrigins(t *testing.T) {
+	for o, ok := range map[string]bool{
+		"https://wargo.example.com":      true,
+		"https://wargo.example.com/":     true,
+		"http://127.0.0.1:5173":          true,
+		"wargo.example.com":              false,
+		"https://wargo.example.com/path": false,
+		"ftp://wargo.example.com":        false,
+		"https://*.example.com":          false,
+		"https://user@wargo.example.com": false,
+	} {
+		c := Default()
+		c.Auth.User = "x"
+		c.Auth.Origins = []string{o}
+		if err := c.Validate(); (err == nil) != ok {
+			t.Errorf("%q: err=%v", o, err)
+		}
+	}
+}

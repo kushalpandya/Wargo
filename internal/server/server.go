@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/audit"
@@ -136,8 +137,15 @@ func New(cfg config.Config) (*Server, error) {
 	spa := spaHandler(web.Dist())
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
+		if !au.HostAllowed(r) {
+			rejectHost(w, r)
+			return
+		}
 		switch {
 		case isPublic(r):
+			// Unauthenticated: small bodies, and no slow-body tarpits.
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(30 * time.Second))
+			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			public.ServeHTTP(w, r)
 		case strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/ws/"):
 			protected.ServeHTTP(w, r)
@@ -154,6 +162,28 @@ func New(cfg config.Config) (*Server, error) {
 		MaxHeaderBytes:    64 << 10,
 	}
 	return s, nil
+}
+
+var (
+	hostWarnMu sync.Mutex
+	hostWarned = map[string]bool{}
+)
+
+// rejectHost answers requests whose Host isn't this instance (DNS
+// rebinding protection, see auth.HostAllowed).
+func rejectHost(w http.ResponseWriter, r *http.Request) {
+	hostWarnMu.Lock()
+	warn := !hostWarned[r.Host] && len(hostWarned) < 64
+	if warn {
+		hostWarned[r.Host] = true
+	}
+	hostWarnMu.Unlock()
+	if warn {
+		slog.Warn("rejected request for an unknown host; add its origin to auth.origins (WARGO_ORIGINS) if it is yours",
+			"host", r.Host, "path", r.URL.Path)
+	}
+	httpx.Fail(w, r, httpx.Errorf(http.StatusMisdirectedRequest, "unknown_host",
+		"This host name is not configured for Wargo. Add its URL to auth.origins (or WARGO_ORIGINS)."))
 }
 
 func isPublic(r *http.Request) bool {

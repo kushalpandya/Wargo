@@ -21,6 +21,9 @@ import (
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
+// maxCeremonies bounds pending WebAuthn ceremonies kept in memory.
+const maxCeremonies = 1024
+
 type ceremony struct {
 	data    webauthn.SessionData
 	rpID    string
@@ -105,6 +108,16 @@ func (s *Service) storeCeremony(r *http.Request, rpID string, d *webauthn.Sessio
 	id := randToken(18)
 	s.mu.Lock()
 	s.gcPending()
+	// Unauthenticated clients can start ceremonies: bound the map.
+	if len(s.cerem) >= maxCeremonies {
+		var oldest string
+		for k, c := range s.cerem {
+			if oldest == "" || c.expires.Before(s.cerem[oldest].expires) {
+				oldest = k
+			}
+		}
+		delete(s.cerem, oldest)
+	}
 	s.cerem[id] = ceremony{data: *d, rpID: rpID, expires: time.Now().Add(5 * time.Minute), ip: s.proxy.ClientIP(r)}
 	s.mu.Unlock()
 	return id
@@ -186,9 +199,14 @@ func (s *Service) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return err
 	}
-	if ok, wait := s.throttle.Allow(s.proxy.ClientIP(r)); !ok {
+	// Passkeys can't be brute-forced, so only the per-client backoff
+	// applies (never the global budget): the real user can always sign in
+	// with a passkey while someone hammers the password form.
+	ip := s.proxy.ClientIP(r)
+	if ok, wait := s.throttle.AllowLocal(ip); !ok {
 		return httpx.Errorf(http.StatusTooManyRequests, "throttled", "Too many attempts. Try again in "+wait.Round(time.Second).String())
 	}
+	s.throttle.Release(ip)
 	opts, sd, err := wa.BeginDiscoverableLogin(webauthn.WithUserVerification(protocol.VerificationRequired))
 	if err != nil {
 		return err
@@ -226,15 +244,19 @@ func (s *Service) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		return err
 	}
+	ip := s.proxy.ClientIP(r)
+	if ok, wait := s.throttle.AllowLocal(ip); !ok {
+		return httpx.Errorf(http.StatusTooManyRequests, "throttled", "Too many attempts. Try again in "+wait.Round(time.Second).String())
+	}
 	sd, err := s.takeCeremony(r, r.URL.Query().Get("ceremony"), rpID)
 	if err != nil {
+		s.throttle.Release(ip)
 		return err
 	}
-	ip := s.proxy.ClientIP(r)
 	id, err := s.verifyAssertion(r, wa, rpID, sd)
 	s.audit.Record(r, "auth.passkey_login", rpID, err, nil)
 	if err != nil {
-		s.throttle.Fail(ip)
+		s.throttle.FailLocal(ip)
 		return httpx.Errorf(http.StatusUnauthorized, "passkey_failed", "Passkey sign-in failed")
 	}
 	s.throttle.Success(ip)

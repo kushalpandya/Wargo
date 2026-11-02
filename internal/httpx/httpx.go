@@ -126,20 +126,30 @@ func (t *ProxyTrust) ClientIP(r *http.Request) string {
 	if peer == nil || !t.trusted(peer) {
 		return host
 	}
-	if v := r.Header.Get("CF-Connecting-IP"); v != "" {
-		return strings.TrimSpace(v)
-	}
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		parts := strings.Split(v, ",")
+	// X-Forwarded-For first, walked from the right: every proxy appends
+	// the address it saw, so the right-most untrusted entry is the client
+	// and anything further left may be client-supplied. CF-Connecting-IP
+	// and X-Real-IP are single values a client can send itself through a
+	// proxy that doesn't overwrite them (e.g. nginx without Cloudflare),
+	// so they are only a fallback, and must parse as an IP.
+	// All header values are joined: a client may send several XFF lines.
+	if vs := r.Header.Values("X-Forwarded-For"); len(vs) > 0 {
+		parts := strings.Split(strings.Join(vs, ","), ",")
 		for i := len(parts) - 1; i >= 0; i-- {
 			ip := net.ParseIP(strings.TrimSpace(parts[i]))
-			if ip != nil && !t.trusted(ip) {
+			if ip == nil {
+				// Garbage from a client: stop trusting anything further left.
+				break
+			}
+			if !t.trusted(ip) {
 				return ip.String()
 			}
 		}
 	}
-	if v := r.Header.Get("X-Real-IP"); v != "" {
-		return strings.TrimSpace(v)
+	for _, h := range []string{"CF-Connecting-IP", "X-Real-IP"} {
+		if ip := net.ParseIP(strings.TrimSpace(r.Header.Get(h))); ip != nil {
+			return ip.String()
+		}
 	}
 	return host
 }
