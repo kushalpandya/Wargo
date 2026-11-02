@@ -1,0 +1,219 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Package elevate runs privileged commands on demand. Wargo never holds
+// root: each privileged request carries a sudo password (piped to
+// `sudo -k -S`, never stored) or a passkey assertion verified by the
+// optional wargo-privd helper.
+package elevate
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/kushalpandya/wargo/internal/audit"
+	"github.com/kushalpandya/wargo/internal/httpx"
+)
+
+// Header carries base64(JSON Credential) on privileged requests.
+const Header = "X-Wargo-Elevation"
+
+// Credential is what the browser supplies to elevate one request.
+type Credential struct {
+	Method    string          `json:"method"` // "sudo" | "passkey"
+	Password  string          `json:"password,omitempty"`
+	Challenge string          `json:"challenge,omitempty"`
+	Assertion json.RawMessage `json:"assertion,omitempty"`
+}
+
+// ErrRequired asks the client to prompt and retry with a credential.
+func (s *Service) ErrRequired(action, target string) *httpx.Error {
+	return httpx.Errorf(http.StatusForbidden, "elevation_required", "Administrator approval required").
+		With(map[string]any{"action": action, "target": target, "methods": s.Methods()})
+}
+
+var errBadPassword = httpx.Errorf(http.StatusUnauthorized, "elevation_failed", "Incorrect sudo password")
+
+// Throttler is satisfied by auth.Throttle.
+type Throttler interface {
+	Allow(ip string) (bool, time.Duration)
+	Fail(ip string)
+	Success(ip string)
+}
+
+type Service struct {
+	audit    *audit.Log
+	proxy    *httpx.ProxyTrust
+	throttle Throttler
+	privd    *PrivdClient
+	exe      string
+}
+
+func New(al *audit.Log, proxy *httpx.ProxyTrust, t Throttler, privdSocket string) *Service {
+	exe, _ := os.Executable()
+	return &Service{audit: al, proxy: proxy, throttle: t, privd: NewPrivdClient(privdSocket), exe: exe}
+}
+
+// Methods reports which elevation methods can work on this host.
+func (s *Service) Methods() map[string]any {
+	_, sudoErr := exec.LookPath("sudo")
+	nnp := noNewPrivs()
+	return map[string]any{
+		"sudo":           sudoErr == nil && !nnp,
+		"passkey":        s.privd.Available(),
+		"noNewPrivsHint": nnp,
+	}
+}
+
+func noNewPrivs() bool {
+	b, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return false
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(l, "NoNewPrivs:") {
+			return strings.TrimSpace(strings.TrimPrefix(l, "NoNewPrivs:")) == "1"
+		}
+	}
+	return false
+}
+
+// Helper returns argv for `wargo helper <args...>`.
+func (s *Service) Helper(args ...string) []string {
+	return append([]string{s.exe, "helper"}, args...)
+}
+
+func credentialFrom(r *http.Request) (*Credential, error) {
+	h := r.Header.Get(Header)
+	if h == "" {
+		return nil, nil
+	}
+	b, err := base64.StdEncoding.DecodeString(h)
+	if err != nil {
+		return nil, httpx.BadRequest("malformed elevation header")
+	}
+	var c Credential
+	if err := json.Unmarshal(b, &c); err != nil {
+		return nil, httpx.BadRequest("malformed elevation header")
+	}
+	return &c, nil
+}
+
+// Has reports whether r carries an elevation credential.
+func Has(r *http.Request) bool { return r.Header.Get(Header) != "" }
+
+// Run executes argv as root for action on target (shown to the user and
+// bound into passkey challenges), authorised by r's credential.
+// Output is combined stdout+stderr.
+func (s *Service) Run(r *http.Request, action, target string, argv []string, stdin io.Reader) ([]byte, error) {
+	cred, err := credentialFrom(r)
+	if err != nil {
+		return nil, err
+	}
+	if cred == nil {
+		return nil, s.ErrRequired(action, target)
+	}
+	ip := s.proxy.ClientIP(r)
+	if ok, wait := s.throttle.Allow(ip); !ok {
+		return nil, httpx.Errorf(http.StatusTooManyRequests, "throttled", "Too many attempts. Try again in "+wait.Round(time.Second).String())
+	}
+	var out []byte
+	switch cred.Method {
+	case "sudo":
+		out, err = s.runSudo(r.Context(), cred.Password, argv, stdin)
+		cred.Password = ""
+	case "passkey":
+		out, err = s.privd.Run(r.Context(), PrivdRequest{
+			Action: action, Target: target, Argv: argv, Challenge: cred.Challenge, Assertion: cred.Assertion,
+			Origin: r.Header.Get("Origin"),
+		}, stdin)
+	default:
+		err = httpx.BadRequest("unknown elevation method")
+	}
+	if errors.Is(err, errBadPassword) || errors.Is(err, errPasskeyRejected) {
+		s.throttle.Fail(ip)
+	} else if err == nil {
+		s.throttle.Success(ip)
+	}
+	ctx := audit.WithElevation(r.Context(), cred.Method)
+	s.audit.Record(r.WithContext(ctx), action, target, err, map[string]any{"argv": argv})
+	return out, err
+}
+
+func (s *Service) runSudo(ctx context.Context, password string, argv []string, stdin io.Reader) ([]byte, error) {
+	if password == "" {
+		return nil, errBadPassword
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	args := append([]string{"-k", "-S", "-p", "", "--"}, argv...)
+	cmd := exec.CommandContext(ctx, "sudo", args...)
+	in := io.MultiReader(strings.NewReader(password+"\n"), orEmpty(stdin))
+	cmd.Stdin = in
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+	out := buf.Bytes()
+	if err != nil {
+		low := strings.ToLower(string(out))
+		if strings.Contains(low, "incorrect password") || strings.Contains(low, "sorry, try again") ||
+			strings.Contains(low, "no password was provided") || strings.Contains(low, "authentication failure") {
+			return nil, errBadPassword
+		}
+		if strings.Contains(low, "is not in the sudoers") || strings.Contains(low, "not allowed to execute") {
+			return out, httpx.Errorf(http.StatusForbidden, "sudo_denied", "sudo denied this command")
+		}
+		if strings.Contains(low, "no new privileges") {
+			return out, httpx.Errorf(http.StatusConflict, "no_new_privs",
+				"sudo is blocked by NoNewPrivileges; see docs/SECURITY.md")
+		}
+		slog.Warn("elevated command failed", "argv", argv, "err", err)
+		return out, httpx.Errorf(http.StatusBadGateway, "command_failed", fmt.Sprintf("%s: %s", err, lastLine(out)))
+	}
+	return out, nil
+}
+
+func orEmpty(r io.Reader) io.Reader {
+	if r == nil {
+		return strings.NewReader("")
+	}
+	return r
+}
+
+func lastLine(b []byte) string {
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	return lines[len(lines)-1]
+}
+
+// Register mounts the elevation info endpoints.
+func (s *Service) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/elevate/methods", func(w http.ResponseWriter, r *http.Request) {
+		httpx.OK(w, s.Methods())
+	})
+	mux.HandleFunc("POST /api/elevate/challenge", httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
+		var req struct {
+			Action string `json:"action"`
+			Target string `json:"target"`
+		}
+		if err := httpx.Decode(r, &req); err != nil {
+			return err
+		}
+		ch, err := s.privd.Challenge(r.Context(), req.Action, req.Target, r.Header.Get("Origin"))
+		if err != nil {
+			return err
+		}
+		httpx.OK(w, ch)
+		return nil
+	}))
+}

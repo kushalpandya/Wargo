@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Package audit records security-relevant actions.
+package audit
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/kushalpandya/wargo/internal/httpx"
+	"github.com/kushalpandya/wargo/internal/store"
+)
+
+type Entry struct {
+	ID        int64           `json:"id"`
+	TS        time.Time       `json:"ts"`
+	IP        string          `json:"ip"`
+	UA        string          `json:"ua"`
+	Action    string          `json:"action"`
+	Target    string          `json:"target"`
+	Result    string          `json:"result"`
+	Elevation string          `json:"elevation,omitempty"`
+	Details   json.RawMessage `json:"details,omitempty"`
+}
+
+type Log struct {
+	st    *store.Store
+	proxy *httpx.ProxyTrust
+}
+
+func New(st *store.Store, proxy *httpx.ProxyTrust) *Log { return &Log{st: st, proxy: proxy} }
+
+type ctxKey struct{}
+
+// WithElevation tags the request context with how it was elevated.
+func WithElevation(ctx context.Context, method string) context.Context {
+	return context.WithValue(ctx, ctxKey{}, method)
+}
+
+// Record writes an entry. err == nil records "ok".
+func (l *Log) Record(r *http.Request, action, target string, err error, details any) {
+	result := "ok"
+	if err != nil {
+		result = "error: " + err.Error()
+	}
+	elev, _ := r.Context().Value(ctxKey{}).(string)
+	var d []byte
+	if details != nil {
+		d, _ = json.Marshal(details)
+	}
+	_, e := l.st.DB.Exec(
+		`INSERT INTO audit_log(ts, ip, ua, action, target, result, elevation, details) VALUES(?,?,?,?,?,?,?,?)`,
+		time.Now().Unix(), l.proxy.ClientIP(r), r.UserAgent(), action, target, result, elev, string(d))
+	if e != nil {
+		slog.Error("audit write failed", "err", e)
+	}
+	slog.Info("audit", "action", action, "target", target, "result", result, "elevation", elev)
+}
+
+// RecordSystem writes an entry not tied to an HTTP request.
+func (l *Log) RecordSystem(action, target, result string) {
+	_, _ = l.st.DB.Exec(`INSERT INTO audit_log(ts, ip, action, target, result) VALUES(?,?,?,?,?)`,
+		time.Now().Unix(), "local", action, target, result)
+}
+
+func (l *Log) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/audit", httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
+		limit := min(max(httpx.QueryInt(r, "limit", 100), 1), 500)
+		before := httpx.QueryInt(r, "before", 0)
+		q := `SELECT id, ts, COALESCE(ip,''), COALESCE(ua,''), action, COALESCE(target,''), result,
+			COALESCE(elevation,''), COALESCE(details,'') FROM audit_log`
+		args := []any{}
+		if before > 0 {
+			q += ` WHERE id < ?`
+			args = append(args, before)
+		}
+		q += ` ORDER BY id DESC LIMIT ?`
+		args = append(args, limit)
+		rows, err := l.st.DB.QueryContext(r.Context(), q, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		out := []Entry{}
+		for rows.Next() {
+			var e Entry
+			var ts int64
+			var d string
+			if err := rows.Scan(&e.ID, &ts, &e.IP, &e.UA, &e.Action, &e.Target, &e.Result, &e.Elevation, &d); err != nil {
+				return err
+			}
+			e.TS = time.Unix(ts, 0)
+			if d != "" {
+				e.Details = json.RawMessage(d)
+			}
+			out = append(out, e)
+		}
+		httpx.OK(w, out)
+		return rows.Err()
+	}))
+}
