@@ -5,10 +5,10 @@ import { Dialog as D } from "radix-ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
-  Download,
   FolderTree,
   Gauge,
   House,
+  Magnet,
   LayoutGrid,
   LogOut,
   Menu as MenuIcon,
@@ -17,7 +17,6 @@ import {
   PackageCheck,
   PanelLeftClose,
   PanelLeftOpen,
-  Search,
   Settings2,
   SquareTerminal,
   Sun,
@@ -42,81 +41,71 @@ interface NavItem {
   badge?: ReactNode;
 }
 
-function useNav(): { section?: string; items: NavItem[] }[] {
+function useNav(): NavItem[] {
   const { data: caps } = useCapabilities();
   const torrents = !!(caps?.prowlarr?.available || caps?.transmission?.available);
-  return [
-    {
-      items: [
-        { to: "/", label: "Home", icon: <House /> },
-        { to: "/containers", label: "Containers", icon: <Boxes /> },
-        { to: "/system", label: "System", icon: <Gauge /> },
-        { to: "/files", label: "Files", icon: <FolderTree /> },
-        { to: "/terminal", label: "Terminal", icon: <SquareTerminal /> },
-        { to: "/updates", label: "Updates", icon: <PackageCheck />, badge: <UpdatesBadge /> },
-        { to: "/apps", label: "Apps", icon: <LayoutGrid />, show: caps?.launcher?.enabled && caps.launcher.placement === "page" },
-      ],
-    },
-    {
-      section: "Torrents",
-      items: [
-        { to: "/torrents/search", label: "Search", icon: <Search />, show: !!caps?.prowlarr?.available },
-        { to: "/torrents/downloads", label: "Downloads", icon: <Download />, show: !!caps?.transmission?.available },
-      ].filter(() => torrents),
-    },
-  ].map((g) => ({ ...g, items: g.items.filter((i) => i.show !== false) }));
+  const items: NavItem[] = [
+    { to: "/", label: "Home", icon: <House /> },
+    { to: "/containers", label: "Containers", icon: <Boxes /> },
+    { to: "/system", label: "System", icon: <Gauge /> },
+    { to: "/files", label: "Files", icon: <FolderTree /> },
+    { to: "/terminal", label: "Terminal", icon: <SquareTerminal /> },
+    { to: "/torrents", label: "Torrents", icon: <Magnet />, show: torrents },
+    { to: "/updates", label: "Updates", icon: <PackageCheck />, badge: <UpdatesBadge /> },
+    { to: "/apps", label: "Apps", icon: <LayoutGrid />, show: caps?.launcher?.enabled && caps.launcher.placement === "page" },
+  ];
+  return items.filter((i) => i.show !== false);
+}
+
+/**
+ * One sidebar link. In the collapsed rail the tooltip wraps a plain
+ * element: Radix's Slot would otherwise stringify NavLink's className
+ * function and break hover/active styles.
+ */
+function SideLink({ item, compact, onNavigate }: { item: NavItem; compact?: boolean; onNavigate?: () => void }) {
+  const link = (
+    <NavLink
+      to={item.to}
+      end={item.to === "/"}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        cn(
+          "group relative flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[0.8125rem] font-medium transition-colors [&_svg]:size-4 [&_svg]:shrink-0",
+          compact && "justify-center px-0",
+          isActive ? "bg-surface-3 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
+        )
+      }
+    >
+      {({ isActive }) => (
+        <>
+          {isActive && <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent" aria-hidden="true" />}
+          <span className={cn(isActive ? "text-accent" : "text-subtle group-hover:text-muted")}>{item.icon}</span>
+          <span className={cn(compact && "sr-only")}>{item.label}</span>
+          {item.badge && <span className={cn(compact ? "absolute right-1 top-0.5 scale-90" : "ml-auto")}>{item.badge}</span>}
+        </>
+      )}
+    </NavLink>
+  );
+  if (!compact) return link;
+  return (
+    <Tooltip content={item.label} side="right">
+      <div>{link}</div>
+    </Tooltip>
+  );
 }
 
 function NavLinks({ compact, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {
-  const groups = useNav();
+  const items = useNav();
   return (
-    <nav aria-label="Main" className="flex flex-col gap-4">
-      {groups.map((g, i) =>
-        g.items.length === 0 ? null : (
-          <div key={i} className="flex flex-col gap-0.5">
-            {g.section && !compact && (
-              <div className="px-2.5 pb-1 text-2xs font-semibold uppercase tracking-wider text-subtle">{g.section}</div>
-            )}
-            {g.section && compact && <div className="mx-auto mb-1 h-px w-5 bg-border" />}
-            {g.items.map((it) => {
-              const link = (
-                <NavLink
-                  key={it.to}
-                  to={it.to}
-                  end={it.to === "/"}
-                  onClick={onNavigate}
-                  className={({ isActive }) =>
-                    cn(
-                      "group relative flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[0.8125rem] font-medium transition-colors [&_svg]:size-4 [&_svg]:shrink-0",
-                      compact && "justify-center px-0",
-                      isActive ? "bg-surface-3 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
-                    )
-                  }
-                >
-                  {({ isActive }) => (
-                    <>
-                      {isActive && <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent" aria-hidden="true" />}
-                      <span className={cn(isActive ? "text-accent" : "text-subtle group-hover:text-muted")}>{it.icon}</span>
-                      <span className={cn(compact && "sr-only")}>{it.label}</span>
-                      {it.badge && <span className={cn(compact ? "absolute right-1 top-0.5 scale-90" : "ml-auto")}>{it.badge}</span>}
-                    </>
-                  )}
-                </NavLink>
-              );
-              return compact ? (
-                <Tooltip key={it.to} content={it.label} side="right">
-                  {link}
-                </Tooltip>
-              ) : (
-                link
-              );
-            })}
-          </div>
-        ),
-      )}
+    <nav aria-label="Main" className="flex flex-col gap-0.5">
+      {items.map((it) => (
+        <SideLink key={it.to} item={it} compact={compact} onNavigate={onNavigate} />
+      ))}
     </nav>
   );
 }
+
+const settingsItem: NavItem = { to: "/settings", label: "Settings", icon: <Settings2 /> };
 
 const themeIcon: Record<ThemeMode, ReactNode> = { auto: <Monitor />, light: <Sun />, dark: <Moon /> };
 
@@ -249,54 +238,27 @@ export function Layout() {
           {!collapsed && (
             <>
               <span className="text-[0.9375rem] font-semibold tracking-tight">Wargo</span>
-              {me?.dev && <Badge tone="warn">Dev</Badge>}
-              <Tooltip content={`${toggleLabel} (Ctrl+B)`} side="right">
-                <IconButton label={toggleLabel} size="sm" className="ml-auto" onClick={toggleCollapsed} aria-expanded={!collapsed}>
-                  <PanelLeftClose />
-                </IconButton>
-              </Tooltip>
+              {me?.dev && (
+                <Badge tone="warn" className="ml-auto">
+                  Dev
+                </Badge>
+              )}
             </>
           )}
         </div>
-        {collapsed && (
-          <div className="flex justify-center border-b border-border py-1.5">
-            <Tooltip content={`${toggleLabel} (Ctrl+B)`} side="right">
-              <IconButton label={toggleLabel} size="sm" onClick={toggleCollapsed} aria-expanded={!collapsed}>
-                <PanelLeftOpen />
-              </IconButton>
-            </Tooltip>
-          </div>
-        )}
         <div className="scroll-area flex-1 p-2">
           <NavLinks compact={collapsed} />
         </div>
-        <div className="border-t border-border p-2">
-          {(() => {
-            const link = (
-              <NavLink
-                to="/settings"
-                className={({ isActive }) =>
-                  cn(
-                    "flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[0.8125rem] font-medium [&_svg]:size-4",
-                    collapsed && "justify-center px-0",
-                    isActive ? "bg-surface-3 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
-                  )
-                }
-                aria-label="Settings"
-              >
-                <Settings2 className="text-subtle" />
-                <span className={cn(collapsed && "sr-only")}>Settings</span>
-              </NavLink>
-            );
-            return collapsed ? (
-              <Tooltip content="Settings" side="right">
-                {link}
-              </Tooltip>
-            ) : (
-              link
-            );
-          })()}
-          {!collapsed && <div className="num mt-1 px-2.5 text-2xs text-subtle">v{caps?.version ?? ""}</div>}
+        <div className="flex flex-col gap-0.5 border-t border-border p-2">
+          <SideLink item={settingsItem} compact={collapsed} />
+          <div className={cn("mt-1 flex items-center", collapsed ? "justify-center" : "justify-between pl-2.5")}>
+            {!collapsed && <span className="num text-2xs text-subtle">v{caps?.version ?? ""}</span>}
+            <Tooltip content={`${toggleLabel} (Ctrl+B)`} side="right">
+              <IconButton label={toggleLabel} size="sm" onClick={toggleCollapsed} aria-expanded={!collapsed}>
+                {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+              </IconButton>
+            </Tooltip>
+          </div>
         </div>
       </aside>
 
@@ -317,9 +279,7 @@ export function Layout() {
             <div className="scroll-area flex-1 p-2">
               <NavLinks onNavigate={() => setDrawer(false)} />
               <div className="mt-4 border-t border-border pt-2">
-                <NavLink to="/settings" className="flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[0.8125rem] font-medium text-muted hover:bg-surface-2 hover:text-fg [&_svg]:size-4">
-                  <Settings2 className="text-subtle" /> Settings
-                </NavLink>
+                <SideLink item={settingsItem} onNavigate={() => setDrawer(false)} />
               </div>
             </div>
           </D.Content>
