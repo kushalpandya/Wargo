@@ -423,7 +423,7 @@ export default function UpdatesPage() {
 
   return (
     <div className="mx-auto max-w-[1600px]">
-      <Tabs.Root value={tab} onValueChange={(v) => setParams(v === "system" ? {} : { tab: v }, { replace: true })}>
+      <Tabs.Root value={tab} onValueChange={(v) => setParams({ tab: v }, { replace: true })}>
         <div className="mb-4 border-b border-border">
           <h1 className="text-lg font-semibold tracking-tight">Updates</h1>
           <Tabs.List className="-mb-px mt-2 flex gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Update sources">
