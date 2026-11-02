@@ -5,13 +5,13 @@
 // re-selects the same file and it continues where it stopped).
 import { useSyncExternalStore } from "react";
 import { api, ApiError } from "@/lib/api";
-import { joinPath } from "./api";
+import { joinPath, type RootId } from "./api";
 
 export type UploadState = "queued" | "uploading" | "paused" | "done" | "error" | "canceled" | "conflict" | "interrupted";
 
 export interface UploadItem {
   key: string;
-  root: number;
+  root: RootId;
   dir: string;
   /** Relative name; may contain "/" for folder uploads. */
   name: string;
@@ -56,7 +56,7 @@ function persist() {
 function restore() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as Partial<UploadItem>[];
-    items = raw.map((r) => ({ ...(r as UploadItem), state: "interrupted", speed: 0 }));
+    items = raw.map((r) => ({ ...(r as UploadItem), root: String(r.root ?? "0"), state: "interrupted", speed: 0 }));
   } catch {
     items = [];
   }
@@ -110,7 +110,7 @@ export interface PendingFile {
   rel: string;
 }
 
-export function enqueue(root: number, dir: string, files: PendingFile[]) {
+export function enqueue(root: RootId, dir: string, files: PendingFile[]) {
   for (const { file, rel } of files) {
     // Re-selecting a file for an interrupted upload resumes it.
     const resumable = items.find((i) => i.state === "interrupted" && i.root === root && i.dir === dir && i.name === rel && i.size === file.size);
@@ -253,7 +253,7 @@ async function run(key: string) {
   let failures = 0;
   try {
     const init = await api.post<{ uploadId: string; chunkSize: number; received: number }>("/api/files/upload/init", {
-      root: String(it.root),
+      root: it.root,
       dir: it.dir,
       name: it.name,
       size: it.size,

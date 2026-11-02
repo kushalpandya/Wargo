@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox, FormField, Input, Segmented, Switch } from "@/components/ui/form";
 import { ErrorNote, Notice, Spinner } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { absPath, baseName, fileApi, joinPath, parentPath, segments, type Entry, type Listing, type Root } from "./api";
+import { absPath, baseName, fileApi, joinPath, parentPath, segments, type Entry, type Listing, type Root, type RootId } from "./api";
 import { FileIcon, typeLabel } from "./kinds";
 
 function errMsg(e: unknown) {
@@ -113,7 +113,7 @@ export function DeleteDialog({
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  root: number;
+  root: RootId;
   paths: string[];
   trashAvailable: boolean;
   onDone: () => void;
@@ -200,7 +200,7 @@ function toOctal(v: number) {
   return v.toString(8).padStart(4, "0");
 }
 
-export function ChmodDialog({ open, onOpenChange, root, entries, dir, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; root: number; entries: Entry[]; dir: string; onDone: () => void }) {
+export function ChmodDialog({ open, onOpenChange, root, entries, dir, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; root: RootId; entries: Entry[]; dir: string; onDone: () => void }) {
   const first = entries[0];
   const [text, setText] = useState("0644");
   const [recursive, setRecursive] = useState(false);
@@ -317,7 +317,7 @@ function symbolic(v: number) {
   return s;
 }
 
-export function ChownDialog({ open, onOpenChange, root, entries, dir, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; root: number; entries: Entry[]; dir: string; onDone: () => void }) {
+export function ChownDialog({ open, onOpenChange, root, entries, dir, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; root: RootId; entries: Entry[]; dir: string; onDone: () => void }) {
   const first = entries[0];
   const [owner, setOwner] = useState("");
   const [recursive, setRecursive] = useState(false);
@@ -396,7 +396,7 @@ export function CompressDialog({
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  root: number;
+  root: RootId;
   dir: string;
   entries: Entry[];
   onJob: (id: string) => void;
@@ -478,7 +478,7 @@ export function CompressDialog({
   );
 }
 
-export function ExtractDialog({ open, onOpenChange, root, dir, entry, onJob }: { open: boolean; onOpenChange: (o: boolean) => void; root: number; dir: string; entry?: Entry; onJob: (id: string) => void }) {
+export function ExtractDialog({ open, onOpenChange, root, dir, entry, onJob }: { open: boolean; onOpenChange: (o: boolean) => void; root: RootId; dir: string; entry?: Entry; onJob: (id: string) => void }) {
   const [name, setName] = useState("");
   const [here, setHere] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -556,7 +556,7 @@ export function FolderPicker({
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  root: number;
+  root: RootId;
   rootInfo?: Root;
   start: string;
   title: string;
@@ -707,7 +707,7 @@ function Row({ label, children, mono = true }: { label: string; children: React.
   );
 }
 
-export function PropertiesSheet({ open, onOpenChange, root, rootInfo, dir, entry }: { open: boolean; onOpenChange: (o: boolean) => void; root: number; rootInfo?: Root; dir: string; entry?: Entry }) {
+export function PropertiesSheet({ open, onOpenChange, root, rootInfo, dir, entry }: { open: boolean; onOpenChange: (o: boolean) => void; root: RootId; rootInfo?: Root; dir: string; entry?: Entry }) {
   const p = entry ? (entry.name === "." ? dir : joinPath(dir, entry.name)) : dir;
   const isDir = entry?.type === "dir" || entry?.targetType === "dir";
   const size = useQuery({

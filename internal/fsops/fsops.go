@@ -51,33 +51,70 @@ func CopyContext(ctx context.Context, root *os.Root, src, dst string, prog Progr
 	if src == "." || Inside(dst, src) {
 		return ErrIntoSelf
 	}
-	if _, err := root.Lstat(dst); err == nil {
-		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
-	}
-	var done int64
-	return copyTree(ctx, root, src, dst, &done, prog)
+	return CopyBetween(ctx, root, src, root, dst, prog)
 }
 
-func copyTree(ctx context.Context, root *os.Root, src, dst string, done *int64, prog Progress) error {
-	if err := ctx.Err(); err != nil {
+// CopyBetween copies src inside srcRoot to dst inside dstRoot (which may be
+// the same root). Each side stays confined to its own root. The caller must
+// rule out copying a folder into itself; as a safety net, folders created
+// by this copy are never descended into again.
+func CopyBetween(ctx context.Context, srcRoot *os.Root, src string, dstRoot *os.Root, dst string, prog Progress) error {
+	src, dst = Clean(src), Clean(dst)
+	if src == "." || dst == "." {
+		return ErrIntoSelf
+	}
+	if _, err := dstRoot.Lstat(dst); err == nil {
+		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
+	}
+	c := &copier{ctx: ctx, src: srcRoot, dst: dstRoot, prog: prog, made: map[fileID]bool{}}
+	return c.tree(src, dst)
+}
+
+type fileID struct{ dev, ino uint64 }
+
+func idOf(fi fs.FileInfo) (fileID, bool) {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return fileID{uint64(st.Dev), uint64(st.Ino)}, true
+	}
+	return fileID{}, false
+}
+
+type copier struct {
+	ctx      context.Context
+	src, dst *os.Root
+	done     int64
+	prog     Progress
+	made     map[fileID]bool
+}
+
+func (c *copier) tree(src, dst string) error {
+	if err := c.ctx.Err(); err != nil {
 		return err
 	}
-	st, err := root.Lstat(src)
+	st, err := c.src.Lstat(src)
 	if err != nil {
 		return err
 	}
 	switch {
 	case st.Mode()&fs.ModeSymlink != 0:
-		t, err := root.Readlink(src)
+		t, err := c.src.Readlink(src)
 		if err != nil {
 			return err
 		}
-		return root.Symlink(t, dst)
+		return c.dst.Symlink(t, dst)
 	case st.IsDir():
-		if err := root.Mkdir(dst, st.Mode().Perm()|0o700); err != nil {
+		if id, ok := idOf(st); ok && c.made[id] {
+			return ErrIntoSelf
+		}
+		if err := c.dst.Mkdir(dst, st.Mode().Perm()|0o700); err != nil {
 			return err
 		}
-		d, err := root.Open(src)
+		if ds, err := c.dst.Lstat(dst); err == nil {
+			if id, ok := idOf(ds); ok {
+				c.made[id] = true
+			}
+		}
+		d, err := c.src.Open(src)
 		if err != nil {
 			return err
 		}
@@ -87,22 +124,22 @@ func copyTree(ctx context.Context, root *os.Root, src, dst string, done *int64, 
 			return err
 		}
 		for _, e := range ents {
-			if err := copyTree(ctx, root, path.Join(src, e.Name()), path.Join(dst, e.Name()), done, prog); err != nil {
+			if err := c.tree(path.Join(src, e.Name()), path.Join(dst, e.Name())); err != nil {
 				return err
 			}
 		}
-		return root.Chmod(dst, st.Mode().Perm())
+		return c.dst.Chmod(dst, st.Mode().Perm())
 	case st.Mode().IsRegular():
-		in, err := root.Open(src)
+		in, err := c.src.Open(src)
 		if err != nil {
 			return err
 		}
 		defer in.Close()
-		out, err := root.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, st.Mode().Perm())
+		out, err := c.dst.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, st.Mode().Perm())
 		if err != nil {
 			return err
 		}
-		w := &countWriter{ctx: ctx, w: out, done: done, prog: prog, name: src}
+		w := &countWriter{ctx: c.ctx, w: out, done: &c.done, prog: c.prog, name: src}
 		if _, err := io.Copy(w, in); err != nil {
 			out.Close()
 			return err
@@ -110,7 +147,7 @@ func copyTree(ctx context.Context, root *os.Root, src, dst string, done *int64, 
 		if err := out.Close(); err != nil {
 			return err
 		}
-		return root.Chtimes(dst, st.ModTime(), st.ModTime())
+		return c.dst.Chtimes(dst, st.ModTime(), st.ModTime())
 	default:
 		return nil // skip devices, sockets, fifos
 	}

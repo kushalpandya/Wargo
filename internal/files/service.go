@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -46,9 +47,11 @@ type Options struct {
 	DataDir     string
 	TrashDir    string
 	MaxEditSize int64
-	Jobs        *jobs.Manager
-	Audit       Auditor
-	Elevate     Elevator
+	// ShowMounts offers mounted filesystems as additional roots.
+	ShowMounts bool
+	Jobs       *jobs.Manager
+	Audit      Auditor
+	Elevate    Elevator
 }
 
 type Service struct {
@@ -60,6 +63,9 @@ type Service struct {
 	elev     Elevator
 	uploads  *uploads
 	owners   *ownerCache
+
+	showMounts bool
+	mounts     mountCache
 }
 
 // Limits (variables so tests can shrink them).
@@ -76,12 +82,12 @@ var (
 func New(d *server.Deps) *Service {
 	return NewWithOptions(Options{
 		Roots: d.Cfg.Files.Roots, DataDir: d.Cfg.DataDir, TrashDir: d.Cfg.Files.TrashDir,
-		MaxEditSize: d.Cfg.Files.MaxEditSize, Jobs: d.Jobs, Audit: d.Audit, Elevate: d.Elevate,
+		MaxEditSize: d.Cfg.Files.MaxEditSize, ShowMounts: d.Cfg.Files.ShowMounts, Jobs: d.Jobs, Audit: d.Audit, Elevate: d.Elevate,
 	})
 }
 
 func NewWithOptions(o Options) *Service {
-	s := &Service{trashDir: o.TrashDir, maxEdit: o.MaxEditSize, jobs: o.Jobs, audit: o.Audit, elev: o.Elevate, owners: newOwnerCache()}
+	s := &Service{trashDir: o.TrashDir, maxEdit: o.MaxEditSize, jobs: o.Jobs, audit: o.Audit, elev: o.Elevate, owners: newOwnerCache(), showMounts: o.ShowMounts}
 	if s.maxEdit <= 0 {
 		s.maxEdit = 4 << 20
 	}
@@ -102,12 +108,16 @@ func NewWithOptions(o Options) *Service {
 }
 
 func (s *Service) Capabilities(context.Context) (string, any) {
-	roots := make([]map[string]any, len(s.roots))
+	roots := []map[string]any{}
 	for i, r := range s.roots {
-		roots[i] = map[string]any{"id": i, "name": r.Name, "path": r.Path}
+		roots = append(roots, map[string]any{"id": strconv.Itoa(i), "kind": "place", "name": r.Name, "path": r.Path})
+	}
+	for _, d := range s.drives(false) {
+		roots = append(roots, map[string]any{"id": d.ID, "kind": "drive", "name": d.Label, "path": d.Path})
 	}
 	return "files", map[string]any{
 		"roots": roots, "trash": s.trashDir != "", "maxEditSize": s.maxEdit, "chunkSize": chunkSize,
+		"showMounts": s.showMounts, "crossRoot": true,
 	}
 }
 
@@ -158,21 +168,42 @@ func (s *Service) Register(mux *http.ServeMux) {
 // ---- roots -----------------------------------------------------------------
 
 type rootRef struct {
-	ID   int
+	ID   string
 	Name string
 	Path string
 }
 
+func (s *Service) placeRef(i int) rootRef {
+	return rootRef{strconv.Itoa(i), s.roots[i].Name, s.roots[i].Path}
+}
+
 func (s *Service) lookupRoot(v string) (rootRef, error) {
-	if v == "" && len(s.roots) > 0 {
-		v = "0"
+	if v == "" {
+		if len(s.roots) > 0 {
+			return s.placeRef(0), nil
+		}
+		if ds := s.drives(false); len(ds) > 0 {
+			return rootRef{ds[0].ID, ds[0].Label, ds[0].Path}, nil
+		}
 	}
 	if i, err := strconv.Atoi(v); err == nil && i >= 0 && i < len(s.roots) {
-		return rootRef{i, s.roots[i].Name, s.roots[i].Path}, nil
+		return s.placeRef(i), nil
+	}
+	// Mount ids are only honoured for filesystems that are mounted right now,
+	// so a crafted id can't turn an arbitrary directory into a root.
+	if p, ok := parseMountID(v); ok && s.showMounts {
+		for _, fresh := range []bool{false, true} {
+			for _, d := range s.drives(fresh) {
+				if d.Path == p {
+					return rootRef{d.ID, d.Label, d.Path}, nil
+				}
+			}
+		}
+		return rootRef{}, httpx.Errorf(http.StatusNotFound, "unknown_root", "That drive is no longer mounted")
 	}
 	for i, r := range s.roots {
 		if r.Name == v {
-			return rootRef{i, r.Name, r.Path}, nil
+			return s.placeRef(i), nil
 		}
 	}
 	return rootRef{}, httpx.Errorf(http.StatusNotFound, "unknown_root", "Unknown root "+strconv.Quote(v))
@@ -191,19 +222,47 @@ func (s *Service) open(v string) (*os.Root, rootRef, error) {
 	return root, ref, nil
 }
 
-func (s *Service) handleRoots(w http.ResponseWriter, r *http.Request) error {
-	out := make([]map[string]any, len(s.roots))
-	for i, rt := range s.roots {
-		m := map[string]any{"id": i, "name": rt.Name, "path": rt.Path}
-		var st syscall.Statfs_t
-		if err := syscall.Statfs(rt.Path, &st); err == nil {
-			m["total"] = st.Blocks * uint64(st.Bsize)
-			m["free"] = st.Bavail * uint64(st.Bsize)
-		} else {
-			m["error"] = err.Error()
-		}
-		out[i] = m
+func statInto(m map[string]any, p string) {
+	st, err := statfs(p)
+	if err != nil {
+		m["error"] = errText(err)
+		return
 	}
+	bs := uint64(st.Bsize)
+	m["total"], m["free"], m["used"] = st.Blocks*bs, st.Bavail*bs, (st.Blocks-st.Bfree)*bs
+	if st.Flags&1 != 0 { // ST_RDONLY
+		m["readOnly"] = true
+	}
+}
+
+func (s *Service) handleRoots(w http.ResponseWriter, r *http.Request) error {
+	out := []map[string]any{}
+	for i, rt := range s.roots {
+		m := map[string]any{"id": strconv.Itoa(i), "kind": "place", "name": rt.Name, "path": rt.Path}
+		statInto(m, rt.Path)
+		out = append(out, m)
+	}
+	drives := s.drives(true)
+	ms := make([]map[string]any, len(drives))
+	var wg sync.WaitGroup
+	for i, d := range drives {
+		m := map[string]any{
+			"id": d.ID, "kind": "drive", "name": d.Label, "path": d.Path, "device": d.Device,
+			"fstype": d.FSType, "readOnly": d.ReadOnly, "removable": d.Removable, "network": d.Network,
+		}
+		ms[i] = m
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ro := d.ReadOnly
+			statInto(m, d.Path)
+			if ro {
+				m["readOnly"] = true
+			}
+		}()
+	}
+	wg.Wait()
+	out = append(out, ms...)
 	httpx.OK(w, out)
 	return nil
 }

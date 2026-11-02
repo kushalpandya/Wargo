@@ -11,7 +11,7 @@ import { Button, IconButton } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { EmptyState, ErrorNote, Spinner } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { downloadUrl, fileApi, joinPath, startDownload, type Entry } from "./api";
+import { downloadUrl, fileApi, joinPath, startDownload, type Entry, type RootId } from "./api";
 import { FileIcon, isEditable, kindOf, typeLabel } from "./kinds";
 import type { EditorHandle } from "./Editor";
 
@@ -21,7 +21,7 @@ function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex h-full items-center justify-center p-4 text-muted">{children}</div>;
 }
 
-function SvgImage({ root, path }: { root: number; path: string }) {
+function SvgImage({ root, path }: { root: RootId; path: string }) {
   // Fetched as text and shown through a blob: URL in <img>, where scripts never run.
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<unknown>(null);
@@ -76,7 +76,7 @@ function TextView({
   onState,
   wrap,
 }: {
-  root: number;
+  root: RootId;
   path: string;
   name: string;
   editorRef: React.RefObject<EditorHandle | null>;
@@ -181,7 +181,7 @@ export function Preview({
   onClose,
   onNavigate,
 }: {
-  root: number;
+  root: RootId;
   dir: string;
   entries: Entry[];
   name: string | null;

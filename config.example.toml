@@ -41,6 +41,9 @@ path = "/home/kushal"
 name = "DATA"
 path = "/DATA"
 
+# Also list mounted drives and partitions (/, /mnt/*, USB disks, network
+# shares) under "Drives" in the file manager.
+# show_mounts = true
 # trash_dir = "/var/lib/wargo/trash"
 # max_edit_size = 4194304       # bytes; larger files open read-only
 

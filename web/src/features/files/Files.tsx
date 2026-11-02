@@ -1,75 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router";
-import { ContextMenu as CM } from "radix-ui";
-import {
-  Archive,
-  ArrowUpFromLine,
-  ChevronDown,
-  ChevronRight,
-  ClipboardCopy,
-  Copy,
-  CopyPlus,
-  CornerLeftUp,
-  Download,
-  Eye,
-  EyeOff,
-  FilePlus2,
-  FolderInput,
-  FolderOpen,
-  FolderPlus,
-  FolderUp,
-  HardDrive,
-  Info,
-  LayoutGrid,
-  List,
-  MoreHorizontal,
-  PackageOpen,
-  Pencil,
-  RefreshCw,
-  ShieldCheck,
-  SquareCheck,
-  Trash2,
-  Upload,
-  UserCog,
-  X,
-} from "lucide-react";
+// File manager page: the Locations sidebar plus one to four independent
+// panes side by side (split view). The URL encodes every pane:
+//   /files/<root>/<path>?pane=<root>:<path>&pane=…&active=<n>&view=<file>
+// The first pane lives in the path; extra panes in ?pane=; ?active is
+// 1-based and ?view previews a file in the active pane.
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useLocation, useNavigate } from "react-router";
+import { HardDrive } from "lucide-react";
 import { ApiError } from "@/lib/api";
-import { bytes, level } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
-import { Button, IconButton } from "@/components/ui/button";
-import { SearchInput } from "@/components/ui/form";
-import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/menu";
-import { EmptyState, ErrorNote, Meter, Skeleton } from "@/components/ui/misc";
+import { EmptyState } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import {
-  absPath,
-  baseName,
-  downloadUrl,
-  fileApi,
-  joinPath,
-  parentPath,
-  parseRoute,
-  routeFor,
-  segments,
-  startDownload,
-  useListing,
-  useRefreshFiles,
-  useRoots,
-  zipUrl,
-  type Entry,
-  type JobSnapshot,
-  type Root,
-} from "./api";
-import { isExtractable, kindOf } from "./kinds";
-import { ActionMenu, ActionSheet, ContextMenuContent, type ActionGroups } from "./actions";
-import { Listing, type Sort, type SortKey } from "./Listing";
-import { ChmodDialog, ChownDialog, CompressDialog, ConflictDialog, DeleteDialog, ExtractDialog, FolderPicker, NameDialog, PropertiesSheet } from "./dialogs";
-import { Preview, canPreview } from "./Preview";
+import { decodePane, encodePane, fileApi, parseRoute, routeFor, segments, useRefreshFiles, useRoots, type JobSnapshot, type Loc, type Root } from "./api";
+import { ConflictDialog } from "./dialogs";
+import { RootIcon, RootsSidebar } from "./Locations";
+import { Pane, locLabel, type DragPayload, type PaneMeta, type TransferKind } from "./Pane";
 import { TransfersPanel, useFileJobs } from "./Transfers";
-import { enqueue, fromDrop, fromInput, onUploadDone } from "./uploads";
+import { onUploadDone } from "./uploads";
+import type { Sort } from "./Listing";
+
+const MAX_PANES = 4;
+const LAYOUT_KEY = "wargo.files.layout";
+const MIN_SHARE = 0.15;
 
 function useMedia(q: string) {
   const [m, setM] = useState(() => window.matchMedia(q).matches);
@@ -82,204 +36,260 @@ function useMedia(q: string) {
   return m;
 }
 
-function usePersisted<T extends string | boolean>(key: string, initial: T): [T, (v: T) => void] {
-  const [v, setV] = useState<T>(() => {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return initial;
-    return (typeof initial === "boolean" ? raw === "1" : raw) as T;
-  });
-  const set = (x: T) => {
-    setV(x);
-    localStorage.setItem(key, typeof x === "boolean" ? (x ? "1" : "0") : String(x));
+let keySeq = 0;
+const newKey = () => `pane${++keySeq}`;
+
+function defaultMeta(from?: PaneMeta): PaneMeta {
+  return {
+    key: newKey(),
+    view: from?.view ?? ((localStorage.getItem("wargo.files.view") as "list" | "grid" | null) ?? "list"),
+    sort: from?.sort ?? ({ key: "name", dir: "asc" } as Sort),
+    hidden: from?.hidden ?? localStorage.getItem("wargo.files.hidden") === "1",
+    back: [],
+    fwd: [],
   };
-  return [v, set];
 }
 
-const sortFns: Record<SortKey, (a: Entry, b: Entry) => number> = {
-  name: (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }),
-  size: (a, b) => a.size - b.size,
-  mtime: (a, b) => a.mtime.localeCompare(b.mtime),
-  type: (a, b) => kindOf(a).localeCompare(kindOf(b)) || a.name.localeCompare(b.name),
-  owner: (a, b) => a.owner.localeCompare(b.owner),
-  mode: (a, b) => a.octal.localeCompare(b.octal),
-};
-
-const isDirEntry = (e: Entry) => e.type === "dir" || e.targetType === "dir";
-
-type DialogState =
-  | { kind: "mkdir" | "newfile" }
-  | { kind: "rename"; entry: Entry }
-  | { kind: "delete"; paths: string[] }
-  | { kind: "chmod" | "chown" | "compress"; entries: Entry[] }
-  | { kind: "extract"; entry: Entry }
-  | { kind: "copy" | "move"; paths: string[] }
-  | { kind: "props"; entry: Entry }
-  | null;
-
-// ---- roots -------------------------------------------------------------------
-
-function RootUsage({ r }: { r: Root }) {
-  if (!r.total) return null;
-  const used = r.total - (r.free ?? 0);
-  const p = (used / r.total) * 100;
-  return (
-    <>
-      <Meter value={p} tone={level(p, 80, 92)} className="mt-1.5 h-1" label={`${r.name} usage`} />
-      <div className="num mt-1 text-2xs text-muted">
-        {bytes(r.free)} free of {bytes(r.total)}
-      </div>
-    </>
-  );
+interface SavedLayout {
+  panes: Loc[];
+  weights: number[];
 }
 
-function RootsSidebar({ roots, current, onPick }: { roots: Root[]; current: number; onPick: (id: number) => void }) {
-  return (
-    <aside className="hidden w-56 shrink-0 lg:block">
-      <Card>
-        <div className="border-b border-border px-3.5 py-2 text-2xs font-semibold uppercase tracking-wider text-subtle">Locations</div>
-        <nav aria-label="File roots" className="p-1.5">
-          {roots.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => onPick(r.id)}
-              aria-current={r.id === current ? "page" : undefined}
-              className={cn("relative block w-full rounded-md px-2.5 py-2 text-left transition-colors", r.id === current ? "bg-surface-3" : "hover:bg-surface-2")}
-            >
-              {r.id === current && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-accent" aria-hidden="true" />}
-              <div className="flex items-center gap-2">
-                <HardDrive className={cn("size-4 shrink-0", r.id === current ? "text-accent" : "text-subtle")} />
-                <span className="truncate text-[0.8125rem] font-medium">{r.name}</span>
-              </div>
-              <div className="num mt-0.5 truncate pl-6 text-2xs text-subtle" title={r.path}>
-                {r.path}
-              </div>
-              <div className="pl-6">
-                <RootUsage r={r} />
-              </div>
-            </button>
-          ))}
-        </nav>
-      </Card>
-    </aside>
-  );
+function loadLayout(): SavedLayout | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "null") as SavedLayout | null;
+    if (!v || !Array.isArray(v.panes) || !v.panes.length) return null;
+    return { panes: v.panes.slice(0, MAX_PANES), weights: Array.isArray(v.weights) ? v.weights : [] };
+  } catch {
+    return null;
+  }
 }
 
-// ---- breadcrumbs -------------------------------------------------------------
+const equal = (n: number) => Array.from({ length: n }, () => 1);
+const sameLoc = (a: Loc, b: Loc) => a.root === b.root && a.path === b.path;
 
-function Breadcrumbs({ roots, root, path, onNav, onRoot }: { roots: Root[]; root?: Root; path: string; onNav: (p: string) => void; onRoot: (id: number) => void }) {
-  const segs = segments(path);
-  const ref = useRef<HTMLOListElement>(null);
-  useEffect(() => {
-    ref.current?.scrollTo({ left: ref.current.scrollWidth });
-  }, [path]);
-  const rootBtn = (
-    <button type="button" onClick={() => onNav(".")} className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 font-medium hover:bg-surface-3">
-      <HardDrive className="size-4 text-accent" />
-      {root?.name ?? "…"}
-    </button>
-  );
+/** Like URLSearchParams.toString() but keeps ":" and "/" readable. */
+function encodeQuery(q: [string, string][]) {
+  return q.map(([k, v]) => `${k}=${encodeURIComponent(v).replace(/%3A/gi, ":").replace(/%2F/gi, "/")}`).join("&");
+}
+
+function buildUrl(locs: Loc[], active: number, view?: string | null) {
+  const q: [string, string][] = locs.slice(1).map((l) => ["pane", encodePane(l)]);
+  if (locs.length > 1 && active > 0) q.push(["active", String(active + 1)]);
+  if (view) q.push(["view", view]);
+  const s = encodeQuery(q);
+  return routeFor(locs[0].root, locs[0].path) + (s ? `?${s}` : "");
+}
+
+// ---- resizer -----------------------------------------------------------------
+
+function Resizer({ index, share, onResize, onReset, label }: { index: number; share: number; onResize: (delta: number) => void; onReset: () => void; label: string }) {
+  const start = useRef<{ x: number; width: number } | null>(null);
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const row = e.currentTarget.parentElement;
+    if (!row) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    start.current = { x: e.clientX, width: row.getBoundingClientRect().width };
+  };
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!start.current) return;
+    const dx = e.clientX - start.current.x;
+    if (Math.abs(dx) < 1) return;
+    onResize(dx / start.current.width);
+    start.current.x = e.clientX;
+  };
+  const end = () => {
+    start.current = null;
+  };
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    if (e.key === "ArrowLeft") onResize(-step);
+    else if (e.key === "ArrowRight") onResize(step);
+    else if (e.key === "Home") onResize(-1);
+    else if (e.key === "End") onResize(1);
+    else if (e.key === "Enter") onReset();
+    else return;
+    e.preventDefault();
+  };
   return (
-    <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
-      <ol ref={ref} className="flex min-w-0 items-center overflow-x-auto text-[0.8125rem] [scrollbar-width:none]">
-        <li className="flex shrink-0 items-center">
-          {roots.length > 1 ? (
-            <div className="flex items-center">
-              {rootBtn}
-              <Menu
-                align="start"
-                trigger={
-                  <button type="button" aria-label="Switch location" className="-ml-1 flex h-8 w-6 items-center justify-center rounded-md text-subtle hover:bg-surface-3 hover:text-fg lg:hidden">
-                    <ChevronDown className="size-3.5" />
-                  </button>
-                }
-              >
-                <MenuLabel>Locations</MenuLabel>
-                {roots.map((r) => (
-                  <MenuItem key={r.id} icon={<HardDrive />} onSelect={() => onRoot(r.id)} shortcut={r.id === root?.id ? "✓" : r.free !== undefined ? `${bytes(r.free)} free` : undefined}>
-                    {r.name}
-                  </MenuItem>
-                ))}
-              </Menu>
-            </div>
-          ) : (
-            rootBtn
-          )}
-        </li>
-        {segs.map((s, i) => {
-          const last = i === segs.length - 1;
-          return (
-            <li key={i} className="flex shrink-0 items-center">
-              <ChevronRight className="size-3.5 shrink-0 text-subtle" aria-hidden="true" />
-              {last ? (
-                <span aria-current="page" className="max-w-[16rem] truncate px-2 font-medium">
-                  {s}
-                </span>
-              ) : (
-                <button type="button" onClick={() => onNav(segs.slice(0, i + 1).join("/"))} className="h-8 max-w-[12rem] truncate rounded-md px-2 text-muted hover:bg-surface-3 hover:text-fg">
-                  {s}
-                </button>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-    </nav>
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      aria-valuenow={Math.round(share * 100)}
+      aria-valuemin={Math.round(MIN_SHARE * 100)}
+      aria-valuemax={Math.round((1 - MIN_SHARE) * 100)}
+      aria-valuetext={`Pane ${index + 1} takes ${Math.round(share * 100)}% of the pair`}
+      tabIndex={0}
+      title="Drag to resize · double-click to make equal"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onDoubleClick={onReset}
+      onKeyDown={onKeyDown}
+      className="group relative z-10 flex w-2.5 shrink-0 cursor-col-resize touch-none items-center justify-center rounded outline-none"
+    >
+      <span className="h-12 w-1 rounded-full bg-border-strong transition-colors group-hover:bg-accent group-focus-visible:bg-accent group-active:bg-accent" aria-hidden="true" />
+    </div>
   );
 }
 
 // ---- page --------------------------------------------------------------------
 
 export default function FilesPage() {
-  const loc = useLocation();
+  const location = useLocation();
   const nav = useNavigate();
-  const [params, setParams] = useSearchParams();
-  const { root: routeRoot, path } = parseRoute(loc.pathname);
   const roots = useRoots();
   const caps = useCapabilities();
   const capRoots = caps.data?.files?.roots;
-  const rootList: Root[] = roots.data ?? (capRoots ?? []).map((r, i) => ({ id: i, name: r.name, path: r.path }));
-  const root = routeRoot ?? 0;
-  const rootInfo = rootList.find((r) => r.id === root);
+  const rootList: Root[] = useMemo(
+    () => roots.data ?? (capRoots ?? []).map((r, i) => ({ id: String(r.id ?? i), kind: r.kind ?? "place", name: r.name, path: r.path })),
+    [roots.data, capRoots],
+  );
   const trashAvailable = caps.data?.files?.trash !== false;
+  const refresh = useRefreshFiles();
 
+  const phone = useMedia("(max-width: 639px)");
+  const tablet = useMedia("(max-width: 1023px)");
   const compact = useMedia("(max-width: 767px)");
   const coarse = useMedia("(pointer: coarse)");
-  const [hidden, setHidden] = usePersisted<boolean>("wargo.files.hidden", false);
-  const [view, setView] = usePersisted<"list" | "grid">("wargo.files.view", "list");
-  const [sort, setSort] = useState<Sort>({ key: "name", dir: "asc" });
-  const [filter, setFilter] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [focus, setFocus] = useState(-1);
-  const anchor = useRef(-1);
-  const [dialog, setDialog] = useState<DialogState>(null);
-  const [sheet, setSheet] = useState<{ title: string; subtitle?: string; groups: ActionGroups } | null>(null);
-  const [conflict, setConflict] = useState<{ count: number; names: string[]; resolve: (c: "rename" | "skip" | null) => void } | null>(null);
-  const [dragOver, setDragOver] = useState(false);
-  const dragDepth = useRef(0);
-  const listRef = useRef<HTMLDivElement>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const folderInput = useRef<HTMLInputElement>(null);
-  const refresh = useRefreshFiles();
+  const maxVisible = phone ? 1 : tablet ? 2 : MAX_PANES;
+
+  // ---- URL state ----
+  const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const first = parseRoute(location.pathname);
+  const locs: Loc[] = useMemo(() => {
+    if (first.root === null) return [];
+    const extra = params
+      .getAll("pane")
+      .map(decodePane)
+      .filter((x): x is Loc => !!x)
+      .slice(0, MAX_PANES - 1);
+    return [{ root: first.root, path: first.path }, ...extra];
+  }, [first.root, first.path, params]);
+  const count = locs.length;
+  const active = Math.min(Math.max(0, Number(params.get("active") ?? 1) - 1 || 0), Math.max(0, count - 1));
   const previewName = params.get("view");
 
+  // Bare /files: restore the last layout, else open the first root.
+  const saved = useRef(loadLayout());
   useEffect(() => {
-    if (routeRoot === null && rootList.length) nav(routeFor(0, "."), { replace: true });
-  }, [routeRoot, rootList.length, nav]);
+    if (first.root !== null || !rootList.length) return;
+    const s = saved.current;
+    const known = s?.panes.filter((l) => rootList.some((r) => r.id === l.root)) ?? [];
+    nav(known.length ? buildUrl(known, 0) : routeFor(rootList[0].id, "."), { replace: true });
+  }, [first.root, rootList, nav]);
 
-  const listing = useListing(rootList.length ? root : null, path, hidden);
-
-  // Reset per-folder state.
+  // ---- per-pane state that isn't in the URL ----
+  const [metas, setMetas] = useState<PaneMeta[]>([]);
+  const [weights, setWeights] = useState<number[]>(() => saved.current?.weights ?? []);
+  const metaList = useMemo(() => {
+    const out = metas.slice(0, count);
+    while (out.length < count) out.push(defaultMeta(out[out.length - 1]));
+    return out;
+  }, [metas, count]);
   useEffect(() => {
-    setSelected(new Set());
-    setFocus(-1);
-    anchor.current = -1;
-    setFilter("");
-  }, [root, path]);
+    if (metaList !== metas && (metas.length !== metaList.length || metaList.some((m, i) => m !== metas[i]))) setMetas(metaList);
+  }, [metaList, metas]);
+  const w = weights.length === count ? weights : equal(count);
 
+  // Persist the layout.
   useEffect(() => {
-    folderInput.current?.setAttribute("webkitdirectory", "");
+    if (!count) return;
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ panes: locs, weights: w } satisfies SavedLayout));
+  }, [locs, w, count]);
+
+  // ---- visible window (phones show one pane, tablets two) ----
+  const [winStart, setWinStart] = useState(0);
+  const start = Math.max(0, Math.min(winStart, count - maxVisible));
+  const visStart = active < start ? active : active >= start + maxVisible ? active - maxVisible + 1 : start;
+  useEffect(() => {
+    if (visStart !== winStart) setWinStart(visStart);
+  }, [visStart, winStart]);
+  const visible = (i: number) => i >= visStart && i < visStart + maxVisible;
+  const split = Math.min(count, maxVisible) > 1;
+
+  // ---- navigation ----
+  const commit = useCallback((next: Loc[], act: number, opts?: { replace?: boolean; view?: string | null }) => nav(buildUrl(next, act, opts?.view), { replace: opts?.replace }), [nav]);
+
+  const updateMeta = (i: number, patch: Partial<PaneMeta>) => setMetas((ms) => metaList.map((m, k) => (k === i ? { ...(ms[k] ?? m), ...patch } : (ms[k] ?? m))));
+
+  const navigatePane = (i: number, l: Loc) => {
+    const cur = locs[i];
+    if (!cur) return;
+    if (!sameLoc(cur, l)) updateMeta(i, { back: [...metaList[i].back, cur].slice(-50), fwd: [] });
+    commit(
+      locs.map((x, k) => (k === i ? l : x)),
+      i,
+    );
+  };
+  const historyStep = (i: number, dir: "back" | "fwd") => {
+    const m = metaList[i];
+    const stack = dir === "back" ? m.back : m.fwd;
+    const target = stack[stack.length - 1];
+    if (!target) return;
+    const rest = stack.slice(0, -1);
+    updateMeta(i, dir === "back" ? { back: rest, fwd: [...m.fwd, locs[i]] } : { fwd: rest, back: [...m.back, locs[i]] });
+    commit(
+      locs.map((x, k) => (k === i ? target : x)),
+      i,
+    );
+  };
+  const activate = (i: number) => {
+    if (i !== active) commit(locs, i, { replace: true });
+  };
+  const splitPane = (from = active) => {
+    if (count >= MAX_PANES || !locs[from]) return;
+    const next = [...locs.slice(0, from + 1), { ...locs[from] }, ...locs.slice(from + 1)];
+    setMetas([...metaList.slice(0, from + 1), defaultMeta(metaList[from]), ...metaList.slice(from + 1)]);
+    setWeights(equal(next.length));
+    commit(next, from + 1);
+  };
+  const closePane = (i: number) => {
+    if (count < 2) return;
+    const next = locs.filter((_, k) => k !== i);
+    setMetas(metaList.filter((_, k) => k !== i));
+    setWeights(w.filter((_, k) => k !== i));
+    commit(next, Math.min(i > active ? active : Math.max(0, active - (i < active ? 1 : 0)), next.length - 1));
+  };
+  const setPreview = (name: string | null, replace?: boolean) => commit(locs, active, { view: name, replace });
+
+  // Ctrl/Cmd+\ splits the active pane.
+  const splitRef = useRef(splitPane);
+  splitRef.current = splitPane;
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== "\\" || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("input, textarea, [contenteditable=true], [role=dialog]")) return;
+      e.preventDefault();
+      splitRef.current();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
   }, []);
+
+  // ---- resizing ----
+  const resize = (i: number, delta: number) => {
+    // Move `delta` (fraction of the whole row) from pane i+1 to pane i.
+    const vis = locs.map((_, k) => k).filter(visible);
+    const total = vis.reduce((s, k) => s + w[k], 0);
+    const pair = w[i] + w[i + 1];
+    const min = MIN_SHARE * pair;
+    const d = Math.max(min - w[i], Math.min(pair - min - w[i], delta * total));
+    setWeights(w.map((x, k) => (k === i ? x + d : k === i + 1 ? x - d : x)));
+  };
+  const resetPair = (i: number) => {
+    const pair = w[i] + w[i + 1];
+    setWeights(w.map((x, k) => (k === i || k === i + 1 ? pair / 2 : x)));
+  };
+
+  // ---- shared transfers, jobs and uploads ----
+  const [conflict, setConflict] = useState<{ count: number; names: string[]; resolve: (c: "rename" | "skip" | null) => void } | null>(null);
+  const [drag, setDrag] = useState<DragPayload | null>(null);
+  const [selectionBar, setSelectionBar] = useState(false);
 
   useEffect(
     () =>
@@ -304,51 +314,6 @@ export default function FilesPage() {
   );
   const { jobs, dismiss, clear } = useFileJobs(onJobFinish);
 
-  const entries = useMemo(() => {
-    const list = listing.data?.entries ?? [];
-    const q = filter.trim().toLowerCase();
-    const filtered = q ? list.filter((e) => e.name.toLowerCase().includes(q)) : list;
-    const fn = sortFns[sort.key];
-    const m = sort.dir === "asc" ? 1 : -1;
-    return [...filtered].sort((a, b) => {
-      const d = Number(isDirEntry(b)) - Number(isDirEntry(a));
-      if (d) return d;
-      return fn(a, b) * m || sortFns.name(a, b);
-    });
-  }, [listing.data, filter, sort]);
-
-  const selEntries = useMemo(() => entries.filter((e) => selected.has(e.name)), [entries, selected]);
-  const previewables = useMemo(() => entries.filter(canPreview), [entries]);
-
-  const go = (p: string) => nav(routeFor(root, p));
-  const pickRoot = (id: number) => nav(routeFor(id, "."));
-  const pathOf = (e: Entry) => joinPath(path, e.name);
-
-  const open = (e: Entry) => {
-    if (e.targetType === "outside") return toast.error("Link points outside this root", `${e.name} → ${e.target}`);
-    if (e.targetType === "broken") return toast.error("Broken link", `${e.name} → ${e.target}`);
-    if (isDirEntry(e)) return go(pathOf(e));
-    if (kindOf(e) === "archive") {
-      if (isExtractable(e.name)) return setDialog({ kind: "extract", entry: e });
-      return startDownload(downloadUrl(root, pathOf(e)));
-    }
-    if (canPreview(e)) {
-      const p = new URLSearchParams(params);
-      p.set("view", e.name);
-      setParams(p);
-      return;
-    }
-    startDownload(downloadUrl(root, pathOf(e)));
-  };
-
-  const closePreview = () => {
-    const p = new URLSearchParams(params);
-    p.delete("view");
-    setParams(p, { replace: true });
-    window.setTimeout(() => listRef.current?.focus(), 0);
-  };
-
-  // ---- mutations with conflict handling ----
   const withConflict = async <R,>(fn: (oc?: string) => Promise<R>): Promise<R | null> => {
     try {
       return await fn();
@@ -364,643 +329,111 @@ export default function FilesPage() {
     }
   };
 
-  const transfer = async (kind: "copy" | "move", paths: string[], dest: string) => {
-    const r = await withConflict<{ jobId?: string }>((oc) => (kind === "copy" ? fileApi.copy(root, paths, dest, oc) : fileApi.move(root, paths, dest, oc)));
-    if (!r) return;
+  /** Copies or moves paths (relative to from.root) into to.path of to.root. */
+  const transfer = async (kind: TransferKind, from: Loc, paths: string[], to: Loc): Promise<boolean> => {
+    const r = await withConflict<{ jobId?: string }>((oc) => (kind === "copy" ? fileApi.copy(from.root, paths, to.path, oc, to.root) : fileApi.move(from.root, paths, to.path, oc, to.root)));
+    if (!r) return false;
     if (r.jobId) toast.info(kind === "copy" ? "Copying in the background" : "Moving in the background");
-    else toast.ok(kind === "copy" ? "Copied" : "Moved", `${paths.length} item${paths.length === 1 ? "" : "s"} → ${dest === "." ? rootInfo?.name : dest}`);
-    setSelected(new Set());
+    else toast.ok(kind === "copy" ? "Copied" : "Moved", `${paths.length} item${paths.length === 1 ? "" : "s"} → ${locLabel(rootList, to)}`);
     refresh();
-  };
-
-  const copyPath = (p: string) =>
-    navigator.clipboard?.writeText(p).then(
-      () => toast.ok("Path copied"),
-      () => toast.error("Clipboard unavailable"),
-    );
-
-  // ---- actions ----
-  const folderGroups = (): ActionGroups => [
-    [
-      { key: "mkdir", label: "New folder", icon: <FolderPlus />, run: () => setDialog({ kind: "mkdir" }) },
-      { key: "newfile", label: "New text file", icon: <FilePlus2 />, run: () => setDialog({ kind: "newfile" }) },
-      { key: "upload", label: "Upload files", icon: <Upload />, run: () => fileInput.current?.click() },
-      { key: "uploaddir", label: "Upload folder", icon: <FolderUp />, run: () => folderInput.current?.click() },
-    ],
-    [
-      { key: "selall", label: "Select all", icon: <SquareCheck />, shortcut: "Ctrl+A", disabled: !entries.length, run: () => setSelected(new Set(entries.map((e) => e.name))) },
-      { key: "dl", label: "Download folder as zip", icon: <Download />, run: () => startDownload(downloadUrl(root, path)) },
-      { key: "refresh", label: "Refresh", icon: <RefreshCw />, run: () => refresh() },
-      { key: "copypath", label: "Copy path", icon: <ClipboardCopy />, run: () => copyPath(absPath(rootInfo, path)) },
-    ],
-  ];
-
-  const itemGroups = (sel: Entry[]): ActionGroups => {
-    if (!sel.length) return folderGroups();
-    const one = sel.length === 1 ? sel[0] : null;
-    const paths = sel.map(pathOf);
-    return [
-      [
-        ...(one
-          ? [
-              {
-                key: "open",
-                label: isDirEntry(one) ? "Open" : kindOf(one) === "text" || kindOf(one) === "code" ? "Open in editor" : "Open",
-                icon: <FolderOpen />,
-                shortcut: "Enter",
-                disabled: one.targetType === "outside" || one.targetType === "broken",
-                run: () => open(one),
-              },
-            ]
-          : []),
-        {
-          key: "download",
-          label: one && !isDirEntry(one) ? "Download" : "Download as zip",
-          icon: <Download />,
-          run: () => startDownload(one ? downloadUrl(root, pathOf(one)) : zipUrl(root, paths)),
-        },
-      ],
-      [
-        ...(one ? [{ key: "rename", label: "Rename", icon: <Pencil />, shortcut: "F2", run: () => setDialog({ kind: "rename", entry: one }) }] : []),
-        { key: "copy", label: "Copy to…", icon: <Copy />, run: () => setDialog({ kind: "copy", paths }) },
-        { key: "move", label: "Move to…", icon: <FolderInput />, run: () => setDialog({ kind: "move", paths }) },
-        { key: "dup", label: "Duplicate", icon: <CopyPlus />, run: () => void transfer("copy", paths, path).catch((e) => toast.error("Duplicate failed", e)) },
-      ],
-      [
-        { key: "compress", label: "Compress…", icon: <Archive />, run: () => setDialog({ kind: "compress", entries: sel }) },
-        ...(one && isExtractable(one.name) ? [{ key: "extract", label: "Extract…", icon: <PackageOpen />, run: () => setDialog({ kind: "extract", entry: one }) }] : []),
-      ],
-      [
-        { key: "chmod", label: "Permissions…", icon: <ShieldCheck />, run: () => setDialog({ kind: "chmod", entries: sel }) },
-        { key: "chown", label: "Change owner…", icon: <UserCog />, run: () => setDialog({ kind: "chown", entries: sel }) },
-        ...(one
-          ? [
-              { key: "props", label: "Properties", icon: <Info />, run: () => setDialog({ kind: "props", entry: one }) },
-              { key: "copypath", label: "Copy path", icon: <ClipboardCopy />, run: () => copyPath(absPath(rootInfo, pathOf(one))) },
-            ]
-          : []),
-      ],
-      [{ key: "delete", label: "Delete", icon: <Trash2 />, shortcut: "Del", danger: true, run: () => setDialog({ kind: "delete", paths }) }],
-    ];
-  };
-
-  // ---- selection ----
-  const selectOnly = (i: number) => {
-    const e = entries[i];
-    if (!e) return;
-    setSelected(new Set([e.name]));
-    setFocus(i);
-    anchor.current = i;
-  };
-  const toggle = (i: number) => {
-    const e = entries[i];
-    if (!e) return;
-    setSelected((s) => {
-      const n = new Set(s);
-      if (n.has(e.name)) n.delete(e.name);
-      else n.add(e.name);
-      return n;
-    });
-    setFocus(i);
-    anchor.current = i;
-  };
-  const range = (i: number, additive: boolean) => {
-    const a = anchor.current >= 0 ? anchor.current : i;
-    const [lo, hi] = a < i ? [a, i] : [i, a];
-    setSelected((s) => {
-      const n = additive ? new Set(s) : new Set<string>();
-      for (let k = lo; k <= hi; k++) n.add(entries[k].name);
-      return n;
-    });
-    setFocus(i);
-  };
-  const onItemClick = (i: number, e: MouseEvent) => {
-    listRef.current?.focus({ preventScroll: true });
-    if (e.shiftKey) range(i, e.ctrlKey || e.metaKey);
-    else if (e.ctrlKey || e.metaKey) toggle(i);
-    else selectOnly(i);
-  };
-
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>, cols: number) => {
-    if (e.target !== e.currentTarget) return;
-    const n = entries.length;
-    const mod = e.ctrlKey || e.metaKey;
-    const move = (to: number) => {
-      e.preventDefault();
-      const i = Math.max(0, Math.min(n - 1, to));
-      if (n === 0) return;
-      if (e.shiftKey) range(i, false);
-      else if (mod) setFocus(i);
-      else selectOnly(i);
-    };
-    const cur = focus < 0 ? -1 : focus;
-    switch (e.key) {
-      case "ArrowDown":
-        return move(cur < 0 ? 0 : cur + cols);
-      case "ArrowUp":
-        return move(cur < 0 ? 0 : cur - cols);
-      case "ArrowRight":
-        if (view === "grid") return move(cur + 1);
-        return;
-      case "ArrowLeft":
-        if (view === "grid") return move(cur - 1);
-        return;
-      case "Home":
-        return move(0);
-      case "End":
-        return move(n - 1);
-      case "PageDown":
-        return move(cur + 10 * cols);
-      case "PageUp":
-        return move(cur - 10 * cols);
-      case "Enter":
-        if (entries[cur]) {
-          e.preventDefault();
-          open(entries[cur]);
-        }
-        return;
-      case "Backspace":
-        if (path !== ".") {
-          e.preventDefault();
-          go(parentPath(path));
-        }
-        return;
-      case "Delete":
-        if (selEntries.length) {
-          e.preventDefault();
-          setDialog({ kind: "delete", paths: selEntries.map(pathOf) });
-        }
-        return;
-      case "F2": {
-        const t = selEntries.length === 1 ? selEntries[0] : entries[cur];
-        if (t) {
-          e.preventDefault();
-          setDialog({ kind: "rename", entry: t });
-        }
-        return;
-      }
-      case " ":
-        if (cur >= 0) {
-          e.preventDefault();
-          toggle(cur);
-        }
-        return;
-      case "Escape":
-        if (selected.size) {
-          e.preventDefault();
-          setSelected(new Set());
-        }
-        return;
-      case "a":
-      case "A":
-        if (mod) {
-          e.preventDefault();
-          setSelected(new Set(entries.map((x) => x.name)));
-        }
-        return;
-    }
-  };
-
-  const onContext = (i: number | null) => {
-    if (i === null) {
-      setSelected(new Set());
-      return;
-    }
-    const e = entries[i];
-    if (e && !selected.has(e.name)) selectOnly(i);
-  };
-
-  const onMore = (i: number, anchorEl: HTMLElement) => {
-    const e = entries[i];
-    if (!e) return;
-    const sel = selected.has(e.name) && selected.size > 1 ? selEntries : [e];
-    if (!selected.has(e.name)) selectOnly(i);
-    if (compact || coarse) {
-      setSheet({ title: sel.length === 1 ? e.name : `${sel.length} items`, subtitle: sel.length === 1 ? `${e.mode} · ${e.owner}` : undefined, groups: itemGroups(sel) });
-    } else {
-      // Open the row's context menu at the button.
-      const r = anchorEl.getBoundingClientRect();
-      anchorEl.dispatchEvent(new window.MouseEvent("contextmenu", { bubbles: true, clientX: r.left, clientY: r.bottom }));
-    }
-  };
-
-  // ---- drag & drop upload ----
-  const hasFiles = (e: DragEvent) => [...e.dataTransfer.types].includes("Files");
-  const dropHandlers = {
-    onDragEnter: (e: DragEvent) => {
-      if (!hasFiles(e)) return;
-      e.preventDefault();
-      dragDepth.current++;
-      setDragOver(true);
-    },
-    onDragOver: (e: DragEvent) => {
-      if (!hasFiles(e)) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-    },
-    onDragLeave: (e: DragEvent) => {
-      if (!hasFiles(e)) return;
-      dragDepth.current = Math.max(0, dragDepth.current - 1);
-      if (!dragDepth.current) setDragOver(false);
-    },
-    onDrop: async (e: DragEvent) => {
-      if (!hasFiles(e)) return;
-      e.preventDefault();
-      dragDepth.current = 0;
-      setDragOver(false);
-      const files = await fromDrop(e.dataTransfer);
-      if (files.length) enqueue(root, path, files);
-    },
+    return true;
   };
 
   // ---- render ----
-  const err = listing.error as ApiError | null;
-  const dirs = entries.filter(isDirEntry).length;
-  const files = entries.length - dirs;
-  const totalSize = entries.reduce((s, e) => s + (isDirEntry(e) ? 0 : e.size), 0);
-  const selSize = selEntries.reduce((s, e) => s + (isDirEntry(e) ? 0 : e.size), 0);
-  const closeDialog = (o: boolean) => !o && setDialog(null);
-  const doneAndRefresh = () => {
-    setSelected(new Set());
-    refresh();
-  };
-  const selGroups = itemGroups(selEntries);
-
-  const sortMenu = (
-    <>
-      <MenuLabel>Sort by</MenuLabel>
-      {(
-        [
-          ["name", "Name"],
-          ["size", "Size"],
-          ["mtime", "Modified"],
-          ["type", "Type"],
-        ] as [SortKey, string][]
-      ).map(([k, l]) => (
-        <MenuItem key={k} onSelect={() => setSort((s) => ({ key: k, dir: s.key === k && s.dir === "asc" ? "desc" : s.key === k ? "asc" : k === "name" || k === "type" ? "asc" : "desc" }))} shortcut={sort.key === k ? (sort.dir === "asc" ? "↑" : "↓") : undefined}>
-          {l}
-        </MenuItem>
-      ))}
-    </>
-  );
-
   if (rootList.length === 0 && !roots.isLoading && !caps.isLoading) {
     return (
       <Card>
         <EmptyState icon={<HardDrive />} title="No file roots configured">
-          Add <code className="num">[[files.roots]]</code> entries to the Wargo config to browse files.
+          Add <code className="num">[[files.roots]]</code> entries to the Wargo config, or enable <code className="num">files.show_mounts</code>, to browse files.
         </EmptyState>
       </Card>
     );
   }
 
+  const switcher = count > maxVisible;
+  const ids = metaList.map((m) => `files-${m.key}`);
+
   return (
     <div className="flex h-[calc(100dvh-5rem)] gap-4 sm:h-[calc(100dvh-5.5rem)]">
-      <RootsSidebar roots={rootList} current={root} onPick={pickRoot} />
-      <Card className="relative flex min-w-0 flex-1 flex-col overflow-hidden" {...dropHandlers}>
-        <input ref={fileInput} type="file" multiple className="hidden" aria-label="Upload files" onChange={(e) => (enqueue(root, path, fromInput(e.target.files)), (e.target.value = ""))} />
-        <input ref={folderInput} type="file" multiple className="hidden" aria-label="Upload folder" onChange={(e) => (enqueue(root, path, fromInput(e.target.files)), (e.target.value = ""))} />
-
-        {/* Path bar */}
-        <div className="flex h-11 items-center gap-1 border-b border-border px-1.5 sm:px-2">
-          <IconButton label="Up one level" size="md" disabled={path === "."} onClick={() => go(parentPath(path))}>
-            <CornerLeftUp />
-          </IconButton>
-          <Breadcrumbs roots={rootList} root={rootInfo} path={path} onNav={go} onRoot={pickRoot} />
-          <IconButton label="Refresh" onClick={() => refresh()} className="max-sm:hidden">
-            <RefreshCw className={cn(listing.isFetching && "animate-spin")} />
-          </IconButton>
-        </div>
-
-        {/* Toolbar */}
-        <div className="flex min-h-11 flex-wrap items-center gap-1.5 border-b border-border px-2 py-1.5">
-          {selected.size > 0 && !compact ? (
-            <div className="flex min-w-0 flex-1 items-center gap-1" role="toolbar" aria-label="Selection actions">
-              <IconButton label="Clear selection" size="sm" onClick={() => setSelected(new Set())}>
-                <X />
-              </IconButton>
-              <span className="num mr-2 whitespace-nowrap text-[0.8125rem] font-medium" aria-live="polite">
-                {selected.size} selected{selSize ? <span className="text-muted"> · {bytes(selSize)}</span> : null}
-              </span>
-              <Button size="sm" variant="ghost" icon={<Download />} onClick={() => selGroups[0].find((a) => a.key === "download")?.run()}>
-                Download
-              </Button>
-              <Button size="sm" variant="ghost" icon={<Copy />} onClick={() => setDialog({ kind: "copy", paths: selEntries.map(pathOf) })} className="max-lg:hidden">
-                Copy to
-              </Button>
-              <Button size="sm" variant="ghost" icon={<FolderInput />} onClick={() => setDialog({ kind: "move", paths: selEntries.map(pathOf) })} className="max-lg:hidden">
-                Move to
-              </Button>
-              <Button size="sm" variant="ghost" icon={<Trash2 />} className="text-crit hover:text-crit" onClick={() => setDialog({ kind: "delete", paths: selEntries.map(pathOf) })}>
-                Delete
-              </Button>
-              <ActionMenu
-                title={selected.size === 1 ? selEntries[0]?.name : `${selected.size} items`}
-                groups={selGroups}
-                trigger={
-                  <IconButton label="More actions" size="sm">
-                    <MoreHorizontal />
-                  </IconButton>
-                }
-              />
-            </div>
-          ) : (
-            <div className="flex items-center gap-1">
-              <Button size="sm" variant="primary" icon={<Upload />} onClick={() => fileInput.current?.click()} className="max-sm:hidden">
-                Upload
-              </Button>
-              <IconButton label="Upload files" size="sm" variant="primary" onClick={() => fileInput.current?.click()} className="sm:hidden">
-                <ArrowUpFromLine />
-              </IconButton>
-              <Menu
-                align="start"
-                trigger={
-                  <Button size="sm" icon={<FolderPlus />}>
-                    <span className="max-sm:sr-only">New</span>
-                    <ChevronDown className="text-subtle" />
-                  </Button>
-                }
-              >
-                <MenuItem icon={<FolderPlus />} onSelect={() => setDialog({ kind: "mkdir" })}>
-                  New folder
-                </MenuItem>
-                <MenuItem icon={<FilePlus2 />} onSelect={() => setDialog({ kind: "newfile" })}>
-                  New text file
-                </MenuItem>
-                <MenuSeparator />
-                <MenuItem icon={<Upload />} onSelect={() => fileInput.current?.click()}>
-                  Upload files
-                </MenuItem>
-                <MenuItem icon={<FolderUp />} onSelect={() => folderInput.current?.click()}>
-                  Upload folder
-                </MenuItem>
-              </Menu>
-            </div>
-          )}
-          <div className={cn("ml-auto flex items-center gap-1", selected.size > 0 && !compact && "max-md:hidden")}>
-            <SearchInput value={filter} onChange={setFilter} placeholder="Filter" label="Filter this folder" className="w-28 sm:w-44" />
-            <Menu
-              trigger={
-                <IconButton label="View options" size="sm" className="md:hidden">
-                  <MoreHorizontal />
-                </IconButton>
-              }
-            >
-              {sortMenu}
-              <MenuSeparator />
-              <MenuItem icon={view === "list" ? <LayoutGrid /> : <List />} onSelect={() => setView(view === "list" ? "grid" : "list")}>
-                {view === "list" ? "Grid view" : "List view"}
-              </MenuItem>
-              <MenuItem icon={hidden ? <EyeOff /> : <Eye />} onSelect={() => setHidden(!hidden)}>
-                {hidden ? "Hide hidden files" : "Show hidden files"}
-              </MenuItem>
-              <MenuItem icon={<RefreshCw />} onSelect={() => refresh()}>
-                Refresh
-              </MenuItem>
-            </Menu>
-            <div className="flex items-center gap-1 max-md:hidden">
-              {view === "grid" && (
-                <Menu
-                  trigger={
-                    <Button size="sm" variant="ghost">
-                      Sort <ChevronDown className="text-subtle" />
-                    </Button>
-                  }
-                >
-                  {sortMenu}
-                </Menu>
-              )}
-              <IconButton label={hidden ? "Hide hidden files" : "Show hidden files"} size="sm" onClick={() => setHidden(!hidden)} aria-pressed={hidden} className={cn(hidden && "text-accent")}>
-                {hidden ? <Eye /> : <EyeOff />}
-              </IconButton>
-              <div role="radiogroup" aria-label="View" className="inline-flex rounded-md border border-border bg-surface-2 p-0.5">
-                {(
-                  [
-                    ["list", <List key="l" />, "List view"],
-                    ["grid", <LayoutGrid key="g" />, "Grid view"],
-                  ] as const
-                ).map(([v, icon, label]) => (
-                  <button
-                    key={v}
-                    type="button"
-                    role="radio"
-                    aria-checked={view === v}
-                    aria-label={label}
-                    title={label}
-                    onClick={() => setView(v)}
-                    className={cn("flex h-6 w-7 items-center justify-center rounded-[5px] [&_svg]:size-3.5", view === v ? "bg-surface text-fg shadow-sm ring-1 ring-border" : "text-muted hover:text-fg")}
-                  >
-                    {icon}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Listing */}
-        <CM.Root modal={false}>
-          <CM.Trigger asChild disabled={coarse}>
-            <div
-              className={cn("scroll-area relative min-h-0 flex-1", compact && selected.size > 0 && "pb-28")}
-              onContextMenu={(e) => {
-                if (!(e.target as HTMLElement).closest("[data-row]")) onContext(null);
-              }}
-              onClick={(e) => {
-                if (e.target === e.currentTarget && !coarse) setSelected(new Set());
-              }}
-            >
-              {listing.isLoading && (
-                <div className="space-y-2 p-3">
-                  {Array.from({ length: 8 }, (_, i) => (
-                    <Skeleton key={i} className="h-7" />
-                  ))}
-                </div>
-              )}
-              {err && (
-                <div className="p-4">
-                  {err.code === "not_found" ? (
-                    <EmptyState icon={<FolderOpen />} title="Folder not found" action={<Button onClick={() => go(".")}>Go to {rootInfo?.name}</Button>}>
-                      {path} doesn't exist in {rootInfo?.name}.
-                    </EmptyState>
-                  ) : err.code === "outside_root" ? (
-                    <EmptyState icon={<ShieldCheck />} title="Outside this root" action={<Button onClick={() => go(parentPath(path))}>Go back</Button>}>
-                      This link points outside {rootInfo?.name} and can't be opened here.
-                    </EmptyState>
-                  ) : (
-                    <ErrorNote error={err} />
+      <RootsSidebar roots={rootList} current={locs[active]?.root} onPick={(id) => navigatePane(active, { root: id, path: "." })} />
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        {switcher && (
+          <div role="tablist" aria-label="Panes" className="flex shrink-0 items-center gap-1 overflow-x-auto rounded-lg border border-border bg-surface p-1 [scrollbar-width:none]">
+            {locs.map((l, i) => {
+              const r = rootList.find((x) => x.id === l.root);
+              const name = segments(l.path).at(-1) ?? r?.name ?? "…";
+              return (
+                <button
+                  key={metaList[i].key}
+                  type="button"
+                  role="tab"
+                  aria-selected={i === active}
+                  aria-controls={ids[i]}
+                  title={locLabel(rootList, l)}
+                  onClick={() => activate(i)}
+                  className={cn(
+                    "flex h-8 min-w-0 max-w-[12rem] flex-1 items-center gap-1.5 rounded-md px-2 text-[0.8125rem] transition-colors",
+                    i === active ? "bg-accent-soft font-medium text-fg ring-1 ring-accent/40" : visible(i) ? "bg-surface-3 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
                   )}
-                </div>
-              )}
-              {listing.data && entries.length === 0 && (
-                <EmptyState
-                  icon={filter ? <FolderOpen /> : <Upload />}
-                  title={filter ? "No matches" : "This folder is empty"}
-                  action={
-                    !filter && (
-                      <Button icon={<Upload />} onClick={() => fileInput.current?.click()}>
-                        Upload files
-                      </Button>
-                    )
-                  }
                 >
-                  {filter ? `Nothing here matches “${filter}”.` : "Drop files here or use Upload."}
-                </EmptyState>
-              )}
-              {listing.data && entries.length > 0 && (
-                <Listing
-                  ref={listRef}
-                  entries={entries}
-                  view={view}
-                  root={root}
-                  dir={path}
-                  selected={selected}
-                  focus={focus}
-                  sort={sort}
-                  onSort={(k) => setSort((s) => (s.key === k ? { key: k, dir: s.dir === "asc" ? "desc" : "asc" } : { key: k, dir: k === "name" || k === "owner" || k === "mode" ? "asc" : "desc" }))}
-                  coarse={coarse}
-                  compact={compact && view === "list"}
-                  onItemClick={onItemClick}
-                  onItemOpen={(i) => entries[i] && open(entries[i])}
-                  onToggle={toggle}
-                  onLongPress={toggle}
-                  onMore={onMore}
-                  onContext={onContext}
-                  onKeyDown={onKeyDown}
-                  onSelectAll={(on) => setSelected(on ? new Set(entries.map((e) => e.name)) : new Set())}
-                  label={`Files in ${baseName(path) === "." ? rootInfo?.name : baseName(path)}`}
-                />
-              )}
-              {listing.data?.truncated && <div className="px-3 py-2 text-center text-xs text-warn">Only the first 20,000 entries are shown.</div>}
-            </div>
-          </CM.Trigger>
-          <ContextMenuContent title={selEntries.length === 1 ? selEntries[0].name : selEntries.length ? `${selEntries.length} items` : undefined} groups={selGroups} />
-        </CM.Root>
-
-        {/* Status bar */}
-        <div className="num flex h-8 shrink-0 items-center gap-3 border-t border-border px-3 text-2xs text-muted">
-          <span className="truncate">
-            {dirs} folder{dirs === 1 ? "" : "s"} · {files} file{files === 1 ? "" : "s"}
-            {totalSize ? ` · ${bytes(totalSize)}` : ""}
-            {filter && listing.data ? ` · filtered from ${listing.data.entries.length}` : ""}
-          </span>
-          {rootInfo?.free !== undefined && <span className="ml-auto shrink-0 lg:hidden">{bytes(rootInfo.free)} free</span>}
-          <span className="ml-auto hidden shrink-0 lg:inline">
-            {!coarse && (
-              <>
-                <kbd className="font-sans">Enter</kbd> open · <kbd className="font-sans">F2</kbd> rename · <kbd className="font-sans">Del</kbd> delete
-              </>
-            )}
-          </span>
-        </div>
-
-        {dragOver && (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-2 border-dashed border-accent bg-accent-soft/80">
-            <div className="flex flex-col items-center gap-2 text-center">
-              <Upload className="size-8 text-accent" />
-              <p className="font-medium">Drop to upload</p>
-              <p className="num text-xs text-muted">{absPath(rootInfo, path)}</p>
-            </div>
+                  <span className={cn("num flex size-5 shrink-0 items-center justify-center rounded text-2xs font-semibold", i === active ? "bg-accent text-accent-fg" : "bg-surface-3 text-muted")}>{i + 1}</span>
+                  <RootIcon root={r} className="size-3.5 shrink-0 text-subtle max-sm:hidden" />
+                  <span className="truncate">{name}</span>
+                </button>
+              );
+            })}
           </div>
         )}
-      </Card>
-
-      {/* Mobile selection bar */}
-      {compact && selected.size > 0 && (
-        <div role="toolbar" aria-label="Selection actions" className="fixed inset-x-0 bottom-0 z-40 border-t border-border-strong bg-surface pb-[env(safe-area-inset-bottom)]">
-          <div className="flex items-center justify-between px-3 pt-1.5 text-xs">
-            <span className="num font-medium">
-              {selected.size} selected{selSize ? <span className="text-muted"> · {bytes(selSize)}</span> : null}
-            </span>
-            <button type="button" className="h-8 px-2 font-medium text-accent" onClick={() => setSelected(selected.size === entries.length ? new Set() : new Set(entries.map((e) => e.name)))}>
-              {selected.size === entries.length ? "Select none" : "Select all"}
-            </button>
-          </div>
-          <div className="grid grid-cols-5">
-            {[
-              { label: "Download", icon: <Download />, run: () => selGroups[0].find((a) => a.key === "download")?.run() },
-              { label: "Move", icon: <FolderInput />, run: () => setDialog({ kind: "move", paths: selEntries.map(pathOf) }) },
-              { label: "Copy", icon: <Copy />, run: () => setDialog({ kind: "copy", paths: selEntries.map(pathOf) }) },
-              { label: "Delete", icon: <Trash2 />, run: () => setDialog({ kind: "delete", paths: selEntries.map(pathOf) }), danger: true },
-              { label: "More", icon: <MoreHorizontal />, run: () => setSheet({ title: selected.size === 1 ? selEntries[0]?.name : `${selected.size} items`, groups: selGroups }) },
-            ].map((b) => (
-              <button key={b.label} type="button" onClick={b.run} className={cn("flex h-14 flex-col items-center justify-center gap-1 text-2xs font-medium active:bg-surface-2 [&_svg]:size-5", b.danger ? "text-crit" : "text-fg")}>
-                {b.icon}
-                {b.label}
-              </button>
-            ))}
-          </div>
+        <div className="flex min-h-0 min-w-0 flex-1">
+          {locs.map((l, i) => {
+            const m = metaList[i];
+            const shown = visible(i);
+            const nextShown = i + 1 < count && visible(i + 1);
+            const others = locs.map((loc, k) => ({ index: k, loc, label: locLabel(rootList, loc) })).filter((o) => o.index !== i);
+            return (
+              <Fragment key={m.key}>
+                <Pane
+                  id={ids[i]}
+                  index={i}
+                  count={count}
+                  loc={l}
+                  meta={m}
+                  onMeta={(p) => updateMeta(i, p)}
+                  roots={rootList}
+                  active={i === active}
+                  concealed={!shown}
+                  split={split}
+                  onActivate={() => activate(i)}
+                  onNavigate={(to) => navigatePane(i, to)}
+                  onBack={() => historyStep(i, "back")}
+                  onForward={() => historyStep(i, "fwd")}
+                  onSplit={count < MAX_PANES ? () => splitPane(i) : undefined}
+                  onClose={count > 1 ? () => closePane(i) : undefined}
+                  others={others}
+                  onTransfer={transfer}
+                  drag={drag}
+                  onDrag={setDrag}
+                  previewName={i === active ? previewName : null}
+                  onPreview={setPreview}
+                  compact={compact}
+                  coarse={coarse}
+                  trashAvailable={trashAvailable}
+                  onSelectionBar={i === active ? setSelectionBar : noop}
+                  style={{ flex: `${w[i]} 1 0%` }}
+                />
+                {shown && nextShown && (
+                  <Resizer index={i} share={w[i] / (w[i] + w[i + 1])} label={`Resize panes ${i + 1} and ${i + 2}`} onResize={(d) => resize(i, d)} onReset={() => resetPair(i)} />
+                )}
+              </Fragment>
+            );
+          })}
         </div>
-      )}
+      </div>
 
-      <TransfersPanel jobs={jobs} onDismissJob={dismiss} onClearJobs={clear} raised={compact && selected.size > 0} />
-
-      {/* Dialogs */}
-      <NameDialog
-        open={dialog?.kind === "mkdir"}
-        onOpenChange={closeDialog}
-        title="New folder"
-        label="Folder name"
-        initial="New folder"
-        confirmLabel="Create"
-        onSubmit={async (name) => {
-          await fileApi.mkdir(root, joinPath(path, name));
-          refresh();
-        }}
-      />
-      <NameDialog
-        open={dialog?.kind === "newfile"}
-        onOpenChange={closeDialog}
-        title="New text file"
-        label="File name"
-        initial="untitled.txt"
-        selectStem
-        confirmLabel="Create"
-        onSubmit={async (name) => {
-          await fileApi.save(root, joinPath(path, name), "", null, undefined, true);
-          refresh();
-          const p = new URLSearchParams(params);
-          p.set("view", name);
-          window.setTimeout(() => setParams(p), 150);
-        }}
-      />
-      <NameDialog
-        open={dialog?.kind === "rename"}
-        onOpenChange={closeDialog}
-        title="Rename"
-        label="New name"
-        initial={dialog?.kind === "rename" ? dialog.entry.name : ""}
-        selectStem={dialog?.kind === "rename" && !isDirEntry(dialog.entry)}
-        confirmLabel="Rename"
-        onSubmit={async (name) => {
-          if (dialog?.kind !== "rename") return;
-          await fileApi.rename(root, pathOf(dialog.entry), name);
-          setSelected(new Set([name]));
-          refresh();
-        }}
-      />
-      <DeleteDialog open={dialog?.kind === "delete"} onOpenChange={closeDialog} root={root} paths={dialog?.kind === "delete" ? dialog.paths : []} trashAvailable={trashAvailable} onDone={doneAndRefresh} />
-      <ChmodDialog open={dialog?.kind === "chmod"} onOpenChange={closeDialog} root={root} dir={path} entries={dialog?.kind === "chmod" ? dialog.entries : []} onDone={refresh} />
-      <ChownDialog open={dialog?.kind === "chown"} onOpenChange={closeDialog} root={root} dir={path} entries={dialog?.kind === "chown" ? dialog.entries : []} onDone={refresh} />
-      <CompressDialog open={dialog?.kind === "compress"} onOpenChange={closeDialog} root={root} dir={path} entries={dialog?.kind === "compress" ? dialog.entries : []} onJob={() => setSelected(new Set())} />
-      <ExtractDialog open={dialog?.kind === "extract"} onOpenChange={closeDialog} root={root} dir={path} entry={dialog?.kind === "extract" ? dialog.entry : undefined} onJob={() => {}} />
-      <FolderPicker
-        open={dialog?.kind === "copy" || dialog?.kind === "move"}
-        onOpenChange={closeDialog}
-        root={root}
-        rootInfo={rootInfo}
-        start={path}
-        title={dialog?.kind === "move" ? "Move to…" : "Copy to…"}
-        confirmLabel={dialog?.kind === "move" ? "Move here" : "Copy here"}
-        sources={dialog?.kind === "copy" || dialog?.kind === "move" ? dialog.paths : []}
-        onPick={async (dest) => {
-          if (dialog?.kind === "copy" || dialog?.kind === "move") await transfer(dialog.kind, dialog.paths, dest);
-        }}
-      />
-      <PropertiesSheet open={dialog?.kind === "props"} onOpenChange={closeDialog} root={root} rootInfo={rootInfo} dir={path} entry={dialog?.kind === "props" ? dialog.entry : undefined} />
+      <TransfersPanel jobs={jobs} onDismissJob={dismiss} onClearJobs={clear} raised={selectionBar} />
       <ConflictDialog state={conflict} onResolve={(c) => conflict?.resolve(c)} />
-      <ActionSheet open={!!sheet} onOpenChange={(o) => !o && setSheet(null)} title={sheet?.title ?? ""} subtitle={sheet?.subtitle} groups={sheet?.groups ?? []} />
-      {listing.data && <Preview root={root} dir={path} entries={previewables} name={previewName} onClose={closePreview} onNavigate={(n) => setParams(new URLSearchParams({ view: n }), { replace: true })} />}
     </div>
   );
 }
+
+const noop = () => {};

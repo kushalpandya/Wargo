@@ -76,3 +76,63 @@ func TestCopyContextCancel(t *testing.T) {
 		t.Fatalf("into self: %v", err)
 	}
 }
+
+func TestBetweenRoots(t *testing.T) {
+	base := t.TempDir()
+	a, b := filepath.Join(base, "a"), filepath.Join(base, "b")
+	os.MkdirAll(filepath.Join(a, "d/e"), 0o755)
+	os.WriteFile(filepath.Join(a, "d/e/f"), []byte("data"), 0o640)
+	os.Symlink("/etc/passwd", filepath.Join(a, "d/link"))
+	os.MkdirAll(b, 0o755)
+	os.Symlink("/etc", filepath.Join(b, "esc"))
+	ra, _ := os.OpenRoot(a)
+	rb, _ := os.OpenRoot(b)
+	defer ra.Close()
+	defer rb.Close()
+
+	if err := CopyBetween(context.Background(), ra, "d", rb, "d2", nil); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := os.ReadFile(filepath.Join(b, "d2/e/f")); string(s) != "data" {
+		t.Fatal("copy content")
+	}
+	if l, _ := os.Readlink(filepath.Join(b, "d2/link")); l != "/etc/passwd" {
+		t.Fatal("symlink not copied as a link")
+	}
+	if err := CopyBetween(context.Background(), ra, "d", rb, "d2", nil); !errors.Is(err, os.ErrExist) {
+		t.Fatal("expected exists", err)
+	}
+	// The destination side stays confined.
+	if err := CopyBetween(context.Background(), ra, "d/e/f", rb, "esc/x", nil); err == nil {
+		t.Fatal("escaped through a symlinked destination")
+	}
+	if err := CopyBetween(context.Background(), ra, "d/e/f", rb, "../x", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(b, "x")); err != nil {
+		t.Fatal(`".." was not kept inside the root`)
+	}
+	if err := RenameBetween(ra, "d/e/f", rb, "moved"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(b, "moved")); err != nil {
+		t.Fatal("rename between roots")
+	}
+	if err := RenameBetween(ra, "d/e", rb, "esc/e"); err == nil {
+		t.Fatal("renamed through a symlink")
+	}
+	p, err := RealPath(rb, "moved")
+	if err != nil || p != filepath.Join(b, "moved") {
+		t.Fatal(p, err)
+	}
+	if p, _ := RealPath(rb, "."); p != b {
+		t.Fatal(p)
+	}
+	// Copying a folder into itself through overlapping roots stops instead
+	// of recursing forever.
+	inner, _ := os.OpenRoot(filepath.Join(a, "d"))
+	defer inner.Close()
+	if err := CopyBetween(context.Background(), ra, "d", inner, "e/copy", nil); !errors.Is(err, ErrIntoSelf) {
+		t.Fatal("expected into-self", err)
+	}
+}

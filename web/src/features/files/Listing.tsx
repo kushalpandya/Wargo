@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { forwardRef, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import { forwardRef, useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { ArrowDown, ArrowUp, MoreHorizontal } from "lucide-react";
 import { ago, bytes, datetime } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Checkbox } from "@/components/ui/form";
-import { downloadUrl, joinPath, type Entry } from "./api";
+import { downloadUrl, joinPath, type Entry, type RootId } from "./api";
 import { FileIcon, kindOf } from "./kinds";
 
 export type SortKey = "name" | "size" | "mtime" | "type" | "owner" | "mode";
@@ -16,7 +16,7 @@ export interface Sort {
 export interface ListingProps {
   entries: Entry[];
   view: "list" | "grid";
-  root: number;
+  root: RootId;
   dir: string;
   selected: Set<string>;
   focus: number;
@@ -33,6 +33,18 @@ export interface ListingProps {
   onKeyDown: (e: KeyboardEvent<HTMLDivElement>, cols: number) => void;
   onSelectAll: (on: boolean) => void;
   label: string;
+  /** Unique per listing on the page (split view). */
+  idPrefix: string;
+  dnd?: RowDnd;
+}
+
+/** Drag & drop between panes: rows are drag sources; the pane resolves drop
+ * targets itself and passes the highlighted folder row back. */
+export interface RowDnd {
+  onDragStart: (i: number, e: DragEvent) => void;
+  onDragEnd: () => void;
+  dropRow: number | null;
+  dragging: Set<string> | null;
 }
 
 const PAGE = 400;
@@ -78,7 +90,9 @@ function SortHeader({ k, sort, onSort, children, className, align }: { k: SortKe
   );
 }
 
-const listCols = "grid-cols-[1.75rem_minmax(0,1fr)_5.5rem_2rem] md:grid-cols-[1.75rem_minmax(0,1fr)_6rem_9.5rem_2rem] lg:grid-cols-[1.75rem_minmax(0,1fr)_6rem_10rem_7rem_2rem] xl:grid-cols-[1.75rem_minmax(0,1fr)_6rem_10rem_7rem_8rem_2rem]";
+// Columns follow the pane's width (container queries), not the viewport.
+const listCols =
+  "grid-cols-[1.75rem_minmax(0,1fr)_5.5rem_2rem] @lg:grid-cols-[1.75rem_minmax(0,1fr)_6rem_9.5rem_2rem] @2xl:grid-cols-[1.75rem_minmax(0,1fr)_6rem_10rem_7rem_2rem] @4xl:grid-cols-[1.75rem_minmax(0,1fr)_6rem_10rem_7rem_8rem_2rem]";
 
 function Row({
   e,
@@ -108,8 +122,11 @@ function Row({
     }
     props.onItemClick(i, ev);
   };
+  const dnd = props.dnd;
+  const dropping = dnd?.dropRow === i;
+  const dragged = !!dnd?.dragging?.has(e.name);
   const common = {
-    id: `file-item-${i}`,
+    id: `${props.idPrefix}-${i}`,
     role: "row",
     "aria-selected": sel,
     "data-row": i,
@@ -117,7 +134,15 @@ function Row({
     onDoubleClick: () => !props.coarse && props.onItemOpen(i),
     onContextMenu: () => props.onContext(i),
     ...lp.handlers,
+    ...(dnd && !props.coarse
+      ? {
+          draggable: true,
+          onDragStart: (ev: DragEvent) => dnd.onDragStart(i, ev),
+          onDragEnd: dnd.onDragEnd,
+        }
+      : {}),
   };
+  const dropCls = dropping && "ring-2 ring-inset ring-accent bg-accent-soft";
   const more = (
     <span role="gridcell" className="flex items-center justify-end">
     <button
@@ -166,7 +191,8 @@ function Row({
           "group relative flex cursor-default select-none flex-col overflow-hidden rounded-md border bg-surface transition-colors",
           sel ? "border-accent bg-accent-soft" : "border-border hover:border-border-strong",
           focused && "ring-2 ring-focus/50",
-          e.name.startsWith(".") && "opacity-70",
+          (e.name.startsWith(".") || dragged) && "opacity-70",
+          dropCls,
         )}
       >
         <div role="gridcell" aria-label={e.name} className="relative flex aspect-[4/3] items-center justify-center bg-surface-2">
@@ -190,7 +216,7 @@ function Row({
 
   if (props.compact) {
     return (
-      <div {...common} className={cn("group flex min-h-14 cursor-default select-none items-center gap-3 border-b border-border px-3", sel ? "bg-accent-soft" : "active:bg-surface-2", focused && !props.coarse && "ring-2 ring-inset ring-focus/50")}>
+      <div {...common} className={cn("group flex min-h-14 cursor-default select-none items-center gap-3 border-b border-border px-3", sel ? "bg-accent-soft" : "active:bg-surface-2", focused && !props.coarse && "ring-2 ring-inset ring-focus/50", dropCls)}>
         {selecting && check}
         <div role="gridcell" className="flex min-w-0 flex-1 items-center gap-3">
         <FileIcon entry={e} className="size-5" />
@@ -214,6 +240,8 @@ function Row({
         listCols,
         sel ? "bg-accent-soft" : "hover:bg-surface-2",
         focused && "outline outline-2 -outline-offset-2 outline-focus/60",
+        dragged && "opacity-60",
+        dropCls,
       )}
     >
       {check}
@@ -225,13 +253,13 @@ function Row({
         {linkNote}
       </div>
       <span role="gridcell" className="num text-right text-muted">{sizeText}</span>
-      <span role="gridcell" className="num truncate text-muted max-md:hidden" title={datetime(e.mtime)}>
+      <span role="gridcell" className="num truncate text-muted @max-lg:hidden" title={datetime(e.mtime)}>
         {datetime(e.mtime)}
       </span>
-      <span role="gridcell" className="num text-muted max-lg:hidden" title={e.octal}>
+      <span role="gridcell" className="num text-muted @max-2xl:hidden" title={e.octal}>
         {e.mode}
       </span>
-      <span role="gridcell" className="truncate text-muted max-xl:hidden">
+      <span role="gridcell" className="truncate text-muted @max-4xl:hidden">
         {e.owner}
         <span className="text-subtle">:{e.group}</span>
       </span>
@@ -257,8 +285,8 @@ export const Listing = forwardRef<HTMLDivElement, ListingProps>(function Listing
     return () => io.disconnect();
   }, [entries.length, limit]);
   useEffect(() => {
-    document.getElementById(`file-item-${props.focus}`)?.scrollIntoView({ block: "nearest" });
-  }, [props.focus]);
+    document.getElementById(`${props.idPrefix}-${props.focus}`)?.scrollIntoView({ block: "nearest" });
+  }, [props.focus, props.idPrefix]);
 
   const cols = () => {
     if (view !== "grid" || !gridRef.current) return 1;
@@ -274,10 +302,10 @@ export const Listing = forwardRef<HTMLDivElement, ListingProps>(function Listing
       aria-multiselectable="true"
       aria-rowcount={entries.length + (view === "list" && !props.compact ? 1 : 0)}
       aria-label={props.label}
-      aria-activedescendant={props.focus >= 0 ? `file-item-${props.focus}` : undefined}
+      aria-activedescendant={props.focus >= 0 && props.focus < shown.length ? `${props.idPrefix}-${props.focus}` : undefined}
       tabIndex={0}
       onKeyDown={(e) => props.onKeyDown(e, cols())}
-      className="min-h-full outline-none"
+      className="@container min-h-full outline-none"
     >
       {view === "list" && !props.compact && (
         <div role="row" className={cn("sticky top-0 z-10 grid h-8 items-center gap-x-3 border-b border-border bg-surface-2 px-2 text-2xs font-semibold text-subtle", listCols)}>
@@ -290,20 +318,20 @@ export const Listing = forwardRef<HTMLDivElement, ListingProps>(function Listing
           <SortHeader k="size" sort={props.sort} onSort={props.onSort} align="right">
             Size
           </SortHeader>
-          <SortHeader k="mtime" sort={props.sort} onSort={props.onSort} className="max-md:hidden">
+          <SortHeader k="mtime" sort={props.sort} onSort={props.onSort} className="@max-lg:hidden">
             Modified
           </SortHeader>
-          <SortHeader k="mode" sort={props.sort} onSort={props.onSort} className="max-lg:hidden">
+          <SortHeader k="mode" sort={props.sort} onSort={props.onSort} className="@max-2xl:hidden">
             Permissions
           </SortHeader>
-          <SortHeader k="owner" sort={props.sort} onSort={props.onSort} className="max-xl:hidden">
+          <SortHeader k="owner" sort={props.sort} onSort={props.onSort} className="@max-4xl:hidden">
             Owner
           </SortHeader>
           <span role="columnheader" aria-label="Actions" />
         </div>
       )}
       {view === "grid" ? (
-        <div ref={gridRef} role="rowgroup" className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2 p-2 sm:grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] sm:gap-3 sm:p-3">
+        <div ref={gridRef} role="rowgroup" className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2 p-2 @lg:grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] @lg:gap-3 @lg:p-3">
           {shown.map((e, i) => (
             <Row key={e.name} e={e} i={i} props={props} thumb={kindOf(e) === "image" && e.readable} />
           ))}

@@ -2,13 +2,24 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
 
+/** Root ids: "0", "1"… for configured places, "m-<base64url>" for drives. */
+export type RootId = string;
+
 export interface Root {
-  id: number;
+  id: RootId;
+  kind: "place" | "drive";
   name: string;
   path: string;
   total?: number;
   free?: number;
+  used?: number;
   error?: string;
+  readOnly?: boolean;
+  /** Drives only. */
+  device?: string;
+  fstype?: string;
+  removable?: boolean;
+  network?: boolean;
 }
 
 export type EntryType = "file" | "dir" | "symlink" | "other";
@@ -90,32 +101,51 @@ export function absPath(root: Root | undefined, p: string): string {
 }
 
 /** Route for a folder: /files/<root>/<encoded segments>. */
-export function routeFor(root: number, p: string): string {
+export function routeFor(root: RootId, p: string): string {
   const segs = segments(p).map(encodeURIComponent);
-  return `/files/${root}${segs.length ? "/" + segs.join("/") : ""}`;
+  return `/files/${encodeURIComponent(root)}${segs.length ? "/" + segs.join("/") : ""}`;
 }
 
+const decode = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
 /** Parses /files/<root>/<path...> (each segment URI-encoded). */
-export function parseRoute(pathname: string): { root: number | null; path: string } {
+export function parseRoute(pathname: string): { root: RootId | null; path: string } {
   const rest = pathname.replace(/^\/files\/?/, "");
   const parts = rest.split("/").filter(Boolean);
   if (parts.length === 0) return { root: null, path: "." };
-  const root = Number(parts[0]);
-  const segs = parts.slice(1).map((s) => {
-    try {
-      return decodeURIComponent(s);
-    } catch {
-      return s;
-    }
-  });
-  return { root: Number.isFinite(root) ? root : null, path: segs.length ? segs.join("/") : "." };
+  const segs = parts.slice(1).map(decode).filter((s) => s !== "." && s !== "..");
+  return { root: decode(parts[0]), path: segs.length ? segs.join("/") : "." };
 }
 
-export function downloadUrl(root: number, p: string, inline = false): string {
+/** A pane's location. */
+export interface Loc {
+  root: RootId;
+  path: string;
+}
+
+/** Encodes an extra pane for the ?pane= query parameter: "<root>:<path>". */
+export function encodePane(l: Loc): string {
+  return `${l.root}:${l.path === "." ? "" : l.path}`;
+}
+
+export function decodePane(v: string): Loc | null {
+  const i = v.indexOf(":");
+  if (i <= 0) return null;
+  const segs = segments(v.slice(i + 1)).filter((s) => s !== "." && s !== "..");
+  return { root: v.slice(0, i), path: segs.length ? segs.join("/") : "." };
+}
+
+export function downloadUrl(root: RootId, p: string, inline = false): string {
   return `/api/files/download${qs({ root, path: p, inline: inline ? 1 : undefined })}`;
 }
 
-export function zipUrl(root: number, paths: string[], name?: string): string {
+export function zipUrl(root: RootId, paths: string[], name?: string): string {
   const q = new URLSearchParams({ root: String(root) });
   paths.forEach((p) => q.append("path", p));
   if (name) q.set("name", name);
@@ -144,14 +174,14 @@ export function useRoots() {
   });
 }
 
-export function listKey(root: number | null, p: string, hidden: boolean) {
+export function listKey(root: RootId | null, p: string, hidden: boolean) {
   return ["files", "list", root, p, hidden] as const;
 }
 
-export function useListing(root: number | null, p: string, hidden: boolean) {
+export function useListing(root: RootId | null, p: string, hidden: boolean) {
   return useQuery({
     queryKey: listKey(root, p, hidden),
-    queryFn: ({ signal }) => api.get<Listing>(`/api/files/list${qs({ root: root ?? 0, path: p, hidden: hidden ? 1 : undefined })}`, signal),
+    queryFn: ({ signal }) => api.get<Listing>(`/api/files/list${qs({ root: root ?? "", path: p, hidden: hidden ? 1 : undefined })}`, signal),
     enabled: root !== null,
     placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === root ? prev : undefined),
     retry: false,
@@ -168,21 +198,19 @@ export function useRefreshFiles() {
 }
 
 export const fileApi = {
-  mkdir: (root: number, path: string) => api.post<{ path: string }>("/api/files/mkdir", { root: String(root), path }),
-  rename: (root: number, path: string, name: string) => api.post<{ path: string }>("/api/files/rename", { root: String(root), path, name }),
-  move: (root: number, paths: string[], dest: string, onConflict?: string) =>
-    api.post<{ moved: number; jobId?: string }>("/api/files/move", { root: String(root), paths, dest, onConflict }),
-  copy: (root: number, paths: string[], dest: string, onConflict?: string) =>
-    api.post<{ copied: number; jobId?: string }>("/api/files/copy", { root: String(root), paths, dest, onConflict }),
-  remove: (root: number, paths: string[], trash: boolean) => api.post<{ deleted: number }>("/api/files/delete", { root: String(root), paths, trash }),
-  chmod: (root: number, paths: string[], mode: string, recursive: boolean, dirMode?: string) =>
-    api.post("/api/files/chmod", { root: String(root), paths, mode, recursive, dirMode }),
-  chown: (root: number, paths: string[], owner: string, recursive: boolean) => api.post("/api/files/chown", { root: String(root), paths, owner, recursive }),
-  archive: (root: number, paths: string[], dest: string, format: string) =>
-    api.post<{ jobId: string; path: string }>("/api/files/archive", { root: String(root), paths, dest, format }),
-  extract: (root: number, path: string, dest: string) => api.post<{ jobId: string; dest: string }>("/api/files/extract", { root: String(root), path, dest }),
-  size: (root: number, path: string) => api.get<{ size: number; files: number; partial: boolean }>(`/api/files/size${qs({ root, path })}`),
-  content: (root: number, path: string) => api.get<FileContent>(`/api/files/content${qs({ root, path })}`),
-  save: (root: number, path: string, content: string, mtime: string | null, encoding?: string, create?: boolean) =>
-    api.put<{ mtime: string; size: number }>("/api/files/content", { root: String(root), path, content, mtime, encoding, create }),
+  mkdir: (root: RootId, path: string) => api.post<{ path: string }>("/api/files/mkdir", { root, path }),
+  rename: (root: RootId, path: string, name: string) => api.post<{ path: string }>("/api/files/rename", { root, path, name }),
+  move: (root: RootId, paths: string[], dest: string, onConflict?: string, destRoot?: RootId) =>
+    api.post<{ moved: number; jobId?: string }>("/api/files/move", { root, destRoot: destRoot === root ? undefined : destRoot, paths, dest, onConflict }),
+  copy: (root: RootId, paths: string[], dest: string, onConflict?: string, destRoot?: RootId) =>
+    api.post<{ copied: number; jobId?: string }>("/api/files/copy", { root, destRoot: destRoot === root ? undefined : destRoot, paths, dest, onConflict }),
+  remove: (root: RootId, paths: string[], trash: boolean) => api.post<{ deleted: number }>("/api/files/delete", { root, paths, trash }),
+  chmod: (root: RootId, paths: string[], mode: string, recursive: boolean, dirMode?: string) => api.post("/api/files/chmod", { root, paths, mode, recursive, dirMode }),
+  chown: (root: RootId, paths: string[], owner: string, recursive: boolean) => api.post("/api/files/chown", { root, paths, owner, recursive }),
+  archive: (root: RootId, paths: string[], dest: string, format: string) => api.post<{ jobId: string; path: string }>("/api/files/archive", { root, paths, dest, format }),
+  extract: (root: RootId, path: string, dest: string) => api.post<{ jobId: string; dest: string }>("/api/files/extract", { root, path, dest }),
+  size: (root: RootId, path: string) => api.get<{ size: number; files: number; partial: boolean }>(`/api/files/size${qs({ root, path })}`),
+  content: (root: RootId, path: string) => api.get<FileContent>(`/api/files/content${qs({ root, path })}`),
+  save: (root: RootId, path: string, content: string, mtime: string | null, encoding?: string, create?: boolean) =>
+    api.put<{ mtime: string; size: number }>("/api/files/content", { root, path, content, mtime, encoding, create }),
 };

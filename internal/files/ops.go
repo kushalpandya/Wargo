@@ -162,49 +162,115 @@ func (s *Service) handleRename(w http.ResponseWriter, r *http.Request) error {
 // ---- move / copy -----------------------------------------------------------
 
 type transferReq struct {
-	Root  string   `json:"root"`
-	Paths []string `json:"paths"`
-	Dest  string   `json:"dest"`
+	Root string `json:"root"`
+	// DestRoot is the destination root; empty means the same as Root.
+	DestRoot string   `json:"destRoot"`
+	Paths    []string `json:"paths"`
+	Dest     string   `json:"dest"`
 	// OnConflict: "error" (default), "rename" (keep both) or "skip".
 	OnConflict string `json:"onConflict"`
 }
 
 type pair struct{ src, dst string }
 
+// transferRoots holds the open source and destination roots of a move/copy.
+// For a single-root transfer both handles are the same.
+type transferRoots struct {
+	src, dst   *os.Root
+	sref, dref rootRef
+	cross      bool
+}
+
+func (t *transferRoots) Close() {
+	t.src.Close()
+	if t.cross {
+		t.dst.Close()
+	}
+}
+
+func (s *Service) openTransfer(req transferReq) (*transferRoots, error) {
+	src, sref, err := s.open(req.Root)
+	if err != nil {
+		return nil, err
+	}
+	t := &transferRoots{src: src, dst: src, sref: sref, dref: sref}
+	if req.DestRoot == "" {
+		return t, nil
+	}
+	dref, err := s.lookupRoot(req.DestRoot)
+	if err != nil {
+		src.Close()
+		return nil, err
+	}
+	t.dref = dref
+	if dref.Path == sref.Path {
+		return t, nil
+	}
+	dst, err := os.OpenRoot(dref.Path)
+	if err != nil {
+		src.Close()
+		return nil, fsErr(err, dref.Path)
+	}
+	t.dst, t.cross = dst, true
+	return t, nil
+}
+
+// destAbs is the host path of a destination for audit records.
+func (t *transferRoots) destAbs(rel string) string { return filepath.Join(t.dref.Path, rel) }
+
 // plan validates a move/copy and resolves destination names.
-func plan(root *os.Root, req transferReq, isCopy bool) ([]pair, []string, error) {
+func plan(t *transferRoots, req transferReq, isCopy bool) ([]pair, []string, error) {
 	paths, err := cleanPaths(req.Paths)
 	if err != nil {
 		return nil, nil, err
 	}
 	dest := fsops.Clean(req.Dest)
-	st, err := root.Stat(dest)
+	st, err := t.dst.Stat(dest)
 	if err != nil {
 		return nil, nil, fsErr(err, dest)
 	}
 	if !st.IsDir() {
 		return nil, nil, httpx.Errorf(http.StatusBadRequest, "not_dir", "Destination is not a folder")
 	}
+	// Across roots, compare real host paths: the roots may overlap (a drive
+	// mounted at "/" contains the home folder).
+	realDest := ""
+	if t.cross {
+		realDest, _ = fsops.RealPath(t.dst, dest)
+	}
 	var out []pair
 	var conflicts []string
 	for _, p := range paths {
-		if _, err := root.Lstat(p); err != nil {
+		if _, err := t.src.Lstat(p); err != nil {
 			return nil, nil, fsErr(err, p)
-		}
-		if fsops.Inside(dest, p) {
-			return nil, nil, fsErr(fsops.ErrIntoSelf, p)
 		}
 		name := baseName(p)
 		dst := join(dest, name)
-		if dst == p {
+		same := false
+		if t.cross {
+			if realDest != "" {
+				if rs, err := fsops.RealPath(t.src, p); err == nil {
+					if inside(realDest, rs) {
+						return nil, nil, fsErr(fsops.ErrIntoSelf, p)
+					}
+					same = filepath.Dir(rs) == realDest
+				}
+			}
+		} else {
+			if fsops.Inside(dest, p) {
+				return nil, nil, fsErr(fsops.ErrIntoSelf, p)
+			}
+			same = dst == p
+		}
+		if same {
 			if !isCopy {
 				continue // already there
 			}
-			dst = join(dest, uniqueName(root, dest, name)) // duplicate in place
-		} else if _, err := root.Lstat(dst); err == nil {
+			dst = join(dest, uniqueName(t.dst, dest, name)) // duplicate in place
+		} else if _, err := t.dst.Lstat(dst); err == nil {
 			switch req.OnConflict {
 			case "rename":
-				dst = join(dest, uniqueName(root, dest, name))
+				dst = join(dest, uniqueName(t.dst, dest, name))
 			case "skip":
 				continue
 			default:
@@ -225,53 +291,99 @@ func plan(root *os.Root, req transferReq, isCopy bool) ([]pair, []string, error)
 	return out, srcs, nil
 }
 
+// elevatedTransfer retries a single failed move/copy through the helper.
+// Across roots the helper works on the real host paths below "/".
+func (s *Service) elevatedTransfer(r *http.Request, t *transferRoots, op string, x pair) error {
+	if !t.cross {
+		return s.elevated(r, t.sref, op, x.src, x.dst, nil)
+	}
+	if s.elev == nil {
+		return httpx.Errorf(http.StatusForbidden, "permission_denied", "Permission denied: "+x.src)
+	}
+	from, err := fsops.RealPath(t.src, x.src)
+	if err != nil {
+		return err
+	}
+	to, err := fsops.RealPath(t.dst, x.dst)
+	if err != nil {
+		return err
+	}
+	_, err = s.elev.Run(r, "files.op", op+" "+from+" → "+to, s.elev.Helper("fs", op, "/", from, to), nil)
+	return err
+}
+
 func (s *Service) handleMove(w http.ResponseWriter, r *http.Request) error {
 	var req transferReq
 	if err := httpx.Decode(r, &req); err != nil {
 		return err
 	}
-	root, ref, err := s.open(req.Root)
+	t, err := s.openTransfer(req)
 	if err != nil {
 		return err
 	}
-	defer root.Close()
-	pairs, _, err := plan(root, req, false)
+	defer t.Close()
+	pairs, _, err := plan(t, req, false)
 	if err != nil {
 		return err
 	}
 	var cross []pair
 	moved := 0
 	for _, x := range pairs {
-		err := root.Rename(x.src, x.dst)
+		var err error
+		if t.cross {
+			err = fsops.RenameBetween(t.src, x.src, t.dst, x.dst)
+		} else {
+			err = t.src.Rename(x.src, x.dst)
+		}
 		switch {
 		case err == nil:
 			moved++
 		case errors.Is(err, syscall.EXDEV):
 			cross = append(cross, x)
 		case isPerm(err) && len(pairs) == 1:
-			err = s.elevated(r, ref, "move", x.src, x.dst, nil)
-			s.record(r, "files.move", ref, x.src, err, map[string]string{"to": x.dst})
+			err = s.elevatedTransfer(r, t, "move", x)
+			s.record(r, "files.move", t.sref, x.src, err, map[string]string{"to": t.destAbs(x.dst)})
 			if err != nil {
 				return fsErr(err, x.src)
 			}
 			moved++
 		default:
-			s.record(r, "files.move", ref, x.src, err, map[string]string{"to": x.dst})
+			s.record(r, "files.move", t.sref, x.src, err, map[string]string{"to": t.destAbs(x.dst)})
 			return fsErr(err, x.src)
 		}
 	}
+	dest := fsops.Clean(req.Dest)
 	if moved > 0 {
-		s.record(r, "files.move", ref, fsops.Clean(req.Dest), nil, map[string]any{"count": moved})
+		s.record(r, "files.move", t.dref, dest, nil, map[string]any{"count": moved})
 	}
 	out := map[string]any{"moved": moved}
 	if len(cross) > 0 {
-		out["jobId"] = s.startJob(r, "files.move", fmt.Sprintf("Move %s", describe(cross)), ref, fsops.Clean(req.Dest),
-			map[string]any{"count": len(cross)}, func(ctx context.Context, root *os.Root, job *jobs.Job) (map[string]any, error) {
-				return transfer(ctx, root, job, cross, true)
-			})
+		out["jobId"] = s.transferJob(r, t, "files.move", fmt.Sprintf("Move %s", describe(cross)), dest, cross, true)
 	}
 	httpx.OK(w, out)
 	return nil
+}
+
+// transferJob copies (and for moves removes) pairs in the background.
+func (s *Service) transferJob(r *http.Request, t *transferRoots, kind, title, dest string, pairs []pair, move bool) string {
+	dref, cross := t.dref, t.cross
+	return s.startJob(r, kind, title, t.sref, t.destAbs(dest), map[string]any{"count": len(pairs)},
+		func(ctx context.Context, root *os.Root, job *jobs.Job) (map[string]any, error) {
+			dst := root
+			if cross {
+				d, err := os.OpenRoot(dref.Path)
+				if err != nil {
+					return nil, err
+				}
+				defer d.Close()
+				dst = d
+			}
+			res, err := transfer(ctx, root, dst, job, pairs, move)
+			if res != nil {
+				res["destRoot"] = dref.ID
+			}
+			return res, err
+		})
 }
 
 func describe(p []pair) string {
@@ -281,33 +393,34 @@ func describe(p []pair) string {
 	return fmt.Sprintf("%d items", len(p))
 }
 
-// transfer copies pairs with byte progress; move removes the sources.
-func transfer(ctx context.Context, root *os.Root, job *jobs.Job, pairs []pair, move bool) (map[string]any, error) {
+// transfer copies pairs from src to dst with byte progress; move removes
+// the sources. src and dst may be the same root.
+func transfer(ctx context.Context, src, dst *os.Root, job *jobs.Job, pairs []pair, move bool) (map[string]any, error) {
 	job.Progress("Scanning", -1, "")
 	srcs := make([]string, len(pairs))
 	for i, x := range pairs {
 		srcs[i] = x.src
 	}
-	total, files, _ := measure(ctx, root, srcs, 0, 0)
+	total, files, _ := measure(ctx, src, srcs, 0, 0)
 	stage := "Copying"
 	if move {
 		stage = "Moving"
 	}
 	var base int64
 	for _, x := range pairs {
-		err := fsops.CopyContext(ctx, root, x.src, x.dst, func(done int64, cur string) {
+		err := fsops.CopyBetween(ctx, src, x.src, dst, x.dst, func(done int64, cur string) {
 			job.Progress(stage, frac(base+done, total), cur)
 		})
 		if err != nil {
 			if ctx.Err() != nil {
-				root.RemoveAll(x.dst) // don't leave a half copy behind
+				dst.RemoveAll(x.dst) // don't leave a half copy behind
 			}
 			return nil, err
 		}
-		n, _, _ := fsops.Size(root, x.dst)
+		n, _, _ := fsops.Size(dst, x.dst)
 		base += n
 		if move {
-			if err := root.RemoveAll(x.src); err != nil {
+			if err := src.RemoveAll(x.src); err != nil {
 				return nil, err
 			}
 		}
@@ -321,12 +434,12 @@ func (s *Service) handleCopy(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.Decode(r, &req); err != nil {
 		return err
 	}
-	root, ref, err := s.open(req.Root)
+	t, err := s.openTransfer(req)
 	if err != nil {
 		return err
 	}
-	defer root.Close()
-	pairs, srcs, err := plan(root, req, true)
+	defer t.Close()
+	pairs, srcs, err := plan(t, req, true)
 	if err != nil {
 		return err
 	}
@@ -335,25 +448,22 @@ func (s *Service) handleCopy(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	_, _, big := measure(ctx, root, srcs, inlineCopyBytes, inlineCopyFiles)
+	_, _, big := measure(ctx, t.src, srcs, inlineCopyBytes, inlineCopyFiles)
 	cancel()
 	dest := fsops.Clean(req.Dest)
 	if big {
-		id := s.startJob(r, "files.copy", fmt.Sprintf("Copy %s", describe(pairs)), ref, dest,
-			map[string]any{"count": len(pairs)}, func(ctx context.Context, root *os.Root, job *jobs.Job) (map[string]any, error) {
-				return transfer(ctx, root, job, pairs, false)
-			})
+		id := s.transferJob(r, t, "files.copy", fmt.Sprintf("Copy %s", describe(pairs)), dest, pairs, false)
 		httpx.OK(w, map[string]any{"copied": 0, "jobId": id})
 		return nil
 	}
 	copied := []string{}
 	for _, x := range pairs {
-		err := fsops.CopyContext(r.Context(), root, x.src, x.dst, nil)
+		err := fsops.CopyBetween(r.Context(), t.src, x.src, t.dst, x.dst, nil)
 		if err != nil && isPerm(err) && len(pairs) == 1 {
-			root.RemoveAll(x.dst)
-			err = s.elevated(r, ref, "copy", x.src, x.dst, nil)
+			t.dst.RemoveAll(x.dst)
+			err = s.elevatedTransfer(r, t, "copy", x)
 		}
-		s.record(r, "files.copy", ref, x.src, err, map[string]string{"to": x.dst})
+		s.record(r, "files.copy", t.sref, x.src, err, map[string]string{"to": t.destAbs(x.dst)})
 		if err != nil {
 			return fsErr(err, x.src)
 		}

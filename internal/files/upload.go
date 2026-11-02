@@ -333,7 +333,12 @@ func (s *Service) handleUploadChunk(w http.ResponseWriter, r *http.Request) erro
 func (s *Service) rootByPath(p string) (rootRef, bool) {
 	for i, r := range s.roots {
 		if r.Path == p {
-			return rootRef{i, r.Name, r.Path}, true
+			return s.placeRef(i), true
+		}
+	}
+	for _, d := range s.drives(false) {
+		if d.Path == p {
+			return rootRef{d.ID, d.Label, d.Path}, true
 		}
 	}
 	return rootRef{}, false

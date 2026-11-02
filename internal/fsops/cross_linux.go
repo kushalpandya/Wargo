@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"syscall"
 )
 
@@ -64,6 +65,51 @@ func RenameOut(root *os.Root, rel, dst string) error {
 	}
 	defer dd.Close()
 	return renameat(int(d.Fd()), base, int(dd.Fd()), filepath.Base(dst))
+}
+
+// RenameBetween moves src inside srcRoot to dst inside dstRoot without
+// following a symlink in the final component. It fails with EXDEV when the
+// roots live on different filesystems. An existing file at dst is replaced.
+func RenameBetween(srcRoot *os.Root, src string, dstRoot *os.Root, dst string) error {
+	sd, sb, err := openParent(srcRoot, src)
+	if err != nil {
+		return err
+	}
+	defer sd.Close()
+	dd, db, err := openParent(dstRoot, dst)
+	if err != nil {
+		return err
+	}
+	defer dd.Close()
+	return renameat(int(sd.Fd()), sb, int(dd.Fd()), db)
+}
+
+// RealPath returns the absolute, symlink-free host path of rel (resolved
+// inside root). The final component is not followed if it is a symlink.
+func RealPath(root *os.Root, rel string) (string, error) {
+	rel = Clean(rel)
+	if rel == "." {
+		return fdPath(root, ".")
+	}
+	d, base, err := openParent(root, rel)
+	if err != nil {
+		return "", err
+	}
+	defer d.Close()
+	dir, err := os.Readlink("/proc/self/fd/" + strconv.Itoa(int(d.Fd())))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, base), nil
+}
+
+func fdPath(root *os.Root, rel string) (string, error) {
+	f, err := root.Open(rel)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	return os.Readlink("/proc/self/fd/" + strconv.Itoa(int(f.Fd())))
 }
 
 // Dev returns the device id of the filesystem holding rel's parent.
