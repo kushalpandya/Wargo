@@ -31,8 +31,11 @@ function dismiss(id: number) {
 export const toast = {
   ok: (title: string, body?: string) => push("ok", title, body),
   info: (title: string, body?: string) => push("info", title, body),
-  error: (title: string, err?: unknown) =>
-    push("error", title, err instanceof Error ? err.message : err ? String(err) : undefined),
+  error: (title: string, err?: unknown) => {
+    // The user dismissed an admin approval prompt; that's not an error.
+    if ((err as { code?: string } | undefined)?.code === "elevation_canceled") return;
+    push("error", title, err instanceof Error ? err.message : err ? String(err) : undefined);
+  },
 };
 
 export function Toaster() {
