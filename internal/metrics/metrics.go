@@ -301,18 +301,19 @@ func (c *Collector) History() []Point {
 
 // Info is static-ish host information.
 type Info struct {
-	Hostname      string `json:"hostname"`
-	OS            string `json:"os"`
-	OSID          string `json:"osId"`
-	Kernel        string `json:"kernel"`
-	Arch          string `json:"arch"`
-	CPUModel      string `json:"cpuModel"`
-	Cores         int    `json:"cores"`
-	Threads       int    `json:"threads"`
-	MemTotal      uint64 `json:"memTotal"`
-	BootTime      uint64 `json:"bootTime"`
+	Hostname       string `json:"hostname"`
+	OS             string `json:"os"`
+	OSID           string `json:"osId"`
+	Kernel         string `json:"kernel"`
+	Arch           string `json:"arch"`
+	CPUModel       string `json:"cpuModel"`
+	Cores          int    `json:"cores"`
+	Threads        int    `json:"threads"`
+	MemTotal       uint64 `json:"memTotal"`
+	BootTime       uint64 `json:"bootTime"`
 	Virtualization string `json:"virtualization,omitempty"`
-	GoVersion     string `json:"goVersion"`
+	GoVersion      string `json:"goVersion"`
+	Specs          Specs  `json:"specs"`
 }
 
 func osRelease() (pretty, id string) {
@@ -353,6 +354,7 @@ func GetInfo(ctx context.Context) Info {
 	if vm, err := mem.VirtualMemoryWithContext(ctx); err == nil {
 		i.MemTotal = vm.Total
 	}
+	i.Specs = GetSpecs()
 	return i
 }
 
@@ -360,6 +362,7 @@ func (c *Collector) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/system/info", func(w http.ResponseWriter, r *http.Request) {
 		httpx.OK(w, GetInfo(r.Context()))
 	})
+	mux.HandleFunc("GET /api/system/logo", serveLogo)
 	mux.HandleFunc("GET /api/system/metrics", func(w http.ResponseWriter, r *http.Request) {
 		httpx.OK(w, c.Latest())
 	})
