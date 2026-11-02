@@ -55,6 +55,7 @@ type NetIf struct {
 	RxTotal uint64   `json:"rxTotal"`
 	TxTotal uint64   `json:"txTotal"`
 	Addrs   []string `json:"addrs,omitempty"`
+	Link    *Link    `json:"link,omitempty"`
 }
 
 type DiskIO struct {
@@ -65,20 +66,22 @@ type DiskIO struct {
 }
 
 type Snapshot struct {
-	TS      int64    `json:"ts"` // unix ms
-	CPU     CPU      `json:"cpu"`
-	Memory  Memory   `json:"memory"`
-	Temps   []Temp   `json:"temps"`
-	Fans    []Fan    `json:"fans"`
-	Net     []NetIf  `json:"net"`
-	NetRx   float64  `json:"netRx"`
-	NetTx   float64  `json:"netTx"`
-	Disks   []DiskIO `json:"disks"`
-	DiskR   float64  `json:"diskRead"`
-	DiskW   float64  `json:"diskWrite"`
-	Uptime  uint64   `json:"uptime"`
-	Procs   uint64   `json:"procs"`
-	CPUTemp float64  `json:"cpuTemp"`
+	TS     int64   `json:"ts"` // unix ms
+	CPU    CPU     `json:"cpu"`
+	Memory Memory  `json:"memory"`
+	Temps  []Temp  `json:"temps"`
+	Fans   []Fan   `json:"fans"`
+	Net    []NetIf `json:"net"`
+	NetRx  float64 `json:"netRx"`
+	NetTx  float64 `json:"netTx"`
+	// PrimaryIf is the interface carrying the default route.
+	PrimaryIf string   `json:"primaryIf,omitempty"`
+	Disks     []DiskIO `json:"disks"`
+	DiskR     float64  `json:"diskRead"`
+	DiskW     float64  `json:"diskWrite"`
+	Uptime    uint64   `json:"uptime"`
+	Procs     uint64   `json:"procs"`
+	CPUTemp   float64  `json:"cpuTemp"`
 }
 
 // Point is a compact history sample.
@@ -220,6 +223,15 @@ func (c *Collector) sample(ctx context.Context) {
 		}
 		slices.SortFunc(s.Net, func(a, b NetIf) int { return strings.Compare(a.Name, b.Name) })
 		c.prevNet = cur
+		names := make([]string, len(s.Net))
+		for i, n := range s.Net {
+			names[i] = n.Name
+		}
+		lk := GetLinks(names)
+		for i := range s.Net {
+			s.Net[i].Link = lk[s.Net[i].Name]
+		}
+		s.PrimaryIf = primaryIf()
 	}
 
 	if ios, err := disk.IOCountersWithContext(ctx); err == nil {

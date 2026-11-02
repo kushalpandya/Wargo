@@ -267,20 +267,7 @@ func packageCounts() []PackageCount {
 
 // primaryIP returns the IPv4 address of the default-route interface.
 func primaryIP() string {
-	f, err := os.Open("/proc/net/route")
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	iface := ""
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) > 2 && fields[1] == "00000000" {
-			iface = fields[0]
-			break
-		}
-	}
+	iface := primaryIf()
 	if iface == "" {
 		return ""
 	}
