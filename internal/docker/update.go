@@ -12,11 +12,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"reflect"
 	"strings"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
 )
@@ -139,14 +139,21 @@ func filesReadable(files []string) bool {
 	if len(files) == 0 {
 		return false
 	}
-	for _, f := range files {
-		fh, err := os.Open(f)
-		if err != nil {
-			return false
+	// Readable by the admin user (container mode: checked with its identity).
+	return host.AsUser(func() error {
+		for _, f := range files {
+			p, err := host.Resolve(f)
+			if err != nil {
+				return err
+			}
+			fh, err := os.Open(p)
+			if err != nil {
+				return err
+			}
+			fh.Close()
 		}
-		fh.Close()
-	}
-	return true
+		return nil
+	}) == nil
 }
 
 func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request, id string) error {
@@ -169,6 +176,9 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request, id string
 	cancel()
 	if err != nil {
 		return dockerErr(err)
+	}
+	if s.selfID != "" && in.ID == s.selfID {
+		return errSelfUpdate
 	}
 	name := strings.TrimPrefix(in.Name, "/")
 	labels := in.Config.Labels
@@ -279,8 +289,9 @@ func (s *Service) composeUpdate(ctx context.Context, job *jobs.Job, dir, project
 	for i, args := range steps {
 		job.Progress(fmt.Sprintf("docker %s", strings.Join(args[len(base):], " ")), float64(i)/2, "")
 		job.Log("$ docker " + strings.Join(args, " "))
-		cmd := exec.CommandContext(ctx, "docker", args...)
-		cmd.Dir = dir
+		// Natively plain exec in dir; in container mode the host's docker
+		// CLI runs as the admin user in the host's namespaces.
+		cmd := host.CommandOpts(ctx, host.Opts{AsUser: true, Dir: dir}, append([]string{"docker"}, args...)...)
 		pr, pw := io.Pipe()
 		cmd.Stdout, cmd.Stderr = pw, pw
 		if err := cmd.Start(); err != nil {

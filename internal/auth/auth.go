@@ -17,7 +17,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os/user"
 	"slices"
 	"strings"
 	"sync"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/config"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/store"
 )
@@ -120,7 +120,7 @@ func (s *Service) AdminGroup() string {
 		return s.cfg.Auth.AdminGroup
 	}
 	for _, g := range []string{"wheel", "sudo", "admin"} {
-		if _, err := user.LookupGroup(g); err == nil {
+		if _, err := host.LookupGroup(g); err == nil {
 			return g
 		}
 	}
@@ -128,23 +128,62 @@ func (s *Service) AdminGroup() string {
 }
 
 func (s *Service) userIsAdmin(name string) error {
-	u, err := user.Lookup(name)
+	u, err := host.LookupUser(name)
 	if err != nil {
 		return err
 	}
-	g, err := user.LookupGroup(s.AdminGroup())
+	if host.Container() && u.UID == 0 {
+		return errors.New("root cannot sign in")
+	}
+	g, err := host.LookupGroup(s.AdminGroup())
 	if err != nil {
 		return err
 	}
-	ids, err := u.GroupIds()
+	ids, err := host.UserGroups(u)
 	if err != nil {
 		return err
 	}
-	if u.Gid == g.Gid || slices.Contains(ids, g.Gid) {
+	if u.GID == g.GID || slices.Contains(ids, g.GID) {
 		return nil
 	}
 	return fmt.Errorf("user is not in %q", g.Name)
 }
+
+// passwordAuthenticate verifies the host account password: through PAM
+// natively, against the host's shadow file in container mode.
+func (s *Service) passwordAuthenticate(username, password string) error {
+	if host.Container() {
+		return VerifyHostPassword(username, password)
+	}
+	return pamAuthenticate(s.cfg.Auth.PAMService, username, password)
+}
+
+// passwordAvailable reports whether password sign-in can work.
+func passwordAvailable() bool {
+	if host.Container() {
+		return cryptAvailable
+	}
+	return pamAvailable
+}
+
+// VerifyAdminPassword checks the configured admin account's password
+// without throttling (container-mode elevation throttles separately).
+func (s *Service) VerifyAdminPassword(password string) error {
+	if err := s.userIsAdmin(s.cfg.Auth.User); err != nil {
+		return err
+	}
+	return s.passwordAuthenticate(s.cfg.Auth.User, password)
+}
+
+// HasPasskeys reports whether any passkey is registered.
+func (s *Service) HasPasskeys(ctx context.Context) bool {
+	var n int
+	s.st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM webauthn_credentials`).Scan(&n)
+	return n > 0
+}
+
+// IsAdmin reports whether name is an allowed admin account.
+func (s *Service) IsAdmin(name string) error { return s.userIsAdmin(name) }
 
 // AllowedOrigin reports whether origin may talk to us for request r.
 func (s *Service) AllowedOrigin(r *http.Request, origin string) bool {
@@ -308,7 +347,7 @@ func (s *Service) checkPassword(r *http.Request, username, password string) erro
 	if username != s.cfg.Auth.User {
 		err = errors.New("user not allowed")
 	} else if err = s.userIsAdmin(username); err == nil {
-		err = pamAuthenticate(s.cfg.Auth.PAMService, username, password)
+		err = s.passwordAuthenticate(username, password)
 	}
 	// Even out response timing between unknown users and PAM failures.
 	if d := 400*time.Millisecond - time.Since(start); d > 0 {
@@ -367,7 +406,8 @@ func (s *Service) handleState(w http.ResponseWriter, r *http.Request) error {
 	httpx.OK(w, map[string]any{
 		"authenticated": authed,
 		"dev":           s.bypass,
-		"pam":           pamAvailable,
+		"pam":           passwordAvailable(),
+		"container":     host.Container(),
 		"passkeys":      n > 0,
 		"secure":        s.proxy.IsSecure(r) || isLocalhost(r),
 	})

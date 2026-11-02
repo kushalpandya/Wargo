@@ -17,6 +17,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/config"
 	"github.com/kushalpandya/wargo/internal/elevate"
 	"github.com/kushalpandya/wargo/internal/events"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
 	"github.com/kushalpandya/wargo/internal/metrics"
@@ -80,6 +81,9 @@ func New(cfg config.Config) (*Server, error) {
 		Cfg: cfg, Store: st, Hub: hub, Jobs: jobs.NewManager(hub), Audit: al, Proxy: proxy, Auth: au,
 		Elevate: elevate.New(al, proxy, auth.NewThrottle(), "").WithStore(st),
 	}
+	if host.Container() {
+		d.Elevate.WithHostAuth(au)
+	}
 	s := &Server{deps: d}
 
 	public := http.NewServeMux()
@@ -112,7 +116,7 @@ func New(cfg config.Config) (*Server, error) {
 	}
 
 	private.HandleFunc("GET /api/capabilities", func(w http.ResponseWriter, r *http.Request) {
-		out := map[string]any{"elevation": d.Elevate.Methods(), "version": Version}
+		out := map[string]any{"elevation": d.Elevate.Methods(), "version": Version, "container": host.Container()}
 		for _, c := range s.capable {
 			k, v := c.Capabilities(r.Context())
 			out[k] = v

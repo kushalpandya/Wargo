@@ -11,11 +11,12 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/user"
 	"path"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 // Clean normalises a client path into a root-relative path. It rejects
@@ -259,8 +260,8 @@ func ParseOwner(s string) (int, int, error) {
 	if u != "" {
 		if n, err := strconv.Atoi(u); err == nil {
 			uid = n
-		} else if x, err := user.Lookup(u); err == nil {
-			uid, _ = strconv.Atoi(x.Uid)
+		} else if x, err := host.LookupUser(u); err == nil {
+			uid = x.UID
 		} else {
 			return 0, 0, fmt.Errorf("unknown user %q", u)
 		}
@@ -268,8 +269,8 @@ func ParseOwner(s string) (int, int, error) {
 	if g != "" {
 		if n, err := strconv.Atoi(g); err == nil {
 			gid = n
-		} else if x, err := user.LookupGroup(g); err == nil {
-			gid, _ = strconv.Atoi(x.Gid)
+		} else if x, err := host.LookupGroup(g); err == nil {
+			gid = x.GID
 		} else {
 			return 0, 0, fmt.Errorf("unknown group %q", g)
 		}

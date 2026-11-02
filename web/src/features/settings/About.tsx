@@ -18,6 +18,9 @@ interface Self {
   uptimeSec: number;
   dataDir: string;
   user: string;
+  container?: boolean;
+  hostRoot?: string;
+  containerId?: string;
 }
 
 interface Info {
@@ -74,7 +77,16 @@ export default function About() {
                   <Stat label="Runtime" value={s.goVersion.replace(/^go/, "")} sub="Go" />
                 </div>
                 <dl className="mt-4 divide-y divide-border border-t border-border text-sm">
-                  <Field label="Runs as" mono>
+                  <Field label="Mode">
+                    {s.container ? (
+                      <span title={s.hostRoot ? `Host filesystem at ${s.hostRoot}` : undefined}>
+                        Container mode{s.containerId ? <span className="num text-muted"> · {s.containerId}</span> : null}
+                      </span>
+                    ) : (
+                      "Native"
+                    )}
+                  </Field>
+                  <Field label={s.container ? "Acts as" : "Runs as"} mono>
                     {s.user || "—"}
                   </Field>
                   <Field label="Data directory" mono>

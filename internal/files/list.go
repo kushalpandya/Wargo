@@ -10,7 +10,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -20,6 +19,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/fsops"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
@@ -166,11 +166,10 @@ type ownerCache struct {
 }
 
 func newOwnerCache() *ownerCache {
-	c := &ownerCache{users: map[uint32]string{}, groups: map[uint32]string{}, euid: os.Geteuid(), gids: map[int]bool{os.Getegid(): true}}
-	if gs, err := os.Getgroups(); err == nil {
-		for _, g := range gs {
-			c.gids[g] = true
-		}
+	uid, gid, gs := host.Identity()
+	c := &ownerCache{users: map[uint32]string{}, groups: map[uint32]string{}, euid: uid, gids: map[int]bool{gid: true}}
+	for _, g := range gs {
+		c.gids[g] = true
 	}
 	return c
 }
@@ -182,8 +181,8 @@ func (c *ownerCache) user(uid uint32) string {
 		return n
 	}
 	n := strconv.Itoa(int(uid))
-	if u, err := user.LookupId(n); err == nil {
-		n = u.Username
+	if u, err := host.LookupUID(int(uid)); err == nil {
+		n = u.Name
 	}
 	c.users[uid] = n
 	return n
@@ -196,7 +195,7 @@ func (c *ownerCache) group(gid uint32) string {
 		return n
 	}
 	n := strconv.Itoa(int(gid))
-	if g, err := user.LookupGroupId(n); err == nil {
+	if g, err := host.LookupGID(int(gid)); err == nil {
 		n = g.Name
 	}
 	c.groups[gid] = n

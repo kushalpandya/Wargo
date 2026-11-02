@@ -15,6 +15,8 @@ import { usePasskeys } from "./hooks";
 interface Methods {
   sudo: boolean;
   passkey: boolean;
+  password?: boolean;
+  mode?: "container";
   noNewPrivsHint?: boolean;
 }
 
@@ -26,6 +28,35 @@ interface PrivdStatus {
   error?: string;
   executable: string;
   uid: number;
+  container?: boolean;
+}
+
+/** Container mode: no sudo or wargo-privd; approvals use the account password or a passkey. */
+function ContainerApprovals({ passkey }: { passkey: boolean }) {
+  return (
+    <div className="divide-y divide-border">
+      <SettingRow
+        title={
+          <span className="flex items-center gap-2">
+            <KeyRound className="size-4 text-muted" aria-hidden="true" /> Account password
+          </span>
+        }
+        description="Wargo runs in a container, so sudo isn't used. Approve each action with your host account's password; it's checked once and never stored."
+      >
+        <Badge tone="ok">Available</Badge>
+      </SettingRow>
+      <SettingRow
+        title={
+          <span className="flex items-center gap-2">
+            <Fingerprint className="size-4 text-muted" aria-hidden="true" /> Passkey
+          </span>
+        }
+        description={passkey ? "Your registered passkeys can approve admin actions." : "Add a passkey above to approve admin actions with it."}
+      >
+        <Badge tone={passkey ? "ok" : "neutral"}>{passkey ? "Available" : "No passkeys"}</Badge>
+      </SettingRow>
+    </div>
+  );
 }
 
 function TrustDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
@@ -166,6 +197,8 @@ export function AdminApprovals() {
         </p>
         {ml || sl ? (
           <Skeleton className="h-24" />
+        ) : methods?.mode === "container" ? (
+          <ContainerApprovals passkey={!!methods.passkey} />
         ) : (
           <div className="divide-y divide-border">
             <SettingRow
@@ -201,7 +234,7 @@ export function AdminApprovals() {
             </SettingRow>
           </div>
         )}
-        {st && !(st.reachable && st.credentials > 0) && (
+        {st && !st.container && !(st.reachable && st.credentials > 0) && (
           <details className="group rounded-md border border-border bg-surface-2/50 open:bg-transparent" open={!st.reachable}>
             <summary className="cursor-pointer select-none rounded-md px-3 py-2 text-sm font-medium hover:bg-surface-2">
               {st.reachable ? "How passkey approvals work" : "Set up passkey approvals"}

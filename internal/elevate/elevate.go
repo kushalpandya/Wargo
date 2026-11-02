@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/audit"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/store"
 )
@@ -59,6 +60,7 @@ type Service struct {
 	privd    *PrivdClient
 	exe      string
 	store    *store.Store
+	ctr      *containerState // container mode (nil natively)
 }
 
 func New(al *audit.Log, proxy *httpx.ProxyTrust, t Throttler, privdSocket string) *Service {
@@ -68,6 +70,9 @@ func New(al *audit.Log, proxy *httpx.ProxyTrust, t Throttler, privdSocket string
 
 // Methods reports which elevation methods can work on this host.
 func (s *Service) Methods() map[string]any {
+	if s.containerMode() {
+		return s.containerMethods()
+	}
 	_, sudoErr := exec.LookPath("sudo")
 	nnp := noNewPrivs()
 	return map[string]any{
@@ -129,6 +134,9 @@ func (s *Service) Run(r *http.Request, action, target string, argv []string, std
 	if ok, wait := s.throttle.Allow(ip); !ok {
 		return nil, httpx.Errorf(http.StatusTooManyRequests, "throttled", "Too many attempts. Try again in "+wait.Round(time.Second).String())
 	}
+	if s.containerMode() {
+		return s.runContainer(r, cred, ip, action, target, argv, stdin)
+	}
 	var out []byte
 	switch cred.Method {
 	case "sudo":
@@ -149,6 +157,32 @@ func (s *Service) Run(r *http.Request, action, target string, argv []string, std
 	}
 	ctx := audit.WithElevation(r.Context(), cred.Method)
 	s.audit.Record(r.WithContext(ctx), action, target, err, map[string]any{"argv": argv})
+	return out, err
+}
+
+// runContainer approves and runs a request in container mode. Everything
+// happens with full root privileges even when the caller is inside
+// host.AsUser (file manager handlers).
+func (s *Service) runContainer(r *http.Request, cred *Credential, ip, action, target string, argv []string, stdin io.Reader) ([]byte, error) {
+	var out []byte
+	method := cred.Method
+	if method == "sudo" {
+		method = "password"
+	}
+	err := host.AsRoot(func() error {
+		var err error
+		if err = s.containerApprove(r, cred, action, target); err != nil {
+			if errors.Is(err, errBadAccountPassword) || errors.Is(err, errPasskeyRejected) {
+				s.throttle.Fail(ip)
+			}
+		} else {
+			s.throttle.Success(ip)
+			out, err = s.runApproved(r.Context(), argv, stdin)
+		}
+		ctx := audit.WithElevation(r.Context(), method)
+		s.audit.Record(r.WithContext(ctx), action, target, err, map[string]any{"argv": argv})
+		return err
+	})
 	return out, err
 }
 
@@ -211,7 +245,13 @@ func (s *Service) Register(mux *http.ServeMux) {
 		if err := httpx.Decode(r, &req); err != nil {
 			return err
 		}
-		ch, err := s.privd.Challenge(r.Context(), req.Action, req.Target, r.Header.Get("Origin"))
+		var ch map[string]any
+		var err error
+		if s.containerMode() {
+			ch, err = s.containerChallenge(r, req.Action, req.Target)
+		} else {
+			ch, err = s.privd.Challenge(r.Context(), req.Action, req.Target, r.Header.Get("Origin"))
+		}
 		if err != nil {
 			return err
 		}

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 func kernelRelease() string {
@@ -33,7 +35,7 @@ func kernelRelease() string {
 // kernelModulesMissing reports a pending reboot when the running kernel's
 // modules directory is gone (the kernel package was upgraded).
 func kernelModulesMissing() (bool, string) {
-	return modulesMissing(kernelRelease(), []string{"/usr/lib/modules", "/lib/modules"})
+	return modulesMissing(kernelRelease(), []string{host.Path("/usr/lib/modules"), host.Path("/lib/modules")})
 }
 
 func modulesMissing(release string, dirs []string) (bool, string) {
@@ -70,7 +72,7 @@ type LockStatus struct {
 func checkLocks(paths []string) LockStatus {
 	held := heldInodes()
 	for _, p := range paths {
-		st, err := os.Stat(p)
+		st, err := host.Stat(p)
 		if err != nil {
 			continue
 		}
@@ -92,7 +94,7 @@ func checkLocks(paths []string) LockStatus {
 }
 
 func pidAlive(path string) bool {
-	b, err := os.ReadFile(path)
+	b, err := host.ReadFile(path)
 	if err != nil {
 		// Unreadable pid file: assume held to be safe.
 		return true
@@ -145,11 +147,11 @@ func diskSpace() []DiskInfo {
 	seen := map[uint64]bool{}
 	for _, p := range []string{"/", "/var/cache"} {
 		var s syscall.Statfs_t
-		if err := syscall.Statfs(p, &s); err != nil {
+		if err := syscall.Statfs(host.Path(p), &s); err != nil {
 			continue
 		}
 		var st syscall.Stat_t
-		if syscall.Stat(p, &st) == nil {
+		if syscall.Stat(host.Path(p), &st) == nil {
 			if seen[st.Dev] {
 				continue
 			}
@@ -174,6 +176,15 @@ func findConfigFiles(root string, suffixes []string, since time.Time) []ConfigFi
 	var out []ConfigFile
 	if len(suffixes) == 0 {
 		return nil
+	}
+	// root is a host path; report host paths.
+	if host.Container() {
+		defer func() {
+			for i := range out {
+				out[i].Path, _ = host.Unpath(out[i].Path)
+			}
+		}()
+		root = host.Path(root)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {

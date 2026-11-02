@@ -33,7 +33,9 @@ export function useMe(enabled = true) {
 
 export interface Capabilities {
   version: string;
-  elevation: { sudo: boolean; passkey: boolean; noNewPrivsHint?: boolean };
+  elevation: { sudo: boolean; passkey: boolean; password?: boolean; mode?: "container"; noNewPrivsHint?: boolean };
+  /** Wargo runs in Docker (container mode). */
+  container?: boolean;
   docker?: {
     available: boolean;
     error?: string;

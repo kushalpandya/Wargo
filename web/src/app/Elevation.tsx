@@ -70,7 +70,9 @@ export function ElevationProvider() {
 
   const req = pending?.req;
   const passkey = !!req?.methods?.passkey && webauthnSupported();
-  const sudo = req?.methods?.sudo !== false;
+  // Container mode has no sudo: the account password approves instead.
+  const container = req?.methods?.mode === "container";
+  const sudo = container ? req?.methods?.password !== false : req?.methods?.sudo !== false;
 
   return (
     <Dialog
@@ -89,7 +91,7 @@ export function ElevationProvider() {
           className="flex flex-col gap-3"
           onSubmit={(e) => {
             e.preventDefault();
-            if (password) finish({ method: "sudo", password });
+            if (password) finish({ method: container ? "password" : "sudo", password });
           }}
         >
           {req.target && (
@@ -106,7 +108,7 @@ export function ElevationProvider() {
           {sudo ? (
             <>
               {passkey && <div className="text-center text-xs text-subtle">or</div>}
-              <FormField label="sudo password" htmlFor="elev-pw" hint="Used once for this action and never stored.">
+              <FormField label={container ? "Your password" : "sudo password"} htmlFor="elev-pw" hint="Used once for this action and never stored.">
                 <Input
                   id="elev-pw"
                   ref={inputRef}

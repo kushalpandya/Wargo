@@ -14,13 +14,14 @@ export class ApiError extends Error {
 }
 
 export type ElevationCredential =
-  | { method: "sudo"; password: string }
+  | { method: "sudo" | "password"; password: string }
   | { method: "passkey"; challenge: string; assertion: unknown };
 
 export interface ElevationRequest {
   action: string;
   target: string;
-  methods: { sudo: boolean; passkey: boolean; noNewPrivsHint?: boolean };
+  /** mode "container": approvals use the account password instead of sudo. */
+  methods: { sudo: boolean; passkey: boolean; password?: boolean; mode?: "container"; noNewPrivsHint?: boolean };
 }
 
 type ElevationPrompt = (req: ElevationRequest) => Promise<ElevationCredential | null>;

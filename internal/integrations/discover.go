@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 // dockerContainer is the subset of GET /containers/json we use.
@@ -180,15 +182,22 @@ func candidate(c dockerContainer, all []dockerContainer, port int, path string) 
 	return cand
 }
 
+// readable reports whether the admin user can read the host file path
+// (checked with the admin's identity in container mode).
 func readable(path string) bool {
-	st, err := os.Lstat(path)
-	if err != nil || !st.Mode().IsRegular() {
-		return false
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	f.Close()
-	return true
+	return host.AsUser(func() error {
+		p := host.Path(path)
+		st, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		if !st.Mode().IsRegular() {
+			return os.ErrInvalid
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		return f.Close()
+	}) == nil
 }

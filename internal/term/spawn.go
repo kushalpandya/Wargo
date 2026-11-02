@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 const (
@@ -38,6 +40,9 @@ type account struct {
 // currentAccount resolves user, home and login shell. The shell comes from
 // $SHELL, then the passwd entry, then /bin/sh.
 func currentAccount(getenv func(string) string) account {
+	if host.Container() {
+		return containerAccount()
+	}
 	a := account{User: getenv("USER"), Home: getenv("HOME")}
 	if u, err := user.Current(); err == nil {
 		a.User, a.Home = u.Username, u.HomeDir
@@ -54,6 +59,20 @@ func currentAccount(getenv func(string) string) account {
 	}
 	if a.Home == "" {
 		a.Home = "/"
+	}
+	return a
+}
+
+// containerAccount describes the host admin account (container mode).
+func containerAccount() account {
+	a := account{Shell: "/bin/sh", Home: "/"}
+	if acct := host.Admin(); acct != nil {
+		a.User, a.Home = acct.Name, acct.Home
+		if acct.Shell != "" {
+			if rp, err := host.Resolve(acct.Shell); err == nil && isExecutable(rp) {
+				a.Shell = acct.Shell
+			}
+		}
 	}
 	return a
 }
@@ -160,6 +179,9 @@ const containerShell = "command -v bash >/dev/null && exec bash || exec sh"
 // buildSpec turns a request into argv. tmuxN is the index for the tmux
 // session name (wargo-<n>).
 func buildSpec(kind, target string, useTmux bool, tmuxN int, a account, t tools) (spec, error) {
+	if host.Container() {
+		return buildContainerSpec(kind, target, useTmux, tmuxN, a, t)
+	}
 	shellName := filepath.Base(a.Shell)
 	switch kind {
 	case KindHost:
@@ -186,6 +208,49 @@ func buildSpec(kind, target string, useTmux bool, tmuxN int, a account, t tools)
 		return spec{
 			Argv:  []string{t.Docker, "exec", "-it", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor", target, "sh", "-c", containerShell},
 			Dir:   a.Home,
+			Title: target,
+		}, nil
+	}
+	return spec{}, errBadKind
+}
+
+// buildContainerSpec is buildSpec for container mode: every session runs
+// in the host's namespaces via nsenter. Host and root shells use `su -l`
+// (root needs no password and it yields the user's real login session); the
+// root shell then runs the host's `sudo -i`, which asks for the password in
+// the terminal exactly as natively. Container shells use the host's docker
+// CLI as the admin user. Paths in t are host paths.
+func buildContainerSpec(kind, target string, useTmux bool, tmuxN int, a account, t tools) (spec, error) {
+	acct := host.Admin()
+	if acct == nil {
+		return spec{}, errors.New("admin account is not configured")
+	}
+	shellName := filepath.Base(a.Shell)
+	switch kind {
+	case KindHost:
+		if useTmux {
+			if t.Tmux == "" {
+				return spec{}, errors.New("tmux is not installed on the host")
+			}
+			name := "wargo-" + strconv.Itoa(tmuxN)
+			cmd := "exec " + host.ShellJoin([]string{t.Tmux, "new-session", "-A", "-s", name})
+			return spec{Argv: host.LoginShellArgv(acct, cmd), Title: "tmux " + name}, nil
+		}
+		return spec{Argv: host.LoginShellArgv(acct, ""), Title: shellName}, nil
+	case KindRoot:
+		if t.Sudo == "" {
+			return spec{}, errors.New("sudo is not installed on the host")
+		}
+		return spec{Argv: host.LoginShellArgv(acct, "exec "+host.ShellQuote(t.Sudo)+" -i"), Title: "root"}, nil
+	case KindContainer:
+		if !ValidContainer(target) {
+			return spec{}, fmt.Errorf("invalid container name %q", target)
+		}
+		if t.Docker == "" {
+			return spec{}, errors.New("the docker CLI is not installed on the host")
+		}
+		return spec{
+			Argv:  host.UserArgv(t.Docker, "exec", "-it", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor", target, "sh", "-c", containerShell),
 			Title: target,
 		}, nil
 	}

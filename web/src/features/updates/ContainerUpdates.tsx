@@ -255,9 +255,9 @@ export function ContainerUpdates({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {checkBtn}
-          {stale.length > 0 && (
+          {stale.some((c) => !c.self) && (
             <Button variant="primary" icon={<ArrowUpCircle />} onClick={() => setBulk(true)} disabled={checking}>
-              Update all <span className="num">({stale.length})</span>
+              Update all <span className="num">({stale.filter((c) => !c.self).length})</span>
             </Button>
           )}
         </div>
@@ -340,7 +340,8 @@ export function ContainerUpdates({
         </Notice>
       )}
 
-      <BulkContainerUpdate open={bulk} containers={stale} onClose={() => setBulk(false)} />
+      {/* Wargo can't recreate its own container; it's updated from the host. */}
+      <BulkContainerUpdate open={bulk} containers={stale.filter((c) => !c.self)} onClose={() => setBulk(false)} />
       {actions.element}
     </div>
   );

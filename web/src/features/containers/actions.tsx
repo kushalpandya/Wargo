@@ -15,6 +15,17 @@ type Strategy = "auto" | "recreate" | "compose";
 const verbs: Record<Action, string> = { start: "Start", stop: "Stop", restart: "Restart", update: "Update" };
 const past: Record<Action, string> = { start: "Started", stop: "Stopped", restart: "Restarted", update: "Updated" };
 
+function describe(action: Action, c: Container): string {
+  if (c.self) {
+    if (action === "stop") return "This is Wargo's own container. Stopping it ends this session, and Wargo stays down until you start the container again from the host.";
+    if (action === "restart") return "This is Wargo's own container. Restarting it disconnects you until Wargo is back, usually within a few seconds.";
+    return "Wargo can't update its own container yet. On the host, run docker compose pull && docker compose up -d in the folder of your Wargo compose file.";
+  }
+  if (action === "stop") return "The container stops and its services become unavailable until it is started again.";
+  if (action === "restart") return "The container is stopped and started again; its services are briefly unavailable.";
+  return "Pulls the latest image and, if it changed, recreates the container with the same configuration. It rolls back if the new container fails to start.";
+}
+
 /** State + dialogs for container actions. Render `element` once. */
 export function useContainerActions() {
   const qc = useQueryClient();
@@ -27,7 +38,8 @@ export function useContainerActions() {
   const mut = useMutation({
     mutationFn: async ({ action, c }: { action: Action; c: Container }) => {
       if (action === "update") return api.post<{ jobId: string }>(`/api/containers/${c.id}/update`, { strategy });
-      return api.post(`/api/containers/${c.id}/${action}`);
+      // Wargo's own container: the dialog already showed the warning.
+      return api.post(`/api/containers/${c.id}/${action}`, c.self ? { confirmSelf: true } : undefined);
     },
     onMutate: ({ c }) => setBusy(c.id),
     onSettled: () => setBusy(null),
@@ -62,19 +74,13 @@ export function useContainerActions() {
           open
           onOpenChange={(o) => !o && setPending(null)}
           title={`${verbs[p.action]} ${p.c.name}?`}
-          confirmLabel={verbs[p.action]}
-          danger={p.action === "stop"}
+          confirmLabel={p.c.self ? (p.action === "update" ? "OK" : `${verbs[p.action]} Wargo`) : verbs[p.action]}
+          danger={p.action === "stop" || (!!p.c.self && p.action === "restart")}
           loading={mut.isPending}
-          onConfirm={() => mut.mutate(p)}
-          description={
-            p.action === "stop"
-              ? "The container stops and its services become unavailable until it is started again."
-              : p.action === "restart"
-                ? "The container is stopped and started again; its services are briefly unavailable."
-                : "Pulls the latest image and, if it changed, recreates the container with the same configuration. It rolls back if the new container fails to start."
-          }
+          onConfirm={() => (p.c.self && p.action === "update" ? setPending(null) : mut.mutate(p))}
+          description={describe(p.action, p.c)}
         >
-          {p.action === "update" && (
+          {p.action === "update" && !p.c.self && (
             <div className="space-y-2">
               <div className="text-2xs font-medium uppercase tracking-wider text-subtle">Method</div>
               <Segmented<Strategy>

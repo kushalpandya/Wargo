@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v4/disk"
+
+	hostfs "github.com/kushalpandya/wargo/internal/host"
 )
 
 type Filesystem struct {
@@ -62,9 +64,11 @@ var skipFS = map[string]bool{
 
 func labels() map[string]string {
 	out := map[string]string{}
-	ents, _ := os.ReadDir("/dev/disk/by-label")
+	dir := hostfs.Path("/dev/disk/by-label")
+	ents, _ := os.ReadDir(dir)
 	for _, e := range ents {
-		if t, err := filepath.EvalSymlinks(filepath.Join("/dev/disk/by-label", e.Name())); err == nil {
+		if t, err := filepath.EvalSymlinks(filepath.Join(dir, e.Name())); err == nil {
+			t, _ = hostfs.Unpath(t) // udev links are relative: map back to /dev/...
 			out[t] = strings.ReplaceAll(e.Name(), `\x20`, " ")
 		}
 	}
@@ -84,15 +88,15 @@ func filesystems(ctx context.Context) []Filesystem {
 			strings.HasPrefix(p.Mountpoint, "/snap/") || strings.HasPrefix(p.Mountpoint, "/run/") && !strings.HasPrefix(p.Mountpoint, "/run/media") {
 			continue
 		}
-		dev := p.Device
-		if r, err := filepath.EvalSymlinks(dev); err == nil {
+		dev, _ := hostfs.Unpath(p.Device) // gopsutil may resolve /dev/mapper links below HOST_DEV
+		if r, err := hostfs.EvalSymlinks(dev); err == nil {
 			dev = r
 		}
 		// Bind mounts repeat the same device; keep the shortest mount path.
 		if seen[dev] && strings.HasPrefix(dev, "/dev/") {
 			continue
 		}
-		u, err := disk.UsageWithContext(ctx, p.Mountpoint)
+		u, err := disk.UsageWithContext(ctx, hostfs.Path(p.Mountpoint))
 		if err != nil || u.Total == 0 {
 			continue
 		}
@@ -108,7 +112,7 @@ func filesystems(ctx context.Context) []Filesystem {
 }
 
 func drives(fs []Filesystem, temps []Temp) []Drive {
-	ents, _ := os.ReadDir("/sys/block")
+	ents, _ := os.ReadDir(hostfs.Path("/sys/block"))
 	mounts := map[string][]string{}
 	usage := map[string]Filesystem{}
 	for _, f := range fs {
@@ -128,7 +132,7 @@ func drives(fs []Filesystem, temps []Temp) []Drive {
 		if !physicalDisk(name) {
 			continue
 		}
-		base := filepath.Join("/sys/block", name)
+		base := hostfs.Path(filepath.Join("/sys/block", name))
 		sz, _ := readInt(filepath.Join(base, "size"))
 		if sz == 0 {
 			continue

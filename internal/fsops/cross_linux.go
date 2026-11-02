@@ -4,11 +4,14 @@ package fsops
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"syscall"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 // openParent opens the directory containing rel inside root and returns it
@@ -100,7 +103,7 @@ func RealPath(root *os.Root, rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, base), nil
+	return hostView(filepath.Join(dir, base))
 }
 
 func fdPath(root *os.Root, rel string) (string, error) {
@@ -109,7 +112,21 @@ func fdPath(root *os.Root, rel string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	return os.Readlink("/proc/self/fd/" + strconv.Itoa(int(f.Fd())))
+	p, err := os.Readlink("/proc/self/fd/" + strconv.Itoa(int(f.Fd())))
+	if err != nil {
+		return "", err
+	}
+	return hostView(p)
+}
+
+// hostView converts a kernel path (below the host root in container mode)
+// to the host's own path.
+func hostView(p string) (string, error) {
+	hp, ok := host.Unpath(p)
+	if !ok {
+		return "", fmt.Errorf("%s is outside the host filesystem", p)
+	}
+	return hp, nil
 }
 
 // Dev returns the device id of the filesystem holding rel's parent.

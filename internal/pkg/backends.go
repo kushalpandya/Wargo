@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 func cmdErr(name string, code int, stderr, stdout []byte) error {
@@ -110,7 +112,9 @@ func (b *pacmanBackend) Check(ctx context.Context, run Runner) ([]Update, []Upda
 	var ups []Update
 	if b.checkupdates {
 		// checkupdates syncs a private copy of the databases; exit 2 = none.
-		db := filepath.Join(os.TempDir(), fmt.Sprintf("wargo-checkup-db-%d", os.Getuid()))
+		// The command runs as the admin on the host, so the private database
+		// copy is the admin's (the same path natively).
+		db := filepath.Join(checkTempDir(), fmt.Sprintf("wargo-checkup-db-%d", host.AdminUID()))
 		out, stderr, code, err := run(ctx, "env", "CHECKUPDATES_DB="+db, "checkupdates", "--nocolor")
 		if err != nil {
 			return nil, nil, err
@@ -187,9 +191,9 @@ func (*aptBackend) ConfigSuffixes() []string {
 	return []string{".dpkg-dist", ".dpkg-new", ".dpkg-old", ".ucf-dist"}
 }
 func (*aptBackend) RebootRequired(ctx context.Context, run Runner) (bool, string) {
-	if _, err := os.Stat("/var/run/reboot-required"); err == nil {
+	if _, err := host.Stat("/var/run/reboot-required"); err == nil {
 		reason := "Updated packages require a reboot"
-		if b, err := os.ReadFile("/var/run/reboot-required.pkgs"); err == nil {
+		if b, err := host.ReadFile("/var/run/reboot-required.pkgs"); err == nil {
 			if pk := strings.Fields(string(b)); len(pk) > 0 {
 				reason += ": " + strings.Join(uniq(pk), ", ")
 			}
@@ -305,7 +309,7 @@ func (*zypperBackend) LockFiles() []string                          { return []s
 func (*zypperBackend) ConfigSuffixes() []string                     { return []string{".rpmnew", ".rpmsave"} }
 func (*zypperBackend) RebootRequired(ctx context.Context, run Runner) (bool, string) {
 	for _, p := range []string{"/run/reboot-needed", "/var/run/reboot-needed"} {
-		if _, err := os.Stat(p); err == nil {
+		if _, err := host.Stat(p); err == nil {
 			return true, "zypper reports that a reboot is needed"
 		}
 	}
@@ -354,4 +358,13 @@ func checkFlatpak(ctx context.Context, run Runner) []Update {
 		cur = ParseFlatpakList(l)
 	}
 	return ParseFlatpakUpdates(out, cur)
+}
+
+// checkTempDir is the temp directory for update checks (the host's /tmp
+// in container mode).
+func checkTempDir() string {
+	if host.Container() {
+		return "/tmp"
+	}
+	return os.TempDir()
 }

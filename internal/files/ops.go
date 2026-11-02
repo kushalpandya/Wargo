@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/fsops"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
 )
@@ -31,11 +32,17 @@ func (s *Service) startJob(r *http.Request, kind, title string, ref rootRef, tar
 	go func() {
 		defer cancel()
 		var res map[string]any
-		root, err := os.OpenRoot(ref.Path)
-		if err == nil {
+		// Every filesystem step of the job runs with the admin's identity
+		// (container mode); the job bookkeeping below doesn't touch files.
+		err := host.AsUser(func() error {
+			root, err := openRoot(ref.Path)
+			if err != nil {
+				return err
+			}
+			defer root.Close()
 			res, err = fn(ctx, root, job)
-			root.Close()
-		}
+			return err
+		})
 		if err != nil && ctx.Err() != nil {
 			err = context.Canceled
 		}
@@ -206,7 +213,7 @@ func (s *Service) openTransfer(req transferReq) (*transferRoots, error) {
 	if dref.Path == sref.Path {
 		return t, nil
 	}
-	dst, err := os.OpenRoot(dref.Path)
+	dst, err := openRoot(dref.Path)
 	if err != nil {
 		src.Close()
 		return nil, fsErr(err, dref.Path)
@@ -371,7 +378,7 @@ func (s *Service) transferJob(r *http.Request, t *transferRoots, kind, title, de
 		func(ctx context.Context, root *os.Root, job *jobs.Job) (map[string]any, error) {
 			dst := root
 			if cross {
-				d, err := os.OpenRoot(dref.Path)
+				d, err := openRoot(dref.Path)
 				if err != nil {
 					return nil, err
 				}
@@ -525,10 +532,14 @@ func (s *Service) trash(w http.ResponseWriter, r *http.Request, root *os.Root, r
 	if s.trashDir == "" {
 		return errNoTrash("No trash folder is configured", paths)
 	}
-	if err := os.MkdirAll(s.trashDir, 0o700); err != nil {
+	trashDir, err := host.Resolve(s.trashDir)
+	if err != nil {
 		return errNoTrash("Trash folder is not usable: "+errText(err), paths)
 	}
-	tst, err := os.Stat(s.trashDir)
+	if err := os.MkdirAll(trashDir, 0o700); err != nil {
+		return errNoTrash("Trash folder is not usable: "+errText(err), paths)
+	}
+	tst, err := os.Stat(trashDir)
 	if err != nil {
 		return errNoTrash("Trash folder is not usable", paths)
 	}
@@ -546,15 +557,15 @@ func (s *Service) trash(w http.ResponseWriter, r *http.Request, root *os.Root, r
 	var moved []string
 	for _, p := range paths {
 		name := stamp + "-" + baseName(p)
-		dst := filepath.Join(s.trashDir, name)
+		dst := filepath.Join(trashDir, name)
 		for i := 2; ; i++ {
 			if _, err := os.Lstat(dst); errors.Is(err, fs.ErrNotExist) {
 				break
 			}
-			dst = filepath.Join(s.trashDir, fmt.Sprintf("%s-%d-%s", stamp, i, baseName(p)))
+			dst = filepath.Join(trashDir, fmt.Sprintf("%s-%d-%s", stamp, i, baseName(p)))
 		}
 		err := fsops.RenameOut(root, p, dst)
-		s.record(r, "files.trash", ref, p, err, map[string]string{"to": dst})
+		s.record(r, "files.trash", ref, p, err, map[string]string{"to": filepath.Join(s.trashDir, filepath.Base(dst))})
 		if err != nil {
 			return fsErr(err, p)
 		}

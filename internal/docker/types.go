@@ -80,10 +80,12 @@ type Container struct {
 	NetworkContainerID string `json:"networkContainerId,omitempty"`
 	NetworkPorts       []Port `json:"networkPorts,omitempty"`
 	// Names of containers sharing this container's network namespace.
-	NetworkUsers    []string `json:"networkUsers,omitempty"`
-	Compose         *Compose `json:"compose,omitempty"`
-	CasaOS          bool     `json:"casaos"`
-	UpdateAvailable *bool    `json:"updateAvailable"`
+	NetworkUsers []string `json:"networkUsers,omitempty"`
+	Compose      *Compose `json:"compose,omitempty"`
+	CasaOS       bool     `json:"casaos"`
+	// Self marks Wargo's own container (container mode).
+	Self            bool  `json:"self,omitempty"`
+	UpdateAvailable *bool `json:"updateAvailable"`
 	// UpdateCheckedAt is when the image was last checked (unix ms, 0 = never).
 	UpdateCheckedAt int64 `json:"updateCheckedAt,omitempty"`
 	// Version is a best-effort human version of the image (labels, then

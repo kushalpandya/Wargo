@@ -22,6 +22,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/config"
 	"github.com/kushalpandya/wargo/internal/events"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/integrations/prowlarr"
 	"github.com/kushalpandya/wargo/internal/integrations/transmission"
@@ -581,7 +582,17 @@ func (s *Service) handleDiscover(w http.ResponseWriter, r *http.Request) error {
 var apiKeyRe = regexp.MustCompile(`^[A-Za-z0-9]{16,64}$`)
 
 // readAPIKey extracts <ApiKey> from a Prowlarr config.xml.
-func readAPIKey(path string) (string, error) {
+func readAPIKey(path string) (key string, err error) {
+	// The path is a host path; read it as the admin user.
+	err = host.AsUser(func() error {
+		var e error
+		key, e = readAPIKeyFile(host.Path(path))
+		return e
+	})
+	return key, err
+}
+
+func readAPIKeyFile(path string) (string, error) {
 	st, err := os.Lstat(path)
 	if err != nil {
 		return "", err

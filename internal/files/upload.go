@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/fsops"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
@@ -150,6 +151,15 @@ func (u *uploads) expire(ttl time.Duration) {
 
 func freeSpace(p string) (uint64, bool) {
 	var st syscall.Statfs_t
+	if syscall.Statfs(host.Path(p), &st) != nil {
+		return 0, false
+	}
+	return st.Bavail * uint64(st.Bsize), true
+}
+
+// freeSpaceLocal is freeSpace for Wargo's own (container) paths.
+func freeSpaceLocal(p string) (uint64, bool) {
+	var st syscall.Statfs_t
 	if syscall.Statfs(p, &st) != nil {
 		return 0, false
 	}
@@ -235,7 +245,7 @@ func (s *Service) handleUploadInit(w http.ResponseWriter, r *http.Request) error
 	if err := os.MkdirAll(s.uploads.dir, 0o700); err != nil {
 		return err
 	}
-	if free, ok := freeSpace(s.uploads.dir); ok && uint64(req.Size) > free {
+	if free, ok := freeSpaceLocal(s.uploads.dir); ok && uint64(req.Size) > free {
 		return httpx.Errorf(http.StatusInsufficientStorage, "no_space", "Not enough free space for the upload staging area")
 	}
 	b := make([]byte, 16)
@@ -359,7 +369,7 @@ func (s *Service) handleUploadComplete(w http.ResponseWriter, r *http.Request) e
 		s.uploads.remove(up.ID)
 		return httpx.Errorf(http.StatusNotFound, "unknown_root", "The upload's root is no longer configured")
 	}
-	root, err := os.OpenRoot(ref.Path)
+	root, err := openRoot(ref.Path)
 	if err != nil {
 		return fsErr(err, "")
 	}

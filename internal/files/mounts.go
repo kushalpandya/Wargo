@@ -15,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 // Mounted filesystems ("drives") are offered as roots next to the configured
@@ -234,10 +236,29 @@ type Drive struct {
 
 // Paths read during detection (variables so tests can point them elsewhere).
 var (
-	mountinfoPath = "/proc/self/mountinfo"
+	mountinfoPath = defaultMountinfo
 	byLabelDir    = "/dev/disk/by-label"
 	sysClassBlock = "/sys/class/block"
 )
+
+// mountinfoFile is the mount table to read: our own natively, the host
+// PID 1's in container mode (the container's mounts are irrelevant).
+func mountinfoFile() string {
+	if host.Container() && mountinfoPath == defaultMountinfo {
+		return host.Path("/proc/1/mountinfo")
+	}
+	return mountinfoPath
+}
+
+// hostPathVar maps a detection path to the host unless a test replaced it.
+func hostPathVar(p string) string {
+	if p == "/dev/disk/by-label" || p == "/sys/class/block" {
+		return host.Path(p)
+	}
+	return p
+}
+
+const defaultMountinfo = "/proc/self/mountinfo"
 
 type mountCache struct {
 	mu     sync.Mutex
@@ -256,14 +277,14 @@ func (s *Service) drives(fresh bool) []Drive {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if fresh || time.Since(c.at) > mountCacheTTL {
-		c.drives = detectDrives()
+		host.AsRoot(func() error { c.drives = detectDrives(); return nil })
 		c.at = time.Now()
 	}
 	return c.drives
 }
 
 func detectDrives() []Drive {
-	f, err := os.Open(mountinfoPath)
+	f, err := os.Open(mountinfoFile())
 	if err != nil {
 		return nil
 	}
@@ -274,7 +295,7 @@ func detectDrives() []Drive {
 	for _, m := range ms {
 		dev := m.Source
 		if strings.HasPrefix(dev, "/dev/") {
-			if r, err := filepath.EvalSymlinks(dev); err == nil {
+			if r, err := host.EvalSymlinks(dev); err == nil {
 				dev = r
 			}
 		}
@@ -304,9 +325,13 @@ func driveName(p string) string {
 
 func diskLabels() map[string]string {
 	out := map[string]string{}
-	ents, _ := os.ReadDir(byLabelDir)
+	dir := hostPathVar(byLabelDir)
+	ents, _ := os.ReadDir(dir)
 	for _, e := range ents {
-		if t, err := filepath.EvalSymlinks(filepath.Join(byLabelDir, e.Name())); err == nil {
+		if t, err := filepath.EvalSymlinks(filepath.Join(dir, e.Name())); err == nil {
+			// udev links are relative, so the result is below the host
+			// root in container mode; report the host's device path.
+			t, _ = host.Unpath(t)
 			out[t] = unescapeLabel(e.Name())
 		}
 	}
@@ -339,7 +364,7 @@ func removable(name string) bool {
 	if name == "" || name == "." || name == ".." {
 		return false
 	}
-	base := filepath.Join(sysClassBlock, name)
+	base := filepath.Join(hostPathVar(sysClassBlock), name)
 	real, err := filepath.EvalSymlinks(base)
 	if err != nil {
 		return false

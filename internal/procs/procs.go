@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -24,6 +23,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/elevate"
 	"github.com/kushalpandya/wargo/internal/events"
 	"github.com/kushalpandya/wargo/internal/helper"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
@@ -99,8 +99,8 @@ func (s *Service) userName(uid int) string {
 		return n
 	}
 	n := strconv.Itoa(uid)
-	if u, err := user.LookupId(n); err == nil {
-		n = u.Username
+	if u, err := host.LookupUID(uid); err == nil {
+		n = u.Name
 	}
 	s.users[uid] = n
 	return n
@@ -122,7 +122,7 @@ func (s *Service) scan() *List {
 	if s.bootTime == 0 {
 		s.bootTime = readBootTime(s.root)
 	}
-	l := &List{UID: os.Getuid(), Self: os.Getpid(), TotalMem: readMeminfoTotal(s.root), CPUs: runtime.NumCPU(), SampledAt: now.UnixMilli()}
+	l := &List{UID: host.AdminUID(), Self: os.Getpid(), TotalMem: readMeminfoTotal(s.root), CPUs: runtime.NumCPU(), SampledAt: now.UnixMilli()}
 	ents, _ := os.ReadDir(s.root)
 	cur := make(map[int]cpuSample, len(ents))
 	dt := now.Sub(s.prevAt).Seconds()
@@ -369,7 +369,7 @@ func (s *Service) handleSignal(w http.ResponseWriter, r *http.Request) error {
 	if pid <= 1 {
 		return httpx.Errorf(http.StatusForbidden, "forbidden", "Refusing to signal PID 1 or below")
 	}
-	if pid == os.Getpid() {
+	if pid == os.Getpid() || host.Container() && pid == os.Getppid() {
 		return httpx.Errorf(http.StatusForbidden, "forbidden", "Refusing to signal Wargo itself")
 	}
 	p, ok := s.find(pid)
@@ -377,7 +377,13 @@ func (s *Service) handleSignal(w http.ResponseWriter, r *http.Request) error {
 		return httpx.ErrNotFound
 	}
 	target := fmt.Sprintf("SIG%s pid %d (%s, user %s)", name, pid, p.Name, p.User)
-	err = syscall.Kill(pid, sig)
+	if host.Container() && p.UID != host.AdminUID() {
+		// Wargo is root in the container and could signal anything; keep
+		// the native rule that other users' processes need approval.
+		err = syscall.EPERM
+	} else {
+		err = syscall.Kill(pid, sig)
+	}
 	switch {
 	case err == nil:
 		s.audit.Record(r, "procs.signal", target, nil, map[string]any{"pid": pid, "signal": name})

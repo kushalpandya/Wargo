@@ -37,6 +37,7 @@ type PrivdStatus struct {
 	Error       string `json:"error,omitempty"`
 	Executable  string `json:"executable"` // this wargo binary (for privd.toml)
 	UID         int    `json:"uid"`
+	Container   bool   `json:"container,omitempty"`
 }
 
 // Status queries privd.
@@ -108,6 +109,11 @@ func (s *Service) buildTrustStore(ctx context.Context, ids []string) (*privdStor
 
 func (s *Service) registerPrivd(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/elevate/privd", func(w http.ResponseWriter, r *http.Request) {
+		if s.containerMode() {
+			// wargo-privd has no role in container mode.
+			httpx.OK(w, PrivdStatus{Executable: s.exe, UID: os.Getuid(), Container: true})
+			return
+		}
 		st := s.privd.Status(r.Context())
 		st.Executable = s.exe
 		st.UID = os.Getuid()
@@ -119,6 +125,9 @@ func (s *Service) registerPrivd(mux *http.ServeMux) {
 		}
 		if err := httpx.Decode(r, &req); err != nil {
 			return err
+		}
+		if s.containerMode() {
+			return httpx.Errorf(http.StatusConflict, "container_mode", "wargo-privd is not used in container mode")
 		}
 		if len(req.PasskeyIDs) == 0 || len(req.PasskeyIDs) > 32 {
 			return httpx.BadRequest("select between 1 and 32 passkeys")

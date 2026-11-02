@@ -21,6 +21,7 @@ import (
 
 	"github.com/kushalpandya/wargo/internal/elevate"
 	"github.com/kushalpandya/wargo/internal/helper"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
 	"github.com/kushalpandya/wargo/internal/server"
@@ -127,6 +128,11 @@ func New(d *server.Deps) *Service {
 	s := &Service{
 		d: d, osr: readOSRelease(), run: ExecRunner(5 * time.Minute),
 		dataDir: filepath.Join(d.Cfg.DataDir, "pkg"), ctx: context.Background(),
+	}
+	if host.Container() {
+		// The upgrade unit runs on the host and appends to its log there;
+		// Wargo reads it through the host mount.
+		s.dataDir = containerLogDir
 	}
 	s.be = Detect(s.osr, hasBin)
 	if s.be != nil {
@@ -417,17 +423,17 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 		return s.d.Elevate.ErrRequired("pkg.upgrade", target)
 	}
 
-	if err := os.MkdirAll(s.dataDir, 0o750); err != nil {
+	if err := os.MkdirAll(host.Path(s.dataDir), 0o750); err != nil {
 		return err
 	}
-	pruneLogs(s.dataDir, 10)
+	pruneLogs(host.Path(s.dataDir), 10)
 	now := time.Now()
 	id := now.Format("20060102-150405")
 	rec := &RunRecord{
 		ID: id, Unit: "wargo-upgrade-" + id, Log: filepath.Join(s.dataDir, id+".log"),
 		Backend: s.be.Name(), Packages: pending, StartedAt: now, Fake: s.fake,
 	}
-	lf, err := os.OpenFile(rec.Log, os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND, 0o640)
+	lf, err := os.OpenFile(host.Path(rec.Log), os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND, 0o640)
 	if err != nil {
 		return httpx.Errorf(http.StatusConflict, "upgrade_running", "An upgrade was just started")
 	}
@@ -452,7 +458,7 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 		argv := s.systemdRunArgv(rec)
 		out, err := s.d.Elevate.Run(r, "pkg.upgrade", target, argv, nil)
 		if err != nil {
-			os.Remove(rec.Log)
+			os.Remove(host.Path(rec.Log))
 			var he *httpx.Error
 			if errors.As(err, &he) && he.Code == "command_failed" {
 				return httpx.Errorf(http.StatusBadGateway, "upgrade_start_failed", "Could not start the upgrade: "+lastLine(out))
@@ -495,9 +501,23 @@ func (s *Service) systemdRunArgv(rec *RunRecord) []string {
 		}
 	}
 	argv = append(argv, "--")
+	if host.Container() {
+		// The host has no wargo binary: the unit runs the (validated,
+		// absolute) package manager through the host's /bin/sh with the
+		// constant wrapper script that prints the exit marker.
+		up := s.be.UpgradeArgv()
+		if bin, err := helper.ResolvePackageManager(up[0]); err == nil {
+			up = append([]string{bin}, up[1:]...)
+		}
+		argv = append(argv, "/bin/sh", "-c", wrapperScript, "wargo-upgrade")
+		return append(argv, up...)
+	}
 	argv = append(argv, s.helperArgv("pkg-run", "--")...)
 	return append(argv, s.be.UpgradeArgv()...)
 }
+
+// containerLogDir holds upgrade logs on the host in container mode.
+const containerLogDir = "/var/log/wargo"
 
 func pruneLogs(dir string, keep int) {
 	ents, err := os.ReadDir(dir)
@@ -537,7 +557,7 @@ func (s *Service) attach(rec *RunRecord) *jobs.Job {
 const maxLineLen = 2000
 
 func (s *Service) follow(ctx context.Context, rec *RunRecord, j *jobs.Job) {
-	f, err := os.Open(rec.Log)
+	f, err := os.Open(host.Path(rec.Log))
 	if err != nil {
 		s.finish(rec, j, nil, fmt.Errorf("cannot read upgrade log: %w", err), ProgressState{})
 		return
@@ -748,7 +768,7 @@ func (s *Service) handleLog(w http.ResponseWriter, r *http.Request) error {
 	if id := r.URL.Query().Get("id"); id != "" && id != rec.ID {
 		return httpx.ErrNotFound
 	}
-	lines, err := tailLines(rec.Log, 256<<10)
+	lines, err := tailLines(host.Path(rec.Log), 256<<10)
 	if err != nil {
 		return httpx.ErrNotFound
 	}

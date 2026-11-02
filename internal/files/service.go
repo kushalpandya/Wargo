@@ -25,6 +25,7 @@ import (
 
 	"github.com/kushalpandya/wargo/internal/config"
 	"github.com/kushalpandya/wargo/internal/fsops"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
 	"github.com/kushalpandya/wargo/internal/server"
@@ -87,6 +88,16 @@ func New(d *server.Deps) *Service {
 }
 
 func NewWithOptions(o Options) *Service {
+	if host.Container() {
+		if o.Audit != nil {
+			o.Audit = rootAuditor{o.Audit}
+		}
+		if o.TrashDir == "" {
+			if a := host.Admin(); a != nil && a.Home != "" && a.Home != "/" {
+				o.TrashDir = filepath.Join(a.Home, ".local/share/wargo/trash")
+			}
+		}
+	}
 	s := &Service{trashDir: o.TrashDir, maxEdit: o.MaxEditSize, jobs: o.Jobs, audit: o.Audit, elev: o.Elevate, owners: newOwnerCache(), showMounts: o.ShowMounts}
 	if s.maxEdit <= 0 {
 		s.maxEdit = 4 << 20
@@ -104,7 +115,51 @@ func NewWithOptions(o Options) *Service {
 		s.roots = append(s.roots, config.Root{Name: name, Path: p})
 	}
 	s.uploads = newUploads(filepath.Join(o.DataDir, "uploads"))
+	if host.Container() {
+		prepareUploadDir(o.DataDir, s.uploads.dir)
+	}
 	return s
+}
+
+// rootAuditor writes audit records with full privileges: in container mode
+// handlers run inside host.AsUser, and the database lives in Wargo's own
+// root-owned data directory.
+type rootAuditor struct{ a Auditor }
+
+func (r rootAuditor) Record(req *http.Request, action, target string, err error, details any) {
+	host.AsRoot(func() error {
+		r.a.Record(req, action, target, err, details)
+		return nil
+	})
+}
+
+// prepareUploadDir lets the admin account stage uploads (container mode):
+// the data directory must be traversable and the upload folder owned by
+// the admin. Database and keys stay 0600 root.
+func prepareUploadDir(dataDir, dir string) {
+	a := host.Admin()
+	if a == nil {
+		return
+	}
+	if st, err := os.Stat(dataDir); err == nil && st.Mode().Perm()&0o001 == 0 {
+		if err := os.Chmod(dataDir, st.Mode().Perm()|0o711); err != nil {
+			slog.Warn("files: data dir permissions", "err", err)
+		}
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		slog.Warn("files: uploads dir", "err", err)
+		return
+	}
+	if err := os.Chown(dir, a.UID, a.GID); err != nil {
+		slog.Warn("files: uploads dir owner", "err", err)
+	}
+	os.Chmod(dir, 0o700)
+	// Leftovers from before (e.g. a different admin) belong to the admin too.
+	if ents, err := os.ReadDir(dir); err == nil {
+		for _, e := range ents {
+			os.Lchown(filepath.Join(dir, e.Name()), a.UID, a.GID)
+		}
+	}
 }
 
 func (s *Service) Capabilities(context.Context) (string, any) {
@@ -137,8 +192,12 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) Register(mux *http.ServeMux) {
+	// Container mode: each request does its file work with the admin's
+	// filesystem identity, so permissions match native semantics.
 	h := func(pattern string, fn func(w http.ResponseWriter, r *http.Request) error) {
-		mux.HandleFunc(pattern, httpx.Handler(fn))
+		mux.HandleFunc(pattern, httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
+			return host.AsUser(func() error { return fn(w, r) })
+		}))
 	}
 	h("GET /api/files/roots", s.handleRoots)
 	h("GET /api/files/list", s.handleList)
@@ -215,15 +274,26 @@ func (s *Service) open(v string) (*os.Root, rootRef, error) {
 	if err != nil {
 		return nil, ref, err
 	}
-	root, err := os.OpenRoot(ref.Path)
+	root, err := openRoot(ref.Path)
 	if err != nil {
 		return nil, ref, fsErr(err, ref.Path)
 	}
 	return root, ref, nil
 }
 
+// openRoot opens a root given as a host path. In container mode the path
+// lives below the host root and its symlinks are resolved inside it (with
+// the caller's identity, so permission checks match native behaviour).
+func openRoot(p string) (*os.Root, error) {
+	rp, err := host.Resolve(p)
+	if err != nil {
+		return nil, err
+	}
+	return os.OpenRoot(rp)
+}
+
 func statInto(m map[string]any, p string) {
-	st, err := statfs(p)
+	st, err := statfs(host.Path(p))
 	if err != nil {
 		m["error"] = errText(err)
 		return

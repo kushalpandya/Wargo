@@ -13,13 +13,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
@@ -50,6 +50,16 @@ type Service struct {
 	testArgv []string // tests: replaces the resolved argv
 }
 
+// termEnviron is the environment terminals inherit allow-listed variables
+// from. In container mode the container's own environment is meaningless
+// on the host, so nothing is inherited (defaults apply).
+func termEnviron() []string {
+	if host.Container() {
+		return nil
+	}
+	return os.Environ()
+}
+
 // New builds the service. origins are WebSocket origin patterns.
 func New(a Auditor, origins []string) *Service {
 	return &Service{
@@ -58,8 +68,8 @@ func New(a Auditor, origins []string) *Service {
 		max:      defaultMaxSessions,
 		idle:     defaultIdle,
 		acct:     currentAccount(os.Getenv),
-		tools:    lookTools(exec.LookPath),
-		env:      os.Environ(),
+		tools:    lookTools(host.LookPath),
+		env:      termEnviron(),
 		sessions: map[string]*Session{},
 	}
 }
@@ -223,7 +233,7 @@ func (s *Service) open(req createReq) (*Session, error) {
 		sp.Argv = s.testArgv
 	}
 	var extra []string
-	if req.Kind == KindContainer {
+	if req.Kind == KindContainer && !host.Container() {
 		for _, k := range []string{"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG"} {
 			if v := os.Getenv(k); v != "" {
 				extra = append(extra, k+"="+v)

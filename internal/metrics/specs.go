@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	hostfs "github.com/kushalpandya/wargo/internal/host"
 )
 
 // Specs are fastfetch-style details about the machine. Static parts are
@@ -54,7 +56,7 @@ func cleanDMI(s string) string {
 	return s
 }
 
-func dmi(name string) string { return cleanDMI(readStr("/sys/class/dmi/id/" + name)) }
+func dmi(name string) string { return cleanDMI(readStr(hostfs.Path("/sys/class/dmi/id/" + name))) }
 
 func joinNonEmpty(parts ...string) string {
 	var out []string
@@ -75,15 +77,22 @@ func computeStatic() Specs {
 	}
 	if s.Model == "" {
 		// Raspberry Pi and other device-tree boards.
-		s.Model = strings.TrimRight(readStr("/proc/device-tree/model"), "\x00")
+		s.Model = strings.TrimRight(readStr(hostfs.Path("/proc/device-tree/model")), "\x00")
 	}
-	if _, err := os.Stat("/run/systemd/system"); err == nil {
+	if _, err := os.Stat(hostfs.Path("/run/systemd/system")); err == nil {
 		s.Init = "systemd"
 	}
-	if u, err := user.Current(); err == nil {
-		s.Shell = loginShell(u.Username)
+	if hostfs.Container() {
+		if a := hostfs.Admin(); a != nil {
+			s.Shell = filepath.Base(a.Shell)
+		}
+		s.Locale = hostLocale()
+	} else {
+		if u, err := user.Current(); err == nil {
+			s.Shell = loginShell(u.Username)
+		}
+		s.Locale = os.Getenv("LANG")
 	}
-	s.Locale = os.Getenv("LANG")
 	_, s.Logo = logoPath()
 	s.LogoColor = osReleaseColor()
 	return s
@@ -105,21 +114,40 @@ func loginShell(name string) string {
 	return ""
 }
 
+// hostLocale reads LANG from the host's locale configuration.
+func hostLocale() string {
+	for _, p := range []string{"/etc/locale.conf", "/etc/default/locale"} {
+		b, err := hostfs.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(l), "LANG="); ok {
+				return strings.Trim(v, `"'`)
+			}
+		}
+	}
+	return ""
+}
+
 func timezone() string {
-	if t := readStr("/etc/timezone"); t != "" {
+	if t := readStr(hostfs.Path("/etc/timezone")); t != "" {
 		return t
 	}
-	if l, err := os.Readlink("/etc/localtime"); err == nil {
+	if l, err := os.Readlink(hostfs.Path("/etc/localtime")); err == nil {
 		if i := strings.Index(l, "zoneinfo/"); i >= 0 {
 			return l[i+len("zoneinfo/"):]
 		}
+	}
+	if hostfs.Container() {
+		return ""
 	}
 	return time.Now().Location().String()
 }
 
 // gpus lists display controllers (PCI class 0x03) named via pci.ids.
 func gpus() []string {
-	devs, _ := filepath.Glob("/sys/bus/pci/devices/*")
+	devs, _ := filepath.Glob(hostfs.Path("/sys/bus/pci/devices") + "/*")
 	type id struct{ vendor, device string }
 	var ids []id
 	for _, d := range devs {
@@ -163,7 +191,7 @@ func shortVendor(v string) string {
 func pciNames() map[string]string {
 	out := map[string]string{}
 	for _, p := range []string{"/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids", "/usr/share/pci.ids"} {
-		b, err := os.ReadFile(p)
+		b, err := hostfs.ReadFile(p)
 		if err != nil {
 			continue
 		}
@@ -192,7 +220,7 @@ func pciNames() map[string]string {
 }
 
 func countDirs(dir string) int {
-	ents, err := os.ReadDir(dir)
+	ents, err := os.ReadDir(hostfs.Path(dir))
 	if err != nil {
 		return -1
 	}
@@ -215,13 +243,13 @@ func packageCounts() []PackageCount {
 	if n := countDirs("/var/lib/pacman/local"); n > 0 {
 		out = append(out, PackageCount{"pacman", n})
 	}
-	if b, err := os.ReadFile("/var/lib/dpkg/status"); err == nil {
+	if b, err := hostfs.ReadFile("/var/lib/dpkg/status"); err == nil {
 		if n := bytes.Count(b, []byte("Status: install ok installed")); n > 0 {
 			out = append(out, PackageCount{"dpkg", n})
 		}
 	}
-	if ents, err := os.ReadDir("/lib/apk/db"); err == nil && len(ents) > 0 {
-		if b, err := os.ReadFile("/lib/apk/db/installed"); err == nil {
+	if ents, err := os.ReadDir(hostfs.Path("/lib/apk/db")); err == nil && len(ents) > 0 {
+		if b, err := hostfs.ReadFile("/lib/apk/db/installed"); err == nil {
 			out = append(out, PackageCount{"apk", bytes.Count(b, []byte("\nP:")) + 1})
 		}
 	}
@@ -278,7 +306,7 @@ func GetSpecs() Specs {
 }
 
 func osReleaseField(key string) string {
-	b, _ := os.ReadFile("/etc/os-release")
+	b, _ := hostfs.ReadFile("/etc/os-release")
 	for _, l := range strings.Split(string(b), "\n") {
 		if k, v, ok := strings.Cut(l, "="); ok && k == key {
 			return strings.Trim(v, `"'`)
@@ -324,7 +352,7 @@ func logoPath() (string, bool) {
 		)
 	}
 	for _, c := range cands {
-		if st, err := os.Stat(c); err == nil && st.Mode().IsRegular() && st.Size() < 2<<20 {
+		if st, err := hostfs.Stat(c); err == nil && st.Mode().IsRegular() && st.Size() < 2<<20 {
 			return c, true
 		}
 	}
@@ -342,5 +370,10 @@ func serveLogo(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
 	}
 	w.Header().Set("Cache-Control", "private, max-age=86400")
-	http.ServeFile(w, r, p)
+	rp, err := hostfs.Resolve(p)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, rp)
 }

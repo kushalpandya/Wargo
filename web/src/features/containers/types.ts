@@ -33,6 +33,8 @@ export interface Container {
   networkUsers?: string[];
   compose?: { project: string; service: string; workingDir?: string; configFiles?: string };
   casaos?: boolean;
+  /** Wargo's own container (container mode). */
+  self?: boolean;
   /** null = not checked yet. */
   updateAvailable?: boolean | null;
   /** When the image was last checked for updates (unix ms); absent = never. */

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package helper is the privileged half of Wargo. It runs as root only when
-// the user approves a specific action (via sudo or wargo-privd) and accepts
+// the user approves a specific action (via sudo or wargo-privd natively, or
+// in-process after the approval was verified in container mode) and accepts
 // a small, strictly validated set of operations. It never invokes a shell.
 package helper
 
@@ -17,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/kushalpandya/wargo/internal/fsops"
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 var signals = map[string]syscall.Signal{
@@ -35,35 +37,56 @@ func fail(format string, a ...any) int {
 	return 1
 }
 
-// Main runs a helper operation and returns the exit code.
+// Main runs a helper operation (`wargo helper ...` under sudo or privd)
+// and returns the exit code.
 func Main(args []string) int {
 	if os.Geteuid() != 0 {
 		return fail("must run as root (via sudo)")
 	}
+	code, err := Exec(args, os.Stdin, os.Stdout, os.Stderr)
+	if err != nil {
+		return fail("%v", err)
+	}
+	return code
+}
+
+// Exec runs one helper operation in the calling process, which must
+// already be root (the sub-command, or Wargo itself in container mode once
+// the elevation credential was verified). File operations run with the
+// caller's thread identity, so container-mode callers must not be inside
+// host.AsUser. It returns the exit code (non-zero only for pkg-run) and an
+// error for invalid or failed operations.
+func Exec(args []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	if len(args) == 0 {
-		return fail("missing operation")
+		return 1, errors.New("missing operation")
+	}
+	if stdin == nil {
+		stdin = strings.NewReader("")
 	}
 	var err error
 	switch args[0] {
 	case "kill":
 		err = kill(args[1:])
 	case "fs":
-		err = fsOp(args[1:])
+		err = fsOp(args[1:], stdin, stdout)
 	case "power":
 		err = power(args[1:])
 	case "compose-update":
-		err = composeUpdate(args[1:])
+		err = composeUpdate(args[1:], stdout, stderr)
 	case "privd-trust":
-		err = privdTrust(args[1:])
+		if host.Container() {
+			return 1, errors.New("wargo-privd is not used in container mode")
+		}
+		err = privdTrust(args[1:], stdin)
 	case "pkg-run":
-		return pkgRun(args[1:])
+		return pkgRun(args[1:], stdout, stderr)
 	default:
-		return fail("unknown operation %q", args[0])
+		return 1, fmt.Errorf("unknown operation %q", args[0])
 	}
 	if err != nil {
-		return fail("%v", err)
+		return 1, err
 	}
-	return 0
+	return 0, nil
 }
 
 func kill(args []string) error {
@@ -82,7 +105,7 @@ func kill(args []string) error {
 }
 
 // fs <op> <root> <path> [arg]
-func fsOp(args []string) error {
+func fsOp(args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) < 3 {
 		return errors.New("usage: fs <op> <root> <path> [arg]")
 	}
@@ -90,7 +113,13 @@ func fsOp(args []string) error {
 	if !filepath.IsAbs(rootPath) {
 		return errors.New("root must be absolute")
 	}
-	root, err := os.OpenRoot(rootPath)
+	// Roots are host paths; in container mode they live below the host root
+	// (symlinks resolved inside it).
+	openPath, err := host.Resolve(rootPath)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(openPath)
 	if err != nil {
 		return err
 	}
@@ -122,7 +151,7 @@ func fsOp(args []string) error {
 		}
 		return root.Lchown(p, uid, gid)
 	case "write":
-		data, err := io.ReadAll(io.LimitReader(os.Stdin, 32<<20))
+		data, err := io.ReadAll(io.LimitReader(stdin, 32<<20))
 		if err != nil {
 			return err
 		}
@@ -137,7 +166,7 @@ func fsOp(args []string) error {
 			return err
 		}
 		defer f.Close()
-		_, err = io.Copy(os.Stdout, io.LimitReader(f, 32<<20))
+		_, err = io.Copy(stdout, io.LimitReader(f, 32<<20))
 		return err
 	}
 	return fmt.Errorf("unknown fs op %q", op)
@@ -147,11 +176,11 @@ func power(args []string) error {
 	if len(args) != 1 || (args[0] != "reboot" && args[0] != "poweroff") {
 		return errors.New("usage: power reboot|poweroff")
 	}
-	return exec.Command("systemctl", args[0]).Run()
+	return host.Command(nil, "systemctl", args[0]).Run()
 }
 
 // compose-update <working_dir> <project> <config_file>
-func composeUpdate(args []string) error {
+func composeUpdate(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 3 {
 		return errors.New("usage: compose-update <dir> <project> <file>")
 	}
@@ -163,9 +192,10 @@ func composeUpdate(args []string) error {
 		{"compose", "-p", project, "-f", file, "pull"},
 		{"compose", "-p", project, "-f", file, "up", "-d", "--remove-orphans"},
 	} {
-		cmd := exec.Command("docker", step...)
-		cmd.Dir = dir
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		// Native: plain exec in dir. Container: the host's docker CLI, as
+		// root, in the host's namespaces.
+		cmd := host.CommandOpts(nil, host.Opts{Dir: dir}, append([]string{"docker"}, step...)...)
+		cmd.Stdout, cmd.Stderr = stdout, stderr
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("docker %v: %w", step, err)
 		}
@@ -201,7 +231,7 @@ func ResolvePackageManager(name string) (string, error) {
 	p := name
 	if !filepath.IsAbs(p) {
 		var err error
-		if p, err = exec.LookPath(base); err != nil {
+		if p, err = host.LookPath(base); err != nil {
 			return "", err
 		}
 	}
@@ -216,36 +246,39 @@ func ResolvePackageManager(name string) (string, error) {
 
 // pkg-run -- <package manager> [args...]: runs the package manager and
 // prints PkgExitMarker with its exit status.
-func pkgRun(args []string) int {
+func pkgRun(args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) < 2 || args[0] != "--" {
-		return fail("usage: pkg-run -- <package-manager> [args...]")
+		return 1, errors.New("usage: pkg-run -- <package-manager> [args...]")
 	}
 	bin, err := ResolvePackageManager(args[1])
 	if err != nil {
-		return fail("%v", err)
+		return 1, err
 	}
-	cmd := exec.Command(bin, args[2:]...)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd := host.Command(nil, append([]string{bin}, args[2:]...)...)
+	if host.Container() {
+		cmd.Env = append(cmd.Env, "DEBIAN_FRONTEND=noninteractive", "LC_ALL=C")
+	}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	code := 0
 	if err := cmd.Run(); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			code = ee.ExitCode()
 		} else {
-			fmt.Fprintln(os.Stderr, "wargo helper:", err)
+			fmt.Fprintln(stderr, "wargo helper:", err)
 			code = 127
 		}
 	}
-	fmt.Printf("\n%s%d\n", PkgExitMarker, code)
-	return code
+	fmt.Fprintf(stdout, "\n%s%d\n", PkgExitMarker, code)
+	return code, nil
 }
 
 // PrivdCredentialsPath is where wargo-privd keeps trusted passkeys.
 const PrivdCredentialsPath = "/var/lib/wargo-privd/credentials.json"
 
 // privd-trust: stdin is the JSON credential store for wargo-privd.
-func privdTrust(args []string) error {
-	data, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+func privdTrust(args []string, stdin io.Reader) error {
+	data, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	if err != nil {
 		return err
 	}

@@ -16,6 +16,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 // Update is one pending package update.
@@ -122,7 +124,7 @@ func ParseOSRelease(b []byte) OSRelease {
 
 func readOSRelease() OSRelease {
 	for _, p := range []string{"/etc/os-release", "/usr/lib/os-release"} {
-		if b, err := os.ReadFile(p); err == nil {
+		if b, err := host.ReadFile(p); err == nil {
 			return ParseOSRelease(b)
 		}
 	}
@@ -159,7 +161,7 @@ func family(o OSRelease) string {
 type lookFn func(string) bool
 
 func hasBin(name string) bool {
-	_, err := exec.LookPath(name)
+	_, err := host.LookPath(name)
 	return err == nil
 }
 
@@ -233,8 +235,14 @@ func ExecRunner(timeout time.Duration) Runner {
 	return func(ctx context.Context, argv ...string) ([]byte, []byte, int, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-		cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C", "NO_COLOR=1", "TERM=dumb")
+		// Checks never need root: natively Wargo is the admin user; in
+		// container mode they run on the host as that user.
+		cmd := host.UserCommand(ctx, argv...)
+		base := cmd.Env
+		if base == nil {
+			base = os.Environ()
+		}
+		cmd.Env = append(base, "LC_ALL=C", "LANG=C", "NO_COLOR=1", "TERM=dumb")
 		cmd.Stdin = nil
 		out, errb := &capped{n: maxOutput}, &capped{n: 64 << 10}
 		cmd.Stdout, cmd.Stderr = out, errb

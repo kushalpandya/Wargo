@@ -10,8 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +18,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/elevate"
 	"github.com/kushalpandya/wargo/internal/events"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
 	"github.com/kushalpandya/wargo/internal/store"
@@ -32,6 +31,7 @@ const (
 
 // Service is the containers feature.
 type Service struct {
+	selfID  string // Wargo's own container id (container mode)
 	c       *Client
 	hub     *events.Hub
 	jobs    *jobs.Manager
@@ -107,8 +107,33 @@ func New(socket string, hub *events.Hub, jm *jobs.Manager, al *audit.Log, el *el
 		images: map[string]imageMeta{}, checkDelay: 2 * time.Minute,
 	}
 	s.composeAvailable = s.detectCompose
+	s.selfID = host.SelfContainerID()
 	return s
 }
+
+// isSelf reports whether id (short/full id or name) is Wargo's own
+// container.
+func (s *Service) isSelf(ctx context.Context, id string) bool {
+	if s.selfID == "" || id == "" {
+		return false
+	}
+	if strings.HasPrefix(s.selfID, id) {
+		return true
+	}
+	if !validRef(id) {
+		return false
+	}
+	var v struct {
+		ID string `json:"Id"`
+	}
+	if err := s.c.call(ctx, http.MethodGet, "/containers/"+id+"/json", nil, &v); err != nil {
+		return false
+	}
+	return v.ID == s.selfID
+}
+
+var errSelfUpdate = httpx.Errorf(http.StatusConflict, "self_container",
+	"Wargo can't update its own container yet. Pull the new image and recreate it from the host, e.g. `docker compose pull && docker compose up -d` in the directory of your Wargo compose file.")
 
 // Client exposes the underlying Docker API client for other features
 // (e.g. the terminal's `docker exec`).
@@ -123,18 +148,18 @@ func (s *Service) originPatterns() []string {
 
 func (s *Service) detectCompose() bool {
 	s.composeOnce.Do(func() {
-		if _, err := exec.LookPath("docker"); err != nil {
+		if _, err := host.LookPath("docker"); err != nil {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.composeOK = exec.CommandContext(ctx, "docker", "compose", "version").Run() == nil
+		s.composeOK = host.UserCommand(ctx, "docker", "compose", "version").Run() == nil
 	})
 	return s.composeOK
 }
 
 func casaosPresent() bool {
-	st, err := os.Stat(casaosDir)
+	st, err := host.Stat(casaosDir)
 	return err == nil && st.IsDir()
 }
 
@@ -227,6 +252,9 @@ func (s *Service) List(ctx context.Context, fresh bool) ([]Container, error) {
 	}
 	l := convertList(raw)
 	s.enrich(ctx, raw, l)
+	for i := range l {
+		l[i].Self = s.selfID != "" && l[i].FullID == s.selfID
+	}
 	s.mu.Lock()
 	for i := range l {
 		if u, ok := s.updates[l[i].Image+"|"+l[i].ImageID]; ok {
@@ -507,6 +535,25 @@ func (s *Service) handleAction(w http.ResponseWriter, r *http.Request) error {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
+	if action != "start" && s.isSelf(ctx, id) {
+		// Stopping Wargo's own container ends this session (and, for stop,
+		// Wargo itself). Require an explicit confirmation.
+		var req struct {
+			ConfirmSelf bool `json:"confirmSelf"`
+		}
+		if r.ContentLength != 0 {
+			if err := httpx.Decode(r, &req); err != nil {
+				return err
+			}
+		}
+		if !req.ConfirmSelf {
+			msg := map[string]string{
+				"stop":    "This is Wargo's own container. Stopping it disconnects you, and Wargo stays down until you start it again from the host.",
+				"restart": "This is Wargo's own container. Restarting it disconnects you until it is back.",
+			}[action]
+			return httpx.Errorf(http.StatusConflict, "self_container", msg).With(map[string]any{"action": action, "self": true})
+		}
+	}
 	name, _ := s.c.ContainerName(ctx, id)
 	if name == "" {
 		name = id

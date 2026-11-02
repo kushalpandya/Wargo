@@ -24,6 +24,8 @@ import (
 
 	"github.com/kushalpandya/wargo/internal/events"
 	"github.com/kushalpandya/wargo/internal/httpx"
+
+	hostfs "github.com/kushalpandya/wargo/internal/host"
 )
 
 const Topic = "metrics"
@@ -138,7 +140,7 @@ func physicalDisk(name string) bool {
 			return false
 		}
 	}
-	_, err := os.Stat(filepath.Join("/sys/block", name))
+	_, err := os.Stat(hostfs.Path(filepath.Join("/sys/block", name)))
 	return err == nil
 }
 
@@ -176,7 +178,7 @@ func (c *Collector) sample(ctx context.Context) {
 			Buffers: vm.Buffers, SwapTotal: vm.SwapTotal, SwapUsed: vm.SwapTotal - vm.SwapFree, UsedPct: vm.UsedPercent}
 	}
 
-	s.Temps, s.Fans = readHwmon("/sys/class/hwmon")
+	s.Temps, s.Fans = readHwmon(hostfs.Path("/sys/class/hwmon"))
 	for _, t := range s.Temps {
 		if t.Kind == "cpu" {
 			s.CPUTemp = t.Value
@@ -253,7 +255,7 @@ func (c *Collector) sample(ctx context.Context) {
 }
 
 func avgFreq() float64 {
-	files, _ := filepath.Glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq")
+	files, _ := filepath.Glob(hostfs.Path("/sys/devices/system/cpu") + "/cpu[0-9]*/cpufreq/scaling_cur_freq")
 	if len(files) == 0 {
 		return 0
 	}
@@ -317,7 +319,7 @@ type Info struct {
 }
 
 func osRelease() (pretty, id string) {
-	b, err := os.ReadFile("/etc/os-release")
+	b, err := hostfs.ReadFile("/etc/os-release")
 	if err != nil {
 		return runtime.GOOS, runtime.GOOS
 	}

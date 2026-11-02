@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
@@ -35,6 +36,10 @@ type Self struct {
 	UptimeSec  int64  `json:"uptimeSec"`
 	DataDir    string `json:"dataDir"`
 	User       string `json:"user"`
+	// Container mode: Wargo runs in Docker (as root) and acts as User.
+	Container   bool   `json:"container,omitempty"`
+	HostRoot    string `json:"hostRoot,omitempty"`
+	ContainerID string `json:"containerId,omitempty"`
 }
 
 // parseVmRSS extracts VmRSS (bytes) from /proc/<pid>/status contents.
@@ -61,10 +66,20 @@ func (s *Service) Register(mux *http.ServeMux) {
 		runtime.ReadMemStats(&ms)
 		b, _ := os.ReadFile("/proc/self/status")
 		u := os.Getenv("USER")
-		httpx.OK(w, Self{
+		if host.Container() {
+			u = host.AdminName()
+		}
+		out := Self{
 			Version: s.version, GoVersion: runtime.Version(), PID: os.Getpid(),
 			RSSBytes: parseVmRSS(string(b)), HeapBytes: ms.HeapAlloc, Goroutines: runtime.NumGoroutine(),
 			UptimeSec: int64(time.Since(s.started).Seconds()), DataDir: s.dataDir, User: u,
-		})
+		}
+		if host.Container() {
+			out.Container, out.HostRoot = true, host.Root()
+			if id := host.SelfContainerID(); len(id) >= 12 {
+				out.ContainerID = id[:12]
+			}
+		}
+		httpx.OK(w, out)
 	})
 }
