@@ -122,15 +122,48 @@ func readBootTime(root string) int64 {
 
 // ownerUID returns the uid owning /proc/<pid> (the effective uid).
 func ownerUID(dir string) (int, bool) {
-	st, err := os.Stat(dir)
+	var st syscall.Stat_t
+	if err := syscall.Stat(dir, &st); err != nil {
+		return 0, false
+	}
+	return int(st.Uid), true
+}
+
+// readInto reads up to len(buf) bytes of path into buf. /proc files are
+// generated on read, so this avoids os.ReadFile's growing buffer and
+// bounds the read (a cmdline or environ may be megabytes).
+func readInto(path string, buf []byte) (int, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return 0, false
+		return 0, err
 	}
-	sys, ok := st.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, false
+	defer syscall.Close(fd)
+	n := 0
+	for n < len(buf) {
+		m, err := syscall.Read(fd, buf[n:])
+		if err == syscall.EINTR {
+			continue
+		}
+		if err != nil {
+			return n, err
+		}
+		if m <= 0 {
+			break
+		}
+		n += m
 	}
-	return int(sys.Uid), true
+	return n, nil
+}
+
+// readDirNames lists a directory without sorting or stat-ing entries.
+func readDirNames(dir string) []string {
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	names, _ := f.Readdirnames(-1)
+	return names
 }
 
 var containerIDRe = regexp.MustCompile(`(?:docker|libpod)[-/]([0-9a-f]{64})`)

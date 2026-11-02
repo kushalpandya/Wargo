@@ -50,6 +50,8 @@ type Proc struct {
 	Command   string  `json:"command"`
 	Nice      int     `json:"nice"`
 	Kernel    bool    `json:"kernel,omitempty"` // kernel thread (no cmdline, child of kthreadd)
+
+	startTicks uint64 // raw start time, to detect pid reuse
 }
 
 // List is the payload of GET /api/procs and the "procs" topic.
@@ -80,6 +82,7 @@ type Service struct {
 	users    map[int]string
 	pageSize uint64
 	bootTime int64
+	scanBuf  [2048]byte // reused by scan (under mu)
 }
 
 type cpuSample struct {
@@ -123,21 +126,24 @@ func (s *Service) scan() *List {
 		s.bootTime = readBootTime(s.root)
 	}
 	l := &List{UID: host.AdminUID(), Self: os.Getpid(), TotalMem: readMeminfoTotal(s.root), CPUs: runtime.NumCPU(), SampledAt: now.UnixMilli()}
-	ents, _ := os.ReadDir(s.root)
-	cur := make(map[int]cpuSample, len(ents))
+	names := readDirNames(s.root)
+	cur := make(map[int]cpuSample, len(names))
 	dt := now.Sub(s.prevAt).Seconds()
-	l.Procs = make([]Proc, 0, len(ents))
-	for _, e := range ents {
-		pid, err := strconv.Atoi(e.Name())
+	l.Procs = make([]Proc, 0, len(names))
+	// One buffer for every small /proc read of this scan: 500+ processes
+	// are scanned every second or two, so per-file allocations add up.
+	buf := s.scanBuf[:]
+	for _, name := range names {
+		pid, err := strconv.Atoi(name)
 		if err != nil || pid <= 0 {
 			continue
 		}
-		dir := filepath.Join(s.root, e.Name())
-		b, err := os.ReadFile(filepath.Join(dir, "stat"))
-		if err != nil {
-			continue // exited
+		dir := s.root + "/" + name
+		n, err := readInto(dir+"/stat", buf)
+		if err != nil || n == len(buf) {
+			continue // exited (or a stat line we can't trust)
 		}
-		st, err := parseStat(b)
+		st, err := parseStat(buf[:n])
 		if err != nil {
 			continue
 		}
@@ -145,8 +151,9 @@ func (s *Service) scan() *List {
 		p := Proc{
 			PID: pid, PPID: st.PPID, Name: st.Name, UID: uid, User: s.userName(uid), State: st.State,
 			Threads: st.Threads, Nice: st.Nice,
-			MemRSS:    uint64(max(st.RSSPages, 0)) * s.pageSize,
-			StartTime: (s.bootTime*1000 + int64(st.StartTime)*1000/clkTck),
+			MemRSS:     uint64(max(st.RSSPages, 0)) * s.pageSize,
+			StartTime:  (s.bootTime*1000 + int64(st.StartTime)*1000/clkTck),
+			startTicks: st.StartTime,
 		}
 		if l.TotalMem > 0 {
 			p.MemPct = float64(p.MemRSS) / float64(l.TotalMem) * 100
@@ -156,8 +163,10 @@ func (s *Service) scan() *List {
 		if prev, ok := s.prev[pid]; ok && prev.start == st.StartTime && dt > 0 && ticks >= prev.ticks {
 			p.CPU = float64(ticks-prev.ticks) / clkTck / dt * 100
 		}
-		if cl, err := os.ReadFile(filepath.Join(dir, "cmdline")); err == nil {
-			p.Command = cleanCmdline(cl, maxCmdline)
+		// Only the first maxCmdline bytes are shown; don't read megabytes
+		// of arguments.
+		if n, err := readInto(dir+"/cmdline", buf[:maxCmdline]); err == nil {
+			p.Command = cleanCmdline(buf[:n], maxCmdline)
 		}
 		if p.Command == "" && (st.PPID == 2 || pid == 2) {
 			p.Kernel = true
@@ -269,11 +278,9 @@ func (s *Service) Details(ctx context.Context, pid int) (*Details, error) {
 	sort.Ints(d.Children)
 	d.Status.ParentName = names[d.PPID]
 	dir := filepath.Join(s.root, strconv.Itoa(pid))
-	if b, err := os.ReadFile(filepath.Join(dir, "cmdline")); err == nil {
-		raw := b
-		if len(raw) > 64<<10 {
-			raw = raw[:64<<10]
-		}
+	cbuf := make([]byte, 64<<10)
+	if n, err := readInto(filepath.Join(dir, "cmdline"), cbuf); err == nil {
+		raw := cbuf[:n]
 		d.Cmdline = cleanCmdline(raw, 0)
 		for _, a := range strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00") {
 			if a != "" && len(d.Args) < 256 {
@@ -377,13 +384,7 @@ func (s *Service) handleSignal(w http.ResponseWriter, r *http.Request) error {
 		return httpx.ErrNotFound
 	}
 	target := fmt.Sprintf("SIG%s pid %d (%s, user %s)", name, pid, p.Name, p.User)
-	if host.Container() && p.UID != host.AdminUID() {
-		// Wargo is root in the container and could signal anything; keep
-		// the native rule that other users' processes need approval.
-		err = syscall.EPERM
-	} else {
-		err = syscall.Kill(pid, sig)
-	}
+	err = signalVerified(pid, sig, func() error { return s.verifyTarget(p) })
 	switch {
 	case err == nil:
 		s.audit.Record(r, "procs.signal", target, nil, map[string]any{"pid": pid, "signal": name})
@@ -399,6 +400,30 @@ func (s *Service) handleSignal(w http.ResponseWriter, r *http.Request) error {
 	}
 	s.invalidate()
 	httpx.OK(w, map[string]any{"ok": true, "pid": pid, "signal": name})
+	return nil
+}
+
+// verifyTarget checks that the process now holding p.PID is the one the
+// user picked (same start time, so the pid wasn't reused) and, in
+// container mode, that it belongs to the admin user. Wargo is root there
+// and could signal anything; keep the native rule that other users'
+// processes need approval (EPERM routes to elevation).
+func (s *Service) verifyTarget(p Proc) error {
+	dir := filepath.Join(s.root, strconv.Itoa(p.PID))
+	var buf [1024]byte
+	n, err := readInto(filepath.Join(dir, "stat"), buf[:])
+	if err != nil {
+		return syscall.ESRCH
+	}
+	st, err := parseStat(buf[:n])
+	if err != nil || st.StartTime != p.startTicks {
+		return syscall.ESRCH
+	}
+	if host.Container() {
+		if uid, ok := ownerUID(dir); !ok || uid != host.AdminUID() {
+			return syscall.EPERM
+		}
+	}
 	return nil
 }
 
