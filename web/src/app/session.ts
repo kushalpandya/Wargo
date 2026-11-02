@@ -54,13 +54,15 @@ export interface Capabilities {
   pkg?: { backend: string; available: boolean; distro: string };
   files?: {
     /** Configured places ("0", "1"…) followed by mounted drives ("m-…") when showMounts is on. */
-    roots: { id?: string | number; kind?: "place" | "drive"; name: string; path: string }[];
+    roots: { id?: string | number; kind?: "place" | "drive"; name: string; path: string; hidden?: boolean }[];
     trash?: boolean;
     maxEditSize?: number;
     chunkSize?: number;
     showMounts?: boolean;
     /** Move/copy accept a destRoot different from root. */
     crossRoot?: boolean;
+    /** Server-side bookmarks and hidden drives (GET /api/files/locations). */
+    bookmarks?: boolean;
   };
   terminal?: { available: boolean; shell: string; tmux: boolean; sudo?: boolean; docker?: boolean; maxSessions?: number };
 }

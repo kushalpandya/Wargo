@@ -32,7 +32,9 @@ trusted_proxies = ["127.0.0.1/32", "::1/128"]
 
 [files]
 # Folders the file manager may browse. Every operation is confined to
-# these roots (symlinks cannot escape).
+# these roots (symlinks cannot escape). Each root is added to the sidebar's
+# Bookmarks once; after that bookmarks are managed in the UI (any folder can
+# be bookmarked, and removing a root's bookmark only hides it).
 [[files.roots]]
 name = "Home"
 path = "/home/kushal"
@@ -42,7 +44,8 @@ name = "DATA"
 path = "/DATA"
 
 # Also list mounted drives and partitions (/, /mnt/*, USB disks, network
-# shares) under "Drives" in the file manager.
+# shares) under "Drives" in the file manager. Individual drives can be
+# hidden from the sidebar in the UI ("Manage drives…").
 # show_mounts = true
 # trash_dir = "/var/lib/wargo/trash"
 # max_edit_size = 4194304       # bytes; larger files open read-only

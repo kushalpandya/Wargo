@@ -32,6 +32,8 @@ import {
   RefreshCw,
   ShieldCheck,
   SquareCheck,
+  Star,
+  StarOff,
   Trash2,
   Upload,
   UserCog,
@@ -54,6 +56,7 @@ import { Listing, type Sort, type SortKey } from "./Listing";
 import { ChmodDialog, ChownDialog, CompressDialog, DeleteDialog, ExtractDialog, FolderPicker, NameDialog, PropertiesSheet } from "./dialogs";
 import { Preview, canPreview } from "./Preview";
 import { Breadcrumbs } from "./Locations";
+import { useLocationsApi } from "./bookmarks";
 import { enqueue, fromDrop, fromInput } from "./uploads";
 
 export const DRAG_TYPE = "application/x-wargo-files";
@@ -169,6 +172,8 @@ export function Pane(props: PaneProps) {
   const listing = useListing(root, path, hidden);
   const label = locLabel(roots, loc);
   const idPrefix = `${props.id}-item`;
+  const locApi = useLocationsApi();
+  const bookmark = locApi.findBookmark(loc);
 
   const setView = (v: "list" | "grid") => {
     props.onMeta({ view: v });
@@ -224,6 +229,13 @@ export function Pane(props: PaneProps) {
 
   const go = (p: string) => props.onNavigate({ root, path: p });
   const pickRoot = (id: RootId) => props.onNavigate({ root: id, path: "." });
+  const bookmarkAction = (l: Loc, key: string): Action => {
+    const b = locApi.findBookmark(l);
+    const here = l === loc;
+    return b
+      ? { key, label: "Remove bookmark", icon: <StarOff />, shortcut: here ? "Ctrl+D" : undefined, run: () => locApi.removeBookmark(b) }
+      : { key, label: here ? "Bookmark this folder" : "Add bookmark", icon: <Star />, shortcut: here ? "Ctrl+D" : undefined, run: () => locApi.toggleBookmark(l) };
+  };
   const pathOf = (e: Entry) => joinPath(path, e.name);
 
   const open = (e: Entry) => {
@@ -270,6 +282,7 @@ export function Pane(props: PaneProps) {
       { key: "dl", label: "Download folder as zip", icon: <Download />, run: () => startDownload(downloadUrl(root, path)) },
       { key: "refresh", label: "Refresh", icon: <RefreshCw />, run: () => refresh() },
       { key: "copypath", label: "Copy path", icon: <ClipboardCopy />, run: () => copyPath(absPath(rootInfo, path)) },
+      bookmarkAction(loc, "bookmark"),
       ...(props.onSplit ? [{ key: "split", label: "Open in split view", icon: <Columns2 />, shortcut: "Ctrl+\\", run: props.onSplit }] : []),
     ],
   ];
@@ -337,6 +350,7 @@ export function Pane(props: PaneProps) {
               { key: "copypath", label: "Copy path", icon: <ClipboardCopy />, run: () => copyPath(absPath(rootInfo, pathOf(one))) },
             ]
           : []),
+        ...(one && isDirEntry(one) && one.targetType !== "outside" && one.targetType !== "broken" ? [bookmarkAction({ root, path: pathOf(one) }, "bookmark")] : []),
       ],
       [{ key: "delete", label: "Delete", icon: <Trash2 />, shortcut: "Del", danger: true, run: () => setDialog({ kind: "delete", paths }) }],
     ];
@@ -657,7 +671,17 @@ export function Pane(props: PaneProps) {
           <IconButton label="Up one level" size="md" disabled={path === "."} onClick={() => go(parentPath(path))}>
             <CornerLeftUp />
           </IconButton>
-          <Breadcrumbs roots={roots} root={rootInfo} path={path} onNav={go} onRoot={pickRoot} alwaysSwitch={props.count > 1} />
+          <Breadcrumbs root={rootInfo} path={path} onNav={go} onPick={props.onNavigate} alwaysSwitch={props.count > 1} />
+          <IconButton
+            label="Bookmark this folder"
+            title={bookmark ? `Remove bookmark “${bookmark.name}” (Ctrl+D)` : "Bookmark this folder (Ctrl+D)"}
+            aria-pressed={!!bookmark}
+            disabled={!listing.data || !locApi.ready}
+            onClick={() => locApi.toggleBookmark(loc)}
+            className={cn(bookmark && "text-accent")}
+          >
+            <Star className={cn(bookmark && "fill-current")} />
+          </IconButton>
           <IconButton label="Refresh" onClick={() => refresh()} className="@max-lg/pane:hidden">
             <RefreshCw className={cn(listing.isFetching && "animate-spin")} />
           </IconButton>

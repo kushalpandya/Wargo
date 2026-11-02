@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,6 +54,8 @@ type Options struct {
 	Jobs       *jobs.Manager
 	Audit      Auditor
 	Elevate    Elevator
+	// Settings persists bookmarks and hidden drives (in memory when nil).
+	Settings Settings
 }
 
 type Service struct {
@@ -67,6 +70,9 @@ type Service struct {
 
 	showMounts bool
 	mounts     mountCache
+
+	settings Settings
+	bmMu     sync.Mutex // serialises bookmark / hidden-drive updates
 }
 
 // Limits (variables so tests can shrink them).
@@ -84,6 +90,7 @@ func New(d *server.Deps) *Service {
 	return NewWithOptions(Options{
 		Roots: d.Cfg.Files.Roots, DataDir: d.Cfg.DataDir, TrashDir: d.Cfg.Files.TrashDir,
 		MaxEditSize: d.Cfg.Files.MaxEditSize, ShowMounts: d.Cfg.Files.ShowMounts, Jobs: d.Jobs, Audit: d.Audit, Elevate: d.Elevate,
+		Settings: d.Store,
 	})
 }
 
@@ -102,6 +109,10 @@ func NewWithOptions(o Options) *Service {
 	if s.maxEdit <= 0 {
 		s.maxEdit = 4 << 20
 	}
+	if o.Settings == nil {
+		o.Settings = &memSettings{}
+	}
+	s.settings = rootSettings{o.Settings}
 	for _, r := range o.Roots {
 		p, err := filepath.Abs(r.Path)
 		if err != nil || r.Path == "" {
@@ -162,17 +173,22 @@ func prepareUploadDir(dataDir, dir string) {
 	}
 }
 
-func (s *Service) Capabilities(context.Context) (string, any) {
+func (s *Service) Capabilities(ctx context.Context) (string, any) {
 	roots := []map[string]any{}
 	for i, r := range s.roots {
 		roots = append(roots, map[string]any{"id": strconv.Itoa(i), "kind": "place", "name": r.Name, "path": r.Path})
 	}
+	hidden, _ := s.hiddenDrives(ctx)
 	for _, d := range s.drives(false) {
-		roots = append(roots, map[string]any{"id": d.ID, "kind": "drive", "name": d.Label, "path": d.Path})
+		m := map[string]any{"id": d.ID, "kind": "drive", "name": d.Label, "path": d.Path}
+		if slices.Contains(hidden, d.Path) {
+			m["hidden"] = true
+		}
+		roots = append(roots, m)
 	}
 	return "files", map[string]any{
 		"roots": roots, "trash": s.trashDir != "", "maxEditSize": s.maxEdit, "chunkSize": chunkSize,
-		"showMounts": s.showMounts, "crossRoot": true,
+		"showMounts": s.showMounts, "crossRoot": true, "bookmarks": true,
 	}
 }
 
@@ -200,6 +216,13 @@ func (s *Service) Register(mux *http.ServeMux) {
 		}))
 	}
 	h("GET /api/files/roots", s.handleRoots)
+	h("GET /api/files/locations", s.handleLocations)
+	h("GET /api/files/bookmarks", s.handleBookmarkList)
+	h("POST /api/files/bookmarks", s.handleBookmarkAdd)
+	h("POST /api/files/bookmarks/reorder", s.handleBookmarkReorder)
+	h("PUT /api/files/bookmarks/{id}", s.handleBookmarkUpdate)
+	h("DELETE /api/files/bookmarks/{id}", s.handleBookmarkDelete)
+	h("PUT /api/files/drives/{id}/hidden", s.handleDriveHidden)
 	h("GET /api/files/list", s.handleList)
 	h("GET /api/files/stat", s.handleStat)
 	h("GET /api/files/size", s.handleSize)
@@ -306,6 +329,13 @@ func statInto(m map[string]any, p string) {
 }
 
 func (s *Service) handleRoots(w http.ResponseWriter, r *http.Request) error {
+	httpx.OK(w, s.rootStats(r.Context()))
+	return nil
+}
+
+// rootStats lists configured places and detected drives with usage. Drives
+// carry "hidden" when the user hid them from the sidebar.
+func (s *Service) rootStats(ctx context.Context) []map[string]any {
 	out := []map[string]any{}
 	for i, rt := range s.roots {
 		m := map[string]any{"id": strconv.Itoa(i), "kind": "place", "name": rt.Name, "path": rt.Path}
@@ -313,12 +343,19 @@ func (s *Service) handleRoots(w http.ResponseWriter, r *http.Request) error {
 		out = append(out, m)
 	}
 	drives := s.drives(true)
+	hidden, err := s.hiddenDrives(ctx)
+	if err != nil {
+		slog.Warn("files: hidden drives", "err", err)
+	}
 	ms := make([]map[string]any, len(drives))
 	var wg sync.WaitGroup
 	for i, d := range drives {
 		m := map[string]any{
 			"id": d.ID, "kind": "drive", "name": d.Label, "path": d.Path, "device": d.Device,
 			"fstype": d.FSType, "readOnly": d.ReadOnly, "removable": d.Removable, "network": d.Network,
+		}
+		if slices.Contains(hidden, d.Path) {
+			m["hidden"] = true
 		}
 		ms[i] = m
 		wg.Add(1)
@@ -332,9 +369,7 @@ func (s *Service) handleRoots(w http.ResponseWriter, r *http.Request) error {
 		}()
 	}
 	wg.Wait()
-	out = append(out, ms...)
-	httpx.OK(w, out)
-	return nil
+	return append(out, ms...)
 }
 
 // ---- errors ----------------------------------------------------------------

@@ -20,6 +20,34 @@ export interface Root {
   fstype?: string;
   removable?: boolean;
   network?: boolean;
+  /** Drives the user hid from the sidebar (still valid roots). */
+  hidden?: boolean;
+}
+
+/** A bookmarked folder: root + path inside it. */
+export interface Bookmark {
+  id: string;
+  name: string;
+  root: RootId;
+  path: string;
+  /** Absolute host path (used to match the current folder). */
+  abs: string;
+  /** Kind of the root it lives in. */
+  kind: "place" | "drive";
+  /** Points at the admin's home folder. */
+  home?: boolean;
+  available: boolean;
+  /** Why it's unavailable ("Drive not mounted"). */
+  reason?: string;
+}
+
+export interface Locations {
+  /** Every root: configured places, then detected drives (with hidden flags). */
+  roots: Root[];
+  bookmarks: Bookmark[];
+  hiddenDrives: number;
+  maxBookmarks: number;
+  home?: string;
 }
 
 export type EntryType = "file" | "dir" | "symlink" | "other";
@@ -165,10 +193,13 @@ export function startDownload(url: string) {
 
 // ---- queries ---------------------------------------------------------------
 
-export function useRoots() {
+export const locationsKey = ["files", "locations"] as const;
+
+/** Roots, drives and bookmarks in one call (shared by every pane). */
+export function useLocations() {
   return useQuery({
-    queryKey: ["files", "roots"],
-    queryFn: () => api.get<Root[]>("/api/files/roots"),
+    queryKey: locationsKey,
+    queryFn: () => api.get<Locations>("/api/files/locations"),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
@@ -193,9 +224,17 @@ export function useRefreshFiles() {
   const qc = useQueryClient();
   return () => {
     qc.invalidateQueries({ queryKey: ["files", "list"] });
-    qc.invalidateQueries({ queryKey: ["files", "roots"] });
+    qc.invalidateQueries({ queryKey: locationsKey });
   };
 }
+
+export const bookmarkApi = {
+  add: (root: RootId, path: string, name?: string) => api.post<Bookmark>("/api/files/bookmarks", { root, path, name }),
+  rename: (id: string, name: string) => api.put<Bookmark>(`/api/files/bookmarks/${encodeURIComponent(id)}`, { name }),
+  remove: (id: string) => api.del(`/api/files/bookmarks/${encodeURIComponent(id)}`),
+  reorder: (ids: string[]) => api.post<Bookmark[]>("/api/files/bookmarks/reorder", { ids }),
+  setDriveHidden: (id: RootId, hidden: boolean) => api.put(`/api/files/drives/${encodeURIComponent(id)}/hidden`, { hidden }),
+};
 
 export const fileApi = {
   mkdir: (root: RootId, path: string) => api.post<{ path: string }>("/api/files/mkdir", { root, path }),

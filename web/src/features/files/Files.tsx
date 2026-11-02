@@ -13,7 +13,8 @@ import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { decodePane, encodePane, fileApi, parseRoute, routeFor, segments, useRefreshFiles, useRoots, type JobSnapshot, type Loc, type Root } from "./api";
+import { decodePane, encodePane, fileApi, parseRoute, routeFor, segments, useLocations, useRefreshFiles, type JobSnapshot, type Loc, type Root } from "./api";
+import { LocationsProvider, useLocationsApi } from "./bookmarks";
 import { ConflictDialog } from "./dialogs";
 import { RootIcon, RootsSidebar } from "./Locations";
 import { Pane, locLabel, type DragPayload, type PaneMeta, type TransferKind } from "./Pane";
@@ -139,15 +140,25 @@ function Resizer({ index, share, onResize, onReset, label }: { index: number; sh
 // ---- page --------------------------------------------------------------------
 
 export default function FilesPage() {
-  const location = useLocation();
-  const nav = useNavigate();
-  const roots = useRoots();
+  const roots = useLocations();
   const caps = useCapabilities();
   const capRoots = caps.data?.files?.roots;
   const rootList: Root[] = useMemo(
-    () => roots.data ?? (capRoots ?? []).map((r, i) => ({ id: String(r.id ?? i), kind: r.kind ?? "place", name: r.name, path: r.path })),
+    () => roots.data?.roots ?? (capRoots ?? []).map((r, i) => ({ id: String(r.id ?? i), kind: r.kind ?? "place", name: r.name, path: r.path, hidden: r.hidden })),
     [roots.data, capRoots],
   );
+  return (
+    <LocationsProvider roots={rootList} data={roots.data}>
+      <FilesView rootList={rootList} loading={roots.isLoading || caps.isLoading} />
+    </LocationsProvider>
+  );
+}
+
+function FilesView({ rootList, loading }: { rootList: Root[]; loading: boolean }) {
+  const location = useLocation();
+  const nav = useNavigate();
+  const caps = useCapabilities();
+  const locApi = useLocationsApi();
   const trashAvailable = caps.data?.files?.trash !== false;
   const refresh = useRefreshFiles();
 
@@ -256,16 +267,25 @@ export default function FilesPage() {
   };
   const setPreview = (name: string | null, replace?: boolean) => commit(locs, active, { view: name, replace });
 
-  // Ctrl/Cmd+\ splits the active pane.
+  // Ctrl/Cmd+\ splits the active pane; Ctrl/Cmd+D (un)bookmarks its folder.
   const splitRef = useRef(splitPane);
   splitRef.current = splitPane;
+  const bookmarkRef = useRef(() => {});
+  bookmarkRef.current = () => {
+    const l = locs[active];
+    if (l) locApi.toggleBookmark(l);
+  };
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (e.key !== "\\" || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      const isSplit = e.key === "\\";
+      const isBookmark = e.key === "d" || e.key === "D";
+      if (!isSplit && !isBookmark) return;
       const t = e.target as HTMLElement | null;
       if (t?.closest("input, textarea, [contenteditable=true], [role=dialog]")) return;
       e.preventDefault();
-      splitRef.current();
+      if (isSplit) splitRef.current();
+      else bookmarkRef.current();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
@@ -340,7 +360,7 @@ export default function FilesPage() {
   };
 
   // ---- render ----
-  if (rootList.length === 0 && !roots.isLoading && !caps.isLoading) {
+  if (rootList.length === 0 && !loading) {
     return (
       <Card>
         <EmptyState icon={<HardDrive />} title="No file roots configured">
@@ -355,7 +375,7 @@ export default function FilesPage() {
 
   return (
     <div className="flex h-[calc(100dvh-5rem)] gap-4 sm:h-[calc(100dvh-5.5rem)]">
-      <RootsSidebar roots={rootList} current={locs[active]?.root} onPick={(id) => navigatePane(active, { root: id, path: "." })} />
+      <RootsSidebar current={locs[active]} onPick={(l) => navigatePane(active, l)} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         {switcher && (
           <div role="tablist" aria-label="Panes" className="flex shrink-0 items-center gap-1 overflow-x-auto rounded-lg border border-border bg-surface p-1 [scrollbar-width:none]">
