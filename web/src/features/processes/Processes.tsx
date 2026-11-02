@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { memo, useDeferredValue, useMemo, useState } from "react";
+import { useFillViewport } from "@/lib/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ListTree, Pause, Play, RefreshCw, Rows3 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -282,6 +283,13 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
   }, [data, scope, kernel, dq, sort, view]);
 
   const shown = rows.slice(0, limit);
+  const [tableEl, setTableEl] = useState<HTMLDivElement | null>(null);
+  const [listEl, setListEl] = useState<HTMLDivElement | null>(null);
+  const [footerEl, setFooterEl] = useState<HTMLDivElement | null>(null);
+  // Leave room for the footer row and the card's bottom border.
+  const reserve = (footerEl?.offsetHeight ?? 45) + 1;
+  const tableH = useFillViewport(tableEl, { min: 320, reserve });
+  const listH = useFillViewport(listEl, { min: 320, reserve });
   const now = data?.sampledAt ?? Date.now();
   const tree = view === "tree";
 
@@ -352,8 +360,8 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
           </EmptyState>
         ) : (
           <>
-            {/* Fixed-height, scrollable list so the page itself doesn't grow. */}
-            <div className="scroll-area max-h-[min(70dvh,42rem)] max-md:hidden" tabIndex={0} role="region" aria-label="Process table">
+            {/* Scrollable list sized to the viewport (with a minimum), so the page itself doesn't grow. */}
+            <div ref={setTableEl} style={{ height: tableH }} className="scroll-area min-h-80 max-md:hidden" tabIndex={0} role="region" aria-label="Process table">
               <Table className="table-fixed">
                 <THead>
                   <tr>
@@ -389,14 +397,14 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
                 ]}
               />
             </div>
-            <div className="scroll-area max-h-[70dvh] md:hidden" tabIndex={0} role="region" aria-label="Process list">
+            <div ref={setListEl} style={{ height: listH }} className="scroll-area min-h-80 md:hidden" tabIndex={0} role="region" aria-label="Process list">
               <ul aria-label="Processes">
                 {shown.map((r) => (
                   <MobileRow key={r.p.pid} row={r} tree={tree} onOpen={setOpen} />
                 ))}
               </ul>
             </div>
-            <div className="flex flex-wrap items-center gap-3 border-t border-border px-3.5 py-2.5 text-xs text-muted">
+            <div ref={setFooterEl} className="flex flex-wrap items-center gap-3 border-t border-border px-3.5 py-2.5 text-xs text-muted">
               <span className="num">
                 Showing {shown.length} of {rows.length}
               </span>

@@ -37,3 +37,36 @@ export function useLocalState<T>(key: string, initial: T) {
   }, [key, v]);
   return [v, setV] as const;
 }
+
+/**
+ * Height for a scrollable region so it reaches the bottom of the viewport
+ * (when the page is scrolled to the top), leaving `reserve` pixels for
+ * what follows it (footer rows, page padding), and never below `min`.
+ * Recomputed on resize and when content above it changes size.
+ */
+export function useFillViewport(el: HTMLElement | null, { min = 320, reserve = 0 }: { min?: number; reserve?: number } = {}) {
+  const [height, setHeight] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (!el) return;
+    let frame = 0;
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (!el.offsetParent) return; // hidden (e.g. the other breakpoint's list)
+        const top = el.getBoundingClientRect().top + window.scrollY;
+        const pad = parseFloat(getComputedStyle(el.closest("main") ?? document.body).paddingBottom) || 0;
+        setHeight(Math.max(min, Math.floor(window.innerHeight - top - reserve - pad)));
+      });
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    const ro = new ResizeObserver(measure);
+    ro.observe(document.body);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", measure);
+      ro.disconnect();
+    };
+  }, [el, min, reserve]);
+  return height;
+}

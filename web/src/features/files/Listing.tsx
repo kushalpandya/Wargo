@@ -81,8 +81,17 @@ function useLongPress(onLong: () => void, enabled: boolean) {
 function SortHeader({ k, sort, onSort, children, className, align }: { k: SortKey; sort: Sort; onSort: (k: SortKey) => void; children: React.ReactNode; className?: string; align?: "right" }) {
   const active = sort.key === k;
   return (
-    <div role="columnheader" aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className={cn("flex items-center", align === "right" && "justify-end", className)}>
-      <button type="button" onClick={() => onSort(k)} className={cn("inline-flex h-7 items-center gap-1 uppercase tracking-wider hover:text-fg", active && "text-fg", align === "right" && "flex-row-reverse")}>
+    <div role="columnheader" aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className={cn("flex self-stretch", className)}>
+      {/* The whole cell (and half the gap on each side) is the button. */}
+      <button
+        type="button"
+        onClick={() => onSort(k)}
+        className={cn(
+          "-mx-1.5 flex h-full w-[calc(100%+0.75rem)] items-center gap-1 rounded px-1.5 uppercase tracking-wider hover:bg-surface-3/60 hover:text-fg",
+          active && "text-fg",
+          align === "right" && "flex-row-reverse",
+        )}
+      >
         {children}
         {active ? sort.dir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" /> : <span className="size-3" />}
       </button>

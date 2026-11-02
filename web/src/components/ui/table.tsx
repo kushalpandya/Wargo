@@ -97,16 +97,24 @@ export function SortTh<K extends string>({
   align?: "right";
 }) {
   const active = sort.key === k;
+  // The whole header cell is the button, not just its text.
   return (
-    <Th className={cn(align === "right" && "text-right", className)} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+    <th
+      className={cn("h-8 whitespace-nowrap border-b border-border p-0 text-2xs font-semibold uppercase tracking-wider text-subtle", className)}
+      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+    >
       <button
         type="button"
         onClick={() => onSort(k, defaultDir)}
-        className={cn("inline-flex items-center gap-1 uppercase tracking-wider hover:text-fg", active && "text-fg", align === "right" && "flex-row-reverse")}
+        className={cn(
+          "flex h-full min-h-8 w-full items-center gap-1 px-3 uppercase tracking-wider hover:bg-surface-3/50 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/25",
+          active && "text-fg",
+          align === "right" && "flex-row-reverse",
+        )}
       >
-        {children}
-        {active ? sort.dir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" /> : <span className="size-3" />}
+        <span className="truncate">{children}</span>
+        {active ? sort.dir === "asc" ? <ArrowUp className="size-3 shrink-0" /> : <ArrowDown className="size-3 shrink-0" /> : <span className="size-3 shrink-0" />}
       </button>
-    </Th>
+    </th>
   );
 }
