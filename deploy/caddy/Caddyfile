@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+wargo.example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:2207
+}

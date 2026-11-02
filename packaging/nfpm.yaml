@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# nfpm package definition: VERSION=1.2.3 ARCH=amd64 nfpm pkg -f packaging/nfpm.yaml -p deb|rpm|apk|archlinux
+name: wargo
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: admin
+maintainer: Kushal Pandya <kushalspandya@gmail.com>
+description: |
+  Single-binary homelab dashboard: live system metrics, processes,
+  containers, web terminal, file manager, OS updates and more.
+homepage: https://github.com/kushalpandya/wargo
+license: AGPL-3.0-only
+depends:
+  - systemd
+recommends:
+  - sudo
+suggests:
+  - docker
+  - tmux
+contents:
+  - src: bin/wargo
+    dst: /usr/bin/wargo
+  - src: bin/wargo-privd
+    dst: /usr/bin/wargo-privd
+  - src: deploy/pam/wargo
+    dst: /etc/pam.d/wargo
+    type: config|noreplace
+  - src: config.example.toml
+    dst: /etc/wargo/config.toml
+    type: config|noreplace
+    file_info: { mode: 0640 }
+  - src: deploy/systemd/wargo@.service
+    dst: /usr/lib/systemd/system/wargo@.service
+  - src: deploy/systemd/wargo-privd.service
+    dst: /usr/lib/systemd/system/wargo-privd.service
+  - src: deploy/systemd/wargo-privd.socket
+    dst: /usr/lib/systemd/system/wargo-privd.socket
+  - src: LICENSE
+    dst: /usr/share/licenses/wargo/LICENSE
+  - src: docs/
+    dst: /usr/share/doc/wargo/
+scripts:
+  postinstall: packaging/postinstall.sh

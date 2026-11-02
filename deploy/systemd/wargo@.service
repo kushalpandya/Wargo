@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Wargo runs as the admin user it authenticates (PAM can only verify the
+# password of the account it runs as). Enable with:
+#
+#   sudo systemctl enable --now wargo@$USER
+#
+# Filesystem sandboxing (ProtectSystem, PrivateTmp, ...) is intentionally
+# NOT used: the integrated terminal and file manager are meant to see the
+# real system, and those settings would leak into every shell session.
+# NoNewPrivileges must stay off so on-demand `sudo` elevation works.
+# See docs/SECURITY.md.
+
+[Unit]
+Description=Wargo homelab dashboard (%i)
+Documentation=https://github.com/kushalpandya/wargo
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/local/bin/wargo serve -config /etc/wargo/config.toml
+Restart=on-failure
+RestartSec=3
+# Only needed to bind ports below 1024 (e.g. listen = ":80").
+#AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=65536
+# Package upgrades run in their own transient unit (systemd-run), so
+# stopping or restarting Wargo never interrupts them.
+LockPersonality=yes
+RestrictRealtime=yes
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

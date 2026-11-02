@@ -1,0 +1,67 @@
+# Wargo configuration — copy to /etc/wargo/config.toml
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Listen on loopback and publish through a reverse proxy (nginx, Caddy,
+# cloudflared). Use ":80" only together with CAP_NET_BIND_SERVICE.
+listen = "127.0.0.1:2207"
+
+# Where the database, secrets and upload temp files live.
+# Defaults to /var/lib/wargo when writable, else ~/.local/state/wargo.
+# data_dir = "/var/lib/wargo"
+
+[auth]
+# The single host account allowed to sign in. Defaults to the user Wargo
+# runs as; it must belong to the admin group.
+# user = "kushal"
+# admin_group = "wheel"        # auto-detected: wheel, sudo or admin
+pam_service = "wargo"          # /etc/pam.d/wargo (see deploy/pam/wargo)
+require_totp = true            # force a second factor (TOTP or passkey)
+session_idle = "30m"
+session_max = "12h"
+
+# Public origins you reach Wargo from. Needed for WebSockets and passkeys
+# (passkeys are bound to the hostname and require HTTPS).
+origins = [
+  # "https://wargo.example.com",
+]
+
+# Reverse proxies whose X-Forwarded-For / CF-Connecting-IP / X-Forwarded-Proto
+# headers are trusted. cloudflared and nginx on the same host connect from
+# loopback.
+trusted_proxies = ["127.0.0.1/32", "::1/128"]
+
+[files]
+# Folders the file manager may browse. Every operation is confined to
+# these roots (symlinks cannot escape).
+[[files.roots]]
+name = "Home"
+path = "/home/kushal"
+
+[[files.roots]]
+name = "DATA"
+path = "/DATA"
+
+# trash_dir = "/var/lib/wargo/trash"
+# max_edit_size = 4194304       # bytes; larger files open read-only
+
+[docker]
+socket = "/var/run/docker.sock"
+
+[metrics]
+interval = "1s"
+history = "10m"
+
+# Integrations can also be configured from Settings → Integrations,
+# where secrets are stored encrypted.
+# [integrations.prowlarr]
+# url = "http://127.0.0.1:9696"
+# api_key = ""
+#
+# [integrations.transmission]
+# url = "http://127.0.0.1:9091/transmission/rpc"
+# username = ""
+# password = ""
+
+# NEVER enable in production. Skips login; only honoured on loopback.
+# [dev]
+# auth_bypass = false

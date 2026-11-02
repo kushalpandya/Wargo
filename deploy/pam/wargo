@@ -1,0 +1,6 @@
+#%PAM-1.0
+# Wargo password check. Deliberately minimal and WITHOUT pam_faillock:
+# Wargo throttles login attempts itself, so internet-facing brute force
+# can never lock the real OS account (SSH, sudo, console).
+auth     required  pam_unix.so
+account  required  pam_unix.so

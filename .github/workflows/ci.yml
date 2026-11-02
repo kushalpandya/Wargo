@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: CI
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev
+      - run: make web
+      - run: go vet ./... && go test ./...
+      - run: make build privd
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          case "$GITHUB_REF" in refs/tags/*) ;; *) VERSION="0.0.0-dev+${GITHUB_SHA::7}";; esac
+          mkdir -p dist/pkg
+          tar -czf "dist/wargo_${VERSION}_linux_${{ matrix.arch }}.tar.gz" -C . \
+            --transform 's#^bin/##' bin/wargo bin/wargo-privd LICENSE README.md config.example.toml deploy docs
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          for p in deb rpm apk archlinux; do
+            VERSION="$VERSION" ARCH=${{ matrix.arch }} ~/go/bin/nfpm pkg -f packaging/nfpm.yaml -p $p -t dist/pkg/
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wargo-${{ matrix.arch }}
+          path: dist/
