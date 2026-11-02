@@ -1,85 +1,163 @@
 # Installing Wargo
 
-Wargo is a single binary that runs natively on Linux (amd64, arm64) as your
-admin user. It is not meant to run in a container: it needs real PTYs, the host
-process table, PAM and the package manager.
+Wargo runs on any 64-bit Linux server (x86-64 or ARM64). Pick **one** way to
+install it:
 
-## Requirements
+| | Native (recommended) | Docker |
+|---|---|---|
+| Needs | systemd, glibc 2.31+ (Debian 11+, Ubuntu 20.04+, Fedora, Arch/Manjaro, openSUSE…) | Docker with Compose |
+| Install | one command | one `compose.yaml` |
+| Admin actions | your sudo password or a passkey, enforced by the OS | your password or a passkey, enforced by Wargo |
 
-- Linux with systemd and PAM (`pam_unix`)
-- Your user in the admin group (`wheel` or `sudo`)
-- Optional: Docker (your user in the `docker` group), `sudo`, `tmux`
-- Building from source: Go 1.26+, a C compiler and PAM headers
-  (`pam` on Arch, `libpam0g-dev` on Debian/Ubuntu, `pam-devel` on Fedora),
-  Node.js 22+
+Both give you every feature. The native install is a little safer because
+Wargo itself never runs as root; see [SECURITY.md](SECURITY.md).
 
-## Quick install (from a release or source build)
+---
 
-```sh
-make               # builds web/dist, bin/wargo and bin/wargo-privd
-sudo ./packaging/install.sh
-sudo systemctl enable --now wargo@$USER
-```
+## Native install
 
-`install.sh` copies the binary to `/usr/local/bin`, installs the PAM service
-(`/etc/pam.d/wargo`), the systemd unit, `/etc/wargo/config.toml` (from
-`config.example.toml`, if absent) and creates `/var/lib/wargo` owned by you.
-It changes nothing else.
-
-Open `http://127.0.0.1:2207`, sign in with your OS username and password, and
-enrol two-factor authentication. Then publish it with a reverse proxy — see
-[REVERSE_PROXY.md](REVERSE_PROXY.md).
-
-## Manual install
+Run this as **your normal user** (the account you'll sign in with; it must be
+in the `wheel` or `sudo` group). It asks for your sudo password once.
 
 ```sh
-sudo install -m 0755 bin/wargo /usr/local/bin/wargo
-sudo install -m 0644 deploy/pam/wargo /etc/pam.d/wargo
-sudo install -m 0644 deploy/systemd/wargo@.service /etc/systemd/system/
-sudo install -d -m 0755 /etc/wargo
-sudo install -m 0640 -g "$(id -gn)" config.example.toml /etc/wargo/config.toml
-sudo install -d -m 0700 -o "$USER" -g "$(id -gn)" /var/lib/wargo
-sudo systemctl daemon-reload
-sudo systemctl enable --now wargo@$USER
+curl -fsSL https://raw.githubusercontent.com/kushalpandya/wargo/main/install.sh | sh
 ```
 
-## Optional: passkey approvals for admin actions (wargo-privd)
+Then open **http://127.0.0.1:2207** on the server, sign in with your usual
+username and password, and set up two-factor authentication when asked.
+
+That's it. The installer:
+
+- downloads the latest release for your CPU and verifies its checksum,
+- installs `/usr/local/bin/wargo`, a systemd service (`wargo@<you>`), a small
+  PAM file and `/etc/wargo/config.toml`,
+- starts Wargo on `127.0.0.1:2207`, running as your user (not root).
+
+**Upgrade:** run the same command again — your settings are kept.
+**Specific version:** `… | sh -s -- --version v1.0.0-alpha.1`
+**Uninstall:** `… | sh -s -- --uninstall` (add `--purge` to delete data too)
+**Preview:** `… | sh -s -- --dry-run` shows every step without changing anything.
+
+<details>
+<summary>Prefer to look before you run?</summary>
 
 ```sh
-sudo install -m 0755 bin/wargo-privd /usr/local/bin/wargo-privd
-sudo install -m 0600 deploy/privd.toml /etc/wargo/privd.toml   # edit allowed_uid / origins
-sudo install -m 0644 deploy/systemd/wargo-privd.service deploy/systemd/wargo-privd.socket /etc/systemd/system/
-sudo systemctl enable --now wargo-privd.socket
+curl -fsSLO https://raw.githubusercontent.com/kushalpandya/wargo/main/install.sh
+less install.sh
+sh install.sh
 ```
 
-Then in Settings → Security → Admin approvals, choose which passkeys to trust
-(this asks for your sudo password once).
+Offline / air-gapped: download `wargo_<version>_linux_<arch>.tar.gz` from the
+[releases page](https://github.com/kushalpandya/wargo/releases) and run
+`sh install.sh --archive wargo_<version>_linux_<arch>.tar.gz`.
+</details>
 
-## Updating
-
-Replace `/usr/local/bin/wargo` and `sudo systemctl restart wargo@$USER`.
-Running package upgrades are unaffected — they run in their own systemd unit.
-
-## Uninstalling
+Useful commands:
 
 ```sh
-sudo systemctl disable --now wargo@$USER wargo-privd.socket
-sudo rm -f /usr/local/bin/wargo /usr/local/bin/wargo-privd /etc/pam.d/wargo \
-  /etc/systemd/system/wargo@.service /etc/systemd/system/wargo-privd.*
-sudo rm -rf /etc/wargo /var/lib/wargo /var/lib/wargo-privd
+systemctl status wargo@$USER        # is it running?
+journalctl -u wargo@$USER -f        # logs
+sudo systemctl restart wargo@$USER  # after editing /etc/wargo/config.toml
 ```
 
-## Development
+---
+
+## Docker install
 
 ```sh
-cp config.example.toml dev.local.toml   # set listen, data_dir, [dev] auth_bypass = true
-make build && ./bin/wargo -config dev.local.toml
-cd web && npm ci && WARGO_API=http://127.0.0.1:2207 npm run dev
+mkdir wargo && cd wargo
+curl -fsSLO https://raw.githubusercontent.com/kushalpandya/wargo/main/deploy/docker/compose.yaml
+WARGO_USER=$USER docker compose up -d
 ```
 
-UI review helpers (use the system Chrome):
+Open **http://127.0.0.1:2207** and sign in with your **host** account's
+username and password.
+
+The container needs broad access to the host (privileged, host PID and
+network, the host filesystem at `/host`) so it can show processes, open
+shells and install updates. It is not a sandbox — treat it like the native
+install. Details, settings and the reasons for each option are in
+[DOCKER.md](DOCKER.md).
+
+**Upgrade:** `docker compose pull && docker compose up -d`
+
+---
+
+## Access from anywhere
+
+Wargo listens only on `127.0.0.1` so it's never exposed by accident. To use
+it from your phone or another computer, put it behind HTTPS and tell Wargo
+its public address.
+
+1. Pick a way to publish it (any one):
+   - **Cloudflare Tunnel** — point a hostname at `http://127.0.0.1:2207`.
+   - **Caddy** — `wargo.example.com { reverse_proxy 127.0.0.1:2207 }`
+   - **nginx** — see [`deploy/nginx/wargo.conf`](../deploy/nginx/wargo.conf)
+     (it needs the WebSocket headers shown there).
+2. Add the public URL to `/etc/wargo/config.toml` (Docker: the
+   `WARGO_ORIGINS` variable):
+
+   ```toml
+   [auth]
+   origins = ["https://wargo.example.com"]
+   ```
+
+3. Restart Wargo (`sudo systemctl restart wargo@$USER`).
+
+Passkeys only work over HTTPS. More options, including protecting the
+hostname with Cloudflare Access, are in [REVERSE_PROXY.md](REVERSE_PROXY.md).
+
+---
+
+## After installing
+
+- **Two-factor:** required on first sign-in. Add a passkey in
+  Settings → Security for one-tap sign-in.
+- **Locked out?** On the server run `wargo admin reset-auth` (Docker:
+  `docker exec wargo wargo admin reset-auth`), then sign in with your password.
+- **Integrations:** connect Prowlarr and Transmission in Settings →
+  Integrations ("Detect" finds them if they run in Docker).
+- **Optional — passkeys for admin actions (native only):** see
+  [Passkey approvals](#optional-passkey-approvals-native) below.
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| "Invalid username or password" with the right password | Make sure `/etc/pam.d/wargo` exists (the installer adds it) and that your account is in `wheel`/`sudo`. |
+| Live charts or the terminal don't load behind a proxy | Add the public URL to `auth.origins`, and make sure the proxy forwards WebSockets. |
+| "Passkeys require HTTPS" | Use the HTTPS address, not `http://<ip>:2207`. |
+| Admin approval says sudo is blocked | Don't add `NoNewPrivileges=yes` to the service; sudo needs it off. |
+| Service won't start | `journalctl -u wargo@$USER -e` shows why (usually a typo in the config). |
+
+## Optional: passkey approvals (native)
+
+By default, admin actions (killing another user's process, installing
+updates, rebooting…) ask for your sudo password. You can approve them with a
+passkey instead by enabling the small root helper `wargo-privd`:
 
 ```sh
-node web/scripts/shot.mjs  http://127.0.0.1:5173/ /tmp/shot --sizes=desktop,tablet,phone --schemes=dark,light
-node web/scripts/audit.mjs http://127.0.0.1:5173/            # overflow, touch targets, axe WCAG AA
+sudo install -m 0600 /dev/stdin /etc/wargo/privd.toml <<EOF
+allowed_uid = $(id -u)
+origins = ["https://wargo.example.com"]
+EOF
+sudo systemctl enable --now wargo-privd
 ```
+
+Then in Settings → Security → Admin approvals, choose which passkeys to
+trust (asks for your sudo password once).
+
+## Building from source
+
+Requirements: Go 1.26+, Node.js 22+, a C compiler and PAM headers
+(`pam` on Arch, `libpam0g-dev` on Debian/Ubuntu, `pam-devel` on Fedora).
+
+```sh
+git clone https://github.com/kushalpandya/wargo && cd wargo
+make                                   # web UI + bin/wargo + bin/wargo-privd
+tar -czf /tmp/wargo_dev_linux_amd64.tar.gz --transform 's#^bin/##' \
+  bin/wargo bin/wargo-privd LICENSE README.md config.example.toml deploy docs
+sh install.sh --archive /tmp/wargo_dev_linux_amd64.tar.gz
+```
+
+For development with live reload see [CONTRIBUTING.md](../CONTRIBUTING.md).

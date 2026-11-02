@@ -1,73 +1,64 @@
-# Wargo
+<p align="center">
+  <img src="web/public/favicon.svg" width="72" height="72" alt="">
+</p>
 
-A single-binary, low-memory dashboard for running a homelab server — inspired
-by the wargs of *A Song of Ice and Fire*, who see through other creatures' eyes.
+<h1 align="center">Wargo</h1>
 
-Wargo replaces a handful of separate tools with one responsive web app you can
-safely publish through a reverse proxy:
+<p align="center">
+  A fast, single-binary control panel for your homelab server.<br>
+  Monitor it, manage containers, open a terminal, browse files and install updates — from any browser.
+</p>
 
-- **Overview** — live CPU (per core), memory, temperatures and fans, network
-  and disk throughput with 10-minute history, installed drives and filesystem
-  usage, and container health at a glance.
-- **Processes** — searchable, sortable process list and tree; signal or kill
-  processes (other users' processes need admin approval).
-- **Containers** — status, health, ports, live resource usage, logs, start /
-  stop / restart, registry update checks and one-click updates (compose-aware,
-  CasaOS-friendly, with rollback).
-- **Terminal** — full PTY terminal with tabs, host / root / container shells,
-  reconnect after reloads and a mobile key bar.
-- **Files** — complete file manager confined to configured roots: browse,
-  upload (chunked and resumable), download, rename, move, copy, trash,
-  permissions, archives, previews and a code editor.
-- **Updates** — check and install OS package updates on demand (pamac, pacman,
-  apt, dnf, zypper, apk; AUR and Flatpak listed read-only) with live progress,
-  running in a separate systemd unit so nothing is left half-installed.
-- **Torrents** — search every Prowlarr indexer, copy magnets, download
-  `.torrent` files or queue them in Transmission, and manage downloads.
-- **Apps** — an optional launcher of your self-hosted services with health
-  status, suggested from your running containers.
+---
 
-Light, dark and system themes; works from phones to wide desktops.
+<!-- Screenshot: docs/screenshots/home.png -->
 
-## Security at a glance
+## What you get
 
-Sign in with your **host account** (PAM) plus **TOTP**, or with a
-**passkey**. Wargo never holds root: actions that need it ask for your sudo
-password (used once, never stored) or a passkey approval via the optional
-`wargo-privd` helper. Logins are throttled without touching `pam_faillock`, so
-nobody can lock your real account from the internet. Details in
-[docs/SECURITY.md](docs/SECURITY.md).
+- **Home** — CPU, memory, network and disks at a glance, your machine's specs and every container's health and version.
+- **System** — live charts, sensors and fans, drives and the process list (kill or signal processes).
+- **Containers** — status, logs, live usage, start/stop/restart, and one-click image updates with rollback.
+- **Files** — a full file manager with split view, drives, bookmarks, uploads, previews and a code editor.
+- **Terminal** — real shells in your browser, including root and container shells, with tabs.
+- **Updates** — check and install OS package updates and stale container images when *you* choose.
+- **Torrents** — search all your Prowlarr indexers and manage Transmission downloads.
+- **Apps** — an optional launcher for your other self-hosted services.
+
+Light and dark themes, works on phones, uses about 25 MB of RAM.
 
 ## Install
 
-See [docs/INSTALL.md](docs/INSTALL.md) and
-[docs/REVERSE_PROXY.md](docs/REVERSE_PROXY.md). In short:
+On the server, as your normal (sudo-capable) user:
 
 ```sh
-make
-sudo ./packaging/install.sh
-sudo systemctl enable --now wargo@$USER
-# open http://127.0.0.1:2207
+curl -fsSL https://raw.githubusercontent.com/kushalpandya/wargo/main/install.sh | sh
 ```
 
-Or run the container image (privileged, host namespaces — read
-[docs/DOCKER.md](docs/DOCKER.md) first):
+Open **http://127.0.0.1:2207** and sign in with your usual Linux username and
+password. Prefer Docker? See the [install guide](docs/INSTALL.md#docker-install).
 
-```sh
-WARGO_USER=$USER docker compose -f deploy/docker/compose.yaml up -d
-```
+To use it from other devices, put it behind HTTPS (Cloudflare Tunnel, Caddy
+or nginx) — [here's how](docs/INSTALL.md#access-from-anywhere).
 
-## Stack
+## Secure by design
 
-Go (stdlib `net/http`, gopsutil, creack/pty, `os.Root`, SQLite, PAM,
-go-webauthn) serving an embedded React + Tailwind single-page app (Radix
-primitives, TanStack Query, uPlot, xterm.js, CodeMirror). Docker is spoken to
-directly over its socket without the SDK. Idle memory use is around 25 MB.
+- Sign in with your server account plus two-factor, or with a passkey.
+- Wargo never holds root: admin actions ask for your sudo password or a passkey every time.
+- Failed logins can't lock you out of your server; they're throttled by Wargo.
+- Every file operation is confined to the folders you choose; every admin action is audited.
+
+Read more in [SECURITY.md](docs/SECURITY.md).
 
 ## Status
 
-Alpha. Expect rough edges; please file issues.
+Wargo is in **alpha**. It works well on the author's server, but expect rough
+edges and breaking changes before 1.0. Feedback and bug reports are very
+welcome in [issues](https://github.com/kushalpandya/wargo/issues).
+
+## Documentation
+
+[Install](docs/INSTALL.md) · [Docker](docs/DOCKER.md) · [Reverse proxy](docs/REVERSE_PROXY.md) · [Security](docs/SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 
-[AGPL-3.0-only](LICENSE)
+[AGPL-3.0](LICENSE) © Kushal Pandya
