@@ -5,6 +5,7 @@ package metrics
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"net"
 	"net/http"
 	"os"
@@ -30,6 +31,7 @@ type Specs struct {
 	Locale    string         `json:"locale,omitempty"`
 	LocalIP   string         `json:"localIp,omitempty"`
 	Packages  []PackageCount `json:"packages,omitempty"`
+	Desktop   *Desktop       `json:"desktop,omitempty"`
 	Logo      bool           `json:"logo"`
 	LogoColor string         `json:"logoColor,omitempty"`
 }
@@ -302,6 +304,7 @@ func GetSpecs() Specs {
 	s := staticSpecs
 	s.Packages = packageCounts()
 	s.LocalIP = primaryIP()
+	s.Desktop = GetDesktop(context.Background())
 	return s
 }
 
