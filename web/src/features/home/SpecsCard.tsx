@@ -10,9 +10,7 @@ import {
   Container,
   Cpu,
   Gpu,
-  HardDrive,
   Languages,
-  MemoryStick,
   Network,
   Package,
   Power,
@@ -21,14 +19,13 @@ import {
   Timer,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { bytes, duration, level, pct } from "@/lib/format";
+import { bytes, duration, pct } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Card } from "@/components/ui/card";
-import { Meter, Skeleton } from "@/components/ui/misc";
+import { Skeleton } from "@/components/ui/misc";
 import { Logo } from "@/app/Logo";
 import { useCapabilities, useMe } from "@/app/session";
 import type { Snapshot, SystemInfo } from "@/features/system/useMetrics";
-import { useStorage } from "@/features/system/Storage";
 
 export interface Desktop {
   name: string;
@@ -68,11 +65,9 @@ interface Item {
   label: string;
   value?: ReactNode;
   title?: string;
-  meter?: number;
 }
 
-function SpecItem({ icon, label, value, title, meter }: Item) {
-  const tone = meter === undefined ? undefined : level(meter, 80, 92);
+function SpecItem({ icon, label, value, title }: Item) {
   return (
     <div className="flex min-w-0 items-start gap-2.5 py-1.5">
       <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-3 text-muted [&_svg]:size-3.5" aria-hidden="true">
@@ -83,7 +78,6 @@ function SpecItem({ icon, label, value, title, meter }: Item) {
         <div className="num truncate text-[0.8125rem] text-fg" title={title ?? (typeof value === "string" ? value : undefined)}>
           {value}
         </div>
-        {meter !== undefined && <Meter value={meter} tone={tone === "ok" ? "frost" : tone} className="mt-1 h-1" label={label} />}
       </div>
     </div>
   );
@@ -113,10 +107,8 @@ export function SpecsCard({ snap }: { snap: Snapshot | null }) {
   });
   const { data: me } = useMe();
   const { data: caps } = useCapabilities();
-  const storage = useStorage();
   const sp = info?.specs;
   const de = sp?.desktop;
-  const rootFs = storage.data?.filesystems.find((f) => f.mount === "/");
   const arch = info ? (info.arch === "amd64" ? "x86_64" : info.arch === "arm64" ? "aarch64" : info.arch) : "";
 
   const hardware: Item[] = [
@@ -129,18 +121,6 @@ export function SpecsCard({ snap }: { snap: Snapshot | null }) {
       title: info ? `${info.cpuModel} · ${info.cores} cores / ${info.threads} threads` : undefined,
     },
     ...(sp?.gpus ?? []).map((g, i) => ({ icon: <Gpu />, label: sp!.gpus!.length > 1 ? `Graphics ${i + 1}` : "Graphics", value: g })),
-    {
-      icon: <MemoryStick />,
-      label: "Memory",
-      value: snap ? `${bytes(snap.memory.used)} of ${bytes(snap.memory.total)}` : info ? bytes(info.memTotal) : undefined,
-      meter: snap?.memory.usedPct,
-    },
-    {
-      icon: <HardDrive />,
-      label: "System disk",
-      value: rootFs ? `${bytes(rootFs.used)} of ${bytes(rootFs.total)} · ${rootFs.fstype}` : undefined,
-      meter: rootFs?.usedPct,
-    },
     {
       icon: <ArrowLeftRight />,
       label: "Swap",
