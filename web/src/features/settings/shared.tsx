@@ -5,6 +5,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { FormField, Input } from "@/components/ui/form";
 import { ErrorNote } from "@/components/ui/misc";
 import { useMe } from "@/app/session";
+import { copyText } from "@/lib/clipboard";
 
 /** Heading for a settings page. */
 export function SettingsHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
@@ -59,12 +60,11 @@ export function PasswordDialog({
   const [pw, setPw] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
+  // Reset on open and on close so the password never outlives the dialog.
   useEffect(() => {
-    if (open) {
-      setPw("");
-      setErr(null);
-      setBusy(false);
-    }
+    setPw("");
+    setErr(null);
+    setBusy(false);
   }, [open]);
   const can = !!pw || !!me?.dev;
   const submit = async () => {
@@ -132,13 +132,12 @@ export function CodeBlock({ children, label }: { children: string; label?: strin
         className="absolute right-1.5 top-1.5"
         aria-label={label ? `Copy ${label}` : "Copy to clipboard"}
         onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(children);
+          if (await copyText(children)) {
             setCopied(true);
             window.setTimeout(() => setCopied(false), 1500);
-          } catch {
-            // Clipboard API needs a secure context: select the text instead.
-            if (ref.current) window.getSelection()?.selectAllChildren(ref.current);
+          } else if (ref.current) {
+            // No clipboard access: select the text instead.
+            window.getSelection()?.selectAllChildren(ref.current);
           }
         }}
       >

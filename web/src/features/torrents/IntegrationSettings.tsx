@@ -176,8 +176,10 @@ function ProwlarrCard({ status, discover }: { status: IntegrationsStatus; discov
   const [confirmClear, setConfirmClear] = useState(false);
   useEffect(() => setUrl(p.url), [p.url]);
 
+  // Secrets are read from state inside mutationFn rather than passed as
+  // mutation variables, which React Query would keep in its cache.
   const save = useMutation({
-    mutationFn: (body: { url: string; apiKey?: string }) => api.put("/api/integrations/prowlarr", body),
+    mutationFn: (body: { url: string; withKey?: boolean }) => api.put("/api/integrations/prowlarr", { url: body.url, apiKey: body.withKey ? apiKey || undefined : undefined }),
     onSuccess: (_, body) => {
       setApiKey("");
       invalidate();
@@ -210,7 +212,7 @@ function ProwlarrCard({ status, discover }: { status: IntegrationsStatus; discov
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    save.mutate({ url, apiKey: apiKey || undefined });
+    save.mutate({ url, withKey: true });
   };
   const candidates = discover.data?.prowlarr ?? [];
 
@@ -342,7 +344,8 @@ function TransmissionCard({ status, discover }: { status: IntegrationsStatus; di
   useEffect(() => setUsername(t.username), [t.username]);
 
   const save = useMutation({
-    mutationFn: (body: { url: string; username?: string; password?: string }) => api.put("/api/integrations/transmission", body),
+    mutationFn: (body: { url: string; username?: string; withPassword?: boolean }) =>
+      api.put("/api/integrations/transmission", { url: body.url, username: body.username, password: body.withPassword ? password || undefined : undefined }),
     onSuccess: (_, body) => {
       setPassword("");
       invalidate();
@@ -362,7 +365,7 @@ function TransmissionCard({ status, discover }: { status: IntegrationsStatus; di
   });
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    save.mutate({ url, username, password: password || undefined });
+    save.mutate({ url, username, withPassword: true });
   };
   const candidates = discover.data?.transmission ?? [];
   const hint = discover.data?.transmissionFromProwlarr;

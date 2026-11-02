@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
 import { cn } from "@/lib/cn";
+import { safeLocalPath } from "@/lib/url";
 import { StatusDot, type Tone } from "@/components/ui/misc";
 import type { Container } from "./types";
 
@@ -31,7 +32,10 @@ export function ContainerIcon({
   className?: string;
 }) {
   const [broken, setBroken] = useState(() => !!c.icon && failed.has(c.icon));
-  const src = c.icon && !broken && !failed.has(c.icon) ? c.icon : null;
+  // Icons are proxied by Wargo (/api/containers/{id}/icon); never load a
+  // third-party URL that would leak the viewer's IP to whoever set it.
+  const icon = safeLocalPath(c.icon);
+  const src = icon && !broken && !failed.has(icon) ? icon : null;
   const letter = (c.name.replace(/^[^a-z0-9]+/i, "")[0] ?? "?").toUpperCase();
   return (
     <span className={cn("relative inline-flex shrink-0", className)}>

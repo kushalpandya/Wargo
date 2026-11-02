@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { ExternalLink } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { safeHttpUrl } from "@/lib/url";
 import { StatusDot } from "@/components/ui/misc";
 
 export interface Tile {
@@ -44,7 +45,8 @@ export function TileGrid({ tiles, compact }: { tiles: Tile[]; compact?: boolean 
             {list.map((t) => (
               <a
                 key={t.id}
-                href={t.url}
+                // The server validates tile URLs; never link to anything but http(s) regardless.
+                href={safeHttpUrl(t.url)}
                 target={t.newTab ? "_blank" : undefined}
                 rel="noopener noreferrer"
                 className="group flex min-w-0 items-center gap-2.5 rounded-lg border border-border bg-surface px-3 py-2.5 transition-colors hover:border-border-strong hover:bg-surface-2"

@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { api } from "@/lib/api";
+import { isHttpUrl } from "@/lib/url";
 
 export type TermKind = "host" | "root" | "container";
 
@@ -47,6 +48,16 @@ const CLOSE_KILLED = 4003;
 const CLOSE_NOT_FOUND = 4004;
 
 const enc = new TextEncoder();
+
+/**
+ * Opens a link printed in the terminal: http(s) only (never javascript:,
+ * data: or file:), in a new tab without opener or referrer. No clipboard
+ * addon is loaded, so OSC 52 clipboard writes from programs are ignored.
+ */
+export function openTermLink(uri: string) {
+  if (!isHttpUrl(uri)) return;
+  window.open(uri, "_blank", "noopener,noreferrer");
+}
 
 /** Applies a Ctrl modifier to a single typed character. */
 export function ctrlChar(ch: string): string {
@@ -109,12 +120,22 @@ export class TermSession {
     });
     this.term.loadAddon(this.fitAddon);
     this.term.loadAddon(this.searchAddon);
+    // Plain-text URLs in the output: the visible text is the target.
     this.term.loadAddon(
       new WebLinksAddon((ev, uri) => {
         ev.preventDefault();
-        window.open(uri, "_blank", "noopener,noreferrer");
+        openTermLink(uri);
       }),
     );
+    // OSC 8 hyperlinks: the program chooses both the text and the hidden
+    // target, so show the real URL before leaving.
+    this.term.options.linkHandler = {
+      allowNonHttpProtocols: false,
+      activate: (ev, uri) => {
+        ev.preventDefault();
+        if (isHttpUrl(uri) && window.confirm(`Open this link from the terminal?\n\n${uri}`)) openTermLink(uri);
+      },
+    };
     this.searchDeco = opts.search;
     this.searchAddon.onDidChangeResults((r) => {
       this.searchResult = { index: r.resultIndex, count: r.resultCount };
@@ -158,7 +179,9 @@ export class TermSession {
   }
 
   private setTitle(t: string) {
-    t = t.trim();
+    // Set by whatever runs in the shell (OSC 0/2): strip controls, cap length.
+    // eslint-disable-next-line no-control-regex
+    t = t.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim().slice(0, 120);
     if (!t || t === this.title) return;
     this.title = t;
     this.emit();

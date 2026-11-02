@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Boxes, Download, GripVertical, ImageOff, LayoutGrid, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { isHttpUrl } from "@/lib/url";
 import { Button, IconButton } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { Checkbox, FormField, Input, Switch } from "@/components/ui/form";
@@ -16,15 +17,6 @@ const emptyInput: TileInput = { name: "", url: "", icon: "", group: "", newTab: 
 
 function toInput(t: Tile): TileInput {
   return { name: t.name, url: t.url, icon: t.icon ?? "", group: t.group ?? "", newTab: t.newTab, healthUrl: t.healthUrl ?? "", enabled: t.enabled };
-}
-
-function validHttpUrl(v: string) {
-  try {
-    const u = new URL(v);
-    return (u.protocol === "http:" || u.protocol === "https:") && !!u.host;
-  } catch {
-    return false;
-  }
 }
 
 /** Add/edit dialog for a single tile. */
@@ -75,13 +67,13 @@ export function TileDialog({
   });
 
   const nameErr = touched && !v.name.trim() ? "Name is required" : undefined;
-  const urlErr = touched && !validHttpUrl(v.url) ? "Enter a full http:// or https:// URL" : undefined;
-  const healthErr = touched && v.healthUrl && !validHttpUrl(v.healthUrl) ? "Enter a full http:// or https:// URL" : undefined;
+  const urlErr = touched && !isHttpUrl(v.url) ? "Enter a full http:// or https:// URL" : undefined;
+  const healthErr = touched && v.healthUrl && !isHttpUrl(v.healthUrl) ? "Enter a full http:// or https:// URL" : undefined;
   const slugOk = /^[a-z0-9-]{1,64}$/.test(slug.trim());
 
   const submit = () => {
     setTouched(true);
-    if (!v.name.trim() || !validHttpUrl(v.url) || (v.healthUrl && !validHttpUrl(v.healthUrl))) return;
+    if (!v.name.trim() || !isHttpUrl(v.url) || (v.healthUrl && !isHttpUrl(v.healthUrl))) return;
     save.mutate({ ...v, name: v.name.trim(), group: v.group?.trim() });
   };
 
