@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -39,6 +40,7 @@ const (
 	probeInterval   = 5 * time.Minute
 	probeRetry      = time.Minute      // re-check once before reporting "down"
 	probeFirstDelay = 30 * time.Second // after a container (or Wargo) starts
+	probeResume     = 10 * time.Second // re-check restored results soon after a restart
 	probeIdleAfter  = 15 * time.Minute // stop when nobody looked for this long
 	probeTimeout    = 4 * time.Second
 	probeTick       = 15 * time.Second
@@ -248,10 +250,53 @@ func (p *prober) record(id string, r Probe) bool {
 	return prev != st.res.Status
 }
 
+const probesKey = "docker.probes"
+
+type savedProbe struct {
+	Addr string `json:"addr"`
+	Res  Probe  `json:"res"`
+}
+
+// save persists the last conclusive results so badges survive restarts.
+func (p *prober) save(ctx context.Context, set func(context.Context, string, any) error) {
+	p.mu.Lock()
+	out := map[string]savedProbe{}
+	for id, st := range p.states {
+		if st.res != nil {
+			out[id] = savedProbe{Addr: st.addr, Res: *st.res}
+		}
+	}
+	p.mu.Unlock()
+	if err := set(ctx, probesKey, out); err != nil {
+		slog.Debug("save probe results", "err", err)
+	}
+}
+
+// restore seeds states from saved results; they're shown right away and
+// re-checked soon (sync drops any whose container or port changed).
+func (p *prober) restore(saved map[string]savedProbe) {
+	now := p.now()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for id, sp := range saved {
+		if sp.Addr == "" {
+			continue
+		}
+		r := sp.Res
+		p.states[id] = &probeState{addr: sp.Addr, port: r.Port, res: &r, next: now.Add(probeResume + jitter(probeResume))}
+	}
+}
+
 // probeLoop runs while Wargo runs; it only sends requests when someone
 // has looked at containers recently.
 func (s *Service) probeLoop(ctx context.Context) {
 	p := s.probes
+	if s.st != nil {
+		var saved map[string]savedProbe
+		if ok, err := s.st.Get(ctx, probesKey, &saved); ok && err == nil {
+			p.restore(saved)
+		}
+	}
 	t := time.NewTicker(probeTick)
 	defer t.Stop()
 	for {
@@ -304,6 +349,9 @@ func (s *Service) probeLoop(ctx context.Context) {
 			}()
 		}
 		wg.Wait()
+		if s.st != nil {
+			p.save(ctx, s.st.Set)
+		}
 		if changed {
 			s.invalidate()
 			s.publishList(ctx)

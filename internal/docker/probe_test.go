@@ -105,3 +105,32 @@ func TestProbeIntervalAdvertised(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestProbeResultsSurviveRestart(t *testing.T) {
+	p := newProber()
+	now := time.Unix(1_800_000_000, 0)
+	p.now = func() time.Time { return now }
+	c := Container{FullID: "abc", State: "running", Image: "acme/app", Ports: []Port{{Private: 80, Public: 8080, Type: "tcp"}}}
+	p.sync([]Container{c})
+	p.record("abc", Probe{Status: "up", Port: 8080})
+	var saved map[string]savedProbe
+	p.save(context.Background(), func(_ context.Context, _ string, v any) error {
+		saved = v.(map[string]savedProbe)
+		return nil
+	})
+
+	q := newProber()
+	q.now = p.now
+	q.restore(saved)
+	if r := q.result("abc"); r == nil || r.Status != "up" {
+		t.Fatalf("restored result not shown: %+v", r)
+	}
+	q.sync([]Container{c}) // same address: keep the restored result
+	if q.result("abc") == nil {
+		t.Fatal("sync dropped a restored result")
+	}
+	now = now.Add(2 * probeResume)
+	if due := q.sync([]Container{c}); len(due) != 1 {
+		t.Fatal("restored result should be re-checked soon")
+	}
+}
