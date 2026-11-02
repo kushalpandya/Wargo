@@ -1,0 +1,17 @@
+# Build output
+/bin/
+/dist/
+web/dist/*
+!web/dist/.gitkeep
+
+# Frontend
+web/node_modules/
+web/.vite/
+web/playwright-report/
+web/test-results/
+
+# Local
+*.local.toml
+/data/
+.env
+.DS_Store
