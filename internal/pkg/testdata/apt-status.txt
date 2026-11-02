@@ -1,0 +1,30 @@
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Calculating upgrade...
+The following packages will be upgraded:
+  base-files libc6 openssh-client
+3 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+Need to get 4321 kB of archives.
+dlstatus:1:0:Retrieving file 1 of 3
+Get:1 http://deb.debian.org/debian bookworm/main amd64 base-files amd64 12.4+deb12u12 [70.9 kB]
+dlstatus:1:1.64:Retrieving file 2 of 3
+Get:2 http://deb.debian.org/debian bookworm/main amd64 libc6 amd64 2.36-9+deb12u13 [2758 kB]
+dlstatus:2:65.47:Retrieving file 3 of 3
+dlstatus:3:100:Retrieving file 3 of 3
+Fetched 4321 kB in 1s (4011 kB/s)
+pmstatus:dpkg-exec:0:Running dpkg
+(Reading database ... 45123 files and directories currently installed.)
+pmstatus:base-files:0:Installing base-files (amd64)
+Preparing to unpack .../base-files_12.4+deb12u12_amd64.deb ...
+pmstatus:base-files:16.6667:Preparing base-files (amd64)
+Unpacking base-files (12.4+deb12u12) over (12.4+deb12u11) ...
+pmstatus:base-files:22.2222:Unpacking base-files (amd64)
+pmstatus:libc6:amd64:33.3333:Preparing libc6:amd64 (amd64)
+pmstatus:libc6:amd64:38.8889:Unpacking libc6:amd64 (amd64)
+Setting up base-files (12.4+deb12u12) ...
+pmstatus:base-files:61.1111:Configuring base-files (amd64)
+pmstatus:libc6:amd64:77.7778:Configuring libc6:amd64 (amd64)
+Processing triggers for man-db (2.11.2-2) ...
+pmstatus:man-db:94.4444:Running post-installation trigger man-db
+pmstatus:dpkg-exec:100:Running dpkg

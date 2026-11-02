@@ -1,0 +1,23 @@
+<?xml version='1.0'?>
+<stream>
+<update-status version="0.6">
+<update-list>
+<update kind="package" name="vim" edition="9.1.1629-1.1" arch="x86_64" edition-old="9.1.1406-1.1">
+<summary>Vi IMproved</summary>
+<description>Vim (Vi IMproved) is an almost compatible version of the UNIX editor vi.</description>
+<license></license>
+<source url="https://download.opensuse.org/tumbleweed/repo/oss" alias="repo-oss"/>
+</update>
+<update kind="package" name="kernel-default" edition="6.17.5-1.1" arch="x86_64" edition-old="6.17.3-1.1">
+<summary>The Standard Kernel</summary>
+<description>The standard kernel for both uniprocessor and multiprocessor systems.</description>
+<license></license>
+<source url="https://download.opensuse.org/update/tumbleweed" alias="repo-update"/>
+</update>
+<update kind="patch" name="openSUSE-2026-123" edition="1" arch="noarch">
+<summary>Security update</summary>
+<source url="https://download.opensuse.org/update/tumbleweed" alias="repo-update"/>
+</update>
+</update-list>
+</update-status>
+</stream>

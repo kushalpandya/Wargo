@@ -1,0 +1,4 @@
+Checking for updates...
+2 available updates:
+bash    5.3.3-1  ->  5.3.3-2   core
+yay     12.5.0-1 ->  12.5.2-1  AUR

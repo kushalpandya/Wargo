@@ -1,0 +1,4 @@
+linux 6.17.6.arch1-1 core 148213760
+linux-firmware 20251021-1 core 0
+mesa 1:25.2.4-1 extra 9123456
+pacman-contrib 1.12.1-1 extra 51234

@@ -1,0 +1,3 @@
+org.mozilla.firefox	144.0
+com.valvesoftware.Steam	1.0.0.83
+org.gnome.Platform	49

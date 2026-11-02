@@ -1,0 +1,4 @@
+Listing...
+base-files/stable 12.4+deb12u12 amd64 [upgradable from: 12.4+deb12u11]
+libc6/stable,stable-security 2.36-9+deb12u13 amd64 [upgradable from: 2.36-9+deb12u10]
+openssh-client/stable-security 1:9.2p1-2+deb12u7 amd64 [upgradable from: 1:9.2p1-2+deb12u6]

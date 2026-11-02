@@ -1,0 +1,16 @@
+<?xml version='1.0'?>
+<stream>
+<message type="info">Loading repository data...</message>
+<message type="info">Reading installed packages...</message>
+<message type="info">Computing upgrade...</message>
+<install-summary download-size="12582912" space-usage-diff="1048576" packages-to-change="2">
+</install-summary>
+<message type="info">Retrieving: vim-9.1.1629-1.1.x86_64 (1/2), 1.8 MiB</message>
+<message type="info">Retrieving: kernel-default-6.17.5-1.1.x86_64 (2/2), 10.2 MiB</message>
+<progress id="install-resolvable" name="(1/2) Installing: vim-9.1.1629-1.1.x86_64" value="0"/>
+<progress id="install-resolvable" name="(1/2) Installing: vim-9.1.1629-1.1.x86_64" value="100"/>
+<progress id="install-resolvable" name="(1/2) Installing: vim-9.1.1629-1.1.x86_64" done="1"/>
+<progress id="install-resolvable" name="(2/2) Installing: kernel-default-6.17.5-1.1.x86_64" value="0"/>
+<progress id="install-resolvable" name="(2/2) Installing: kernel-default-6.17.5-1.1.x86_64" value="50"/>
+<message type="info">Running post-transaction scripts</message>
+</stream>

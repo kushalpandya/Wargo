@@ -1,0 +1,18 @@
+14 available updates:
+linux618                 6.18.49-1          -> 6.18.55-1           core
+linux618-headers         6.18.49-1          -> 6.18.55-1           core
+systemd                  258.1-1            -> 258.2-1             core
+systemd-libs             258.1-1            -> 258.2-1             core
+glibc                    2.44+r50+g1848099f063e-1 -> 2.44+r58+g9a1c2d4e0f11-1 core
+mesa                     1:25.2.4-1         -> 1:25.2.5-1          extra
+firefox                  144.0-1            -> 144.0.2-1           extra
+docker                   1:28.5.1-1         -> 1:28.5.2-1          extra
+python                   3.13.7-1           -> 3.13.8-1            extra
+nodejs                   24.10.0-1          -> 24.11.0-1           extra
+go                       2:1.26.0-1         -> 2:1.26.1-1          extra
+lib32-mesa               1:25.2.4-1         -> 1:25.2.5-1          multilib
+yay                      12.5.0-1           -> 12.5.2-1            AUR
+visual-studio-code-bin   1.105.0-1          -> 1.105.1-1           AUR
+
+Out of Date:
+teamviewer  15.81.5-1  AUR

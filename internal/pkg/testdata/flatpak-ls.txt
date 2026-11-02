@@ -1,0 +1,3 @@
+org.mozilla.firefox	144.0.2	flathub
+com.valvesoftware.Steam	1.0.0.84	flathub
+org.gnome.Platform		flathub
