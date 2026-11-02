@@ -32,6 +32,7 @@ type Filesystem struct {
 type Partition struct {
 	Name   string   `json:"name"`
 	Size   uint64   `json:"size"`
+	Label  string   `json:"label,omitempty"` // filesystem label, mounted or not
 	Mounts []string `json:"mounts,omitempty"`
 }
 
@@ -120,6 +121,7 @@ func drives(fs []Filesystem, temps []Temp) []Drive {
 		usage[f.Partition] = f
 	}
 	var out []Drive
+	lbl := labels()
 	nvmeTemp := 0.0
 	for _, t := range temps {
 		if t.Chip == "nvme" {
@@ -157,7 +159,7 @@ func drives(fs []Filesystem, temps []Temp) []Drive {
 				continue
 			}
 			psz, _ := readInt(filepath.Join(base, s.Name(), "size"))
-			d.Partitions = append(d.Partitions, Partition{Name: s.Name(), Size: uint64(psz) * 512, Mounts: mounts[s.Name()]})
+			d.Partitions = append(d.Partitions, Partition{Name: s.Name(), Size: uint64(psz) * 512, Label: lbl["/dev/"+s.Name()], Mounts: mounts[s.Name()]})
 			if f, ok := usage[s.Name()]; ok {
 				d.Used += f.Used
 				d.Total += f.Total

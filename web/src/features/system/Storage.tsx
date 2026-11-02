@@ -31,7 +31,7 @@ export interface Drive {
   removable: boolean;
   transport: string;
   temp?: number;
-  partitions: { name: string; size: number; mounts?: string[] }[];
+  partitions: { name: string; size: number; label?: string; mounts?: string[] }[];
   used: number;
   total: number;
 }
@@ -55,6 +55,7 @@ function driveKind(d: Drive) {
 interface PartRow {
   name: string;
   size: number;
+  label?: string;
   /** Mounted filesystems on this partition (several for bind mounts or btrfs subvolumes). */
   fs: Filesystem[];
 }
@@ -63,7 +64,7 @@ const usageTone = (p: number, base: "accent" | "frost") => (level(p, 80, 92) ===
 
 function ColumnTitle({ id, children }: { id: string; children: React.ReactNode }) {
   return (
-    <h3 id={id} className="px-3.5 pb-1.5 pt-3 text-2xs font-semibold uppercase tracking-wider text-subtle">
+    <h3 id={id} className="flex h-9 items-center border-b border-border px-3.5 text-2xs font-semibold uppercase tracking-wider text-subtle">
       {children}
     </h3>
   );
@@ -71,10 +72,14 @@ function ColumnTitle({ id, children }: { id: string; children: React.ReactNode }
 
 function PartitionRow({ p }: { p: PartRow }) {
   const f = p.fs[0];
+  const label = p.label || p.fs.find((x) => x.label)?.label;
   return (
     <li className="px-3.5 py-2 text-xs">
       <div className="flex min-w-0 items-baseline gap-2">
-        <span className="num shrink-0 font-medium text-fg">{p.name}</span>
+        {/* The filesystem label when there is one, else the device name. */}
+        <span className={cn("shrink-0 font-medium text-fg", !label && "num")} title={label ? `/dev/${p.name}` : undefined}>
+          {label || p.name}
+        </span>
         <span className="num min-w-0 flex-1 truncate text-muted" title={p.fs.map((x) => x.mount).join(", ")}>
           {f ? p.fs.map((x) => x.mount).join(", ") : "Not mounted"}
         </span>
@@ -86,7 +91,6 @@ function PartitionRow({ p }: { p: PartRow }) {
           <Meter value={f.usedPct} tone={usageTone(f.usedPct, "frost")} label={`${f.mount} used`} />
           <span className="num shrink-0 whitespace-nowrap text-right text-subtle">
             <span className="text-fg">{pct(f.usedPct)}</span> · {bytes(f.free)} free · {f.fstype}
-            {f.label ? ` · ${f.label}` : ""}
           </span>
         </div>
       )}
@@ -110,7 +114,7 @@ export const StorageCard = memo(function StorageCard() {
     const groups = (data?.drives ?? []).map((d) => {
       const parts: PartRow[] = d.partitions.map((p) => {
         claimed.add(p.name);
-        return { name: p.name, size: p.size, fs: byPart.get(p.name) ?? [] };
+        return { name: p.name, size: p.size, label: p.label, fs: byPart.get(p.name) ?? [] };
       });
       // A filesystem directly on the whole drive (no partition table).
       if (byPart.has(d.name)) {
@@ -145,7 +149,7 @@ export const StorageCard = memo(function StorageCard() {
       ) : (
         <div className="grid divide-border max-lg:divide-y lg:grid-cols-2 lg:divide-x">
           <section aria-labelledby="storage-drives" className="min-w-0 lg:max-h-[26rem] lg:overflow-y-auto">
-            <ColumnTitle id="storage-drives">Physical drives</ColumnTitle>
+            <ColumnTitle id="storage-drives">Drives</ColumnTitle>
             <ul className="divide-y divide-border">
               {groups.map(({ drive: d, parts }) => {
                 const usedPct = d.total ? (d.used / d.total) * 100 : 0;
@@ -190,8 +194,8 @@ export const StorageCard = memo(function StorageCard() {
             {[...groups.map((g) => ({ key: g.drive.name, title: `${g.drive.model || g.drive.name} · /dev/${g.drive.name}`, parts: g.parts })), ...(other.length ? [{ key: "_other", title: "Other mounted devices", parts: other }] : [])]
               .filter((g) => g.parts.length > 0)
               .map((g) => (
-                <div key={g.key} className={cn("transition-colors", hover === g.key && "bg-surface-2")}>
-                  <div className="num truncate border-t border-border bg-surface-2/50 px-3.5 py-1 text-2xs text-subtle">{g.title}</div>
+                <div key={g.key} className={cn("border-t border-border transition-colors first-of-type:border-t-0", hover === g.key && "bg-surface-2")}>
+                  <div className="num truncate border-b border-border bg-surface-2/50 px-3.5 py-1 text-2xs text-subtle">{g.title}</div>
                   <ul className="divide-y divide-border">
                     {g.parts.map((p) => (
                       <PartitionRow key={p.name} p={p} />
