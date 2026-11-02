@@ -170,7 +170,7 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
     <div className="@container">
       {!embedded && <PageHeader title="Torrent search" description={`Searches ${idx.length ? "the selected" : "all enabled"} Prowlarr indexers.`} />}
 
-      <Card>
+      <Card className={cn(embedded && "flex min-h-96 flex-col")}>
         <form onSubmit={submit} role="search" className="flex flex-wrap items-center gap-2 border-b border-border p-3">
           <div className="relative min-w-0 flex-1 basis-64">
             <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
@@ -252,7 +252,7 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
             </div>
             {search.data.errors.length > 0 && <IndexerErrors errors={search.data.errors} />}
             {sorted.length === 0 ? (
-              <EmptyState icon={<SearchIcon />} title={filter ? "No results match the filter" : "No results"}>
+              <EmptyState className="flex-1" icon={<SearchIcon />} title={filter ? "No results match the filter" : "No results"}>
                 {filter ? "Clear the filter to see all results." : "Try fewer or different words, another category, or all indexers."}
               </EmptyState>
             ) : (
@@ -332,7 +332,7 @@ function CatChip({ active, onClick, children }: { active: boolean; onClick: () =
 
 function Intro() {
   return (
-    <EmptyState icon={<SearchIcon />} title="Search your indexers">
+    <EmptyState className="flex-1" icon={<SearchIcon />} title="Search your indexers">
       <ul className="mt-1 space-y-1 text-left">
         <li>Press Enter to search every enabled indexer at once; results are merged and sorted by seeders.</li>
         <li>Be specific — add a version, year or resolution, e.g. “ubuntu 24.04 desktop”.</li>
