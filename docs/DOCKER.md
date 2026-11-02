@@ -1,15 +1,16 @@
 # Running Wargo in Docker (container mode)
 
 Wargo can run from a container image instead of a native install. It keeps
-almost every feature — metrics, processes, terminal, file manager, OS
-updates, Docker management, sign-in with your host account — by looking at
-the host through a few deliberate holes in the container.
+almost every feature: metrics, processes, terminal, file manager, OS updates,
+Docker management and sign-in with your server account. It does this by
+looking at the host (the server itself) through a few deliberate openings in
+the container.
 
-> **This container is not a sandbox.** It is privileged, shares the host's
-> PID, network and UTS namespaces and mounts the host's `/`. Anything that
-> controls Wargo controls the host as root. Treat it exactly like a native
-> install (see [SECURITY.md](SECURITY.md)): strong sign-in factors, TLS in
-> front, ideally an identity-aware proxy.
+> **This container is not a sandbox.** It runs privileged, shares the host's
+> processes, network and hostname, and mounts the host's whole filesystem.
+> Anyone who controls Wargo controls the server as root. Protect it exactly
+> like a native install (see [SECURITY.md](SECURITY.md)): strong sign-in,
+> HTTPS in front, and ideally a login proxy such as Cloudflare Access.
 
 ## Quick start
 
@@ -30,128 +31,131 @@ services:
       - wargo-data:/data
     environment:
       WARGO_HOST_ROOT: /host
-      WARGO_USER: ${WARGO_USER:-}   # host admin account; default: first wheel/sudo member with uid >= 1000
+      WARGO_USER: ${WARGO_USER:-}   # account to sign in with; default: first wheel/sudo member with uid >= 1000
 volumes:
   wargo-data:
 ```
 
 ```sh
 WARGO_USER=$USER docker compose -f deploy/docker/compose.yaml up -d
-docker logs wargo        # shows the account in use and any self-check problem
+docker logs wargo        # shows the account in use and any setup problem
 ```
 
-The container listens on **all interfaces, port 2207**, so it is reachable on
-your LAN at `http://<server-ip>:2207` (or `http://<hostname>.local:2207`).
-Plain HTTP on the LAN works, but the password and session travel
-unencrypted, and passkeys and copy/paste in the terminal need HTTPS or
-`localhost`. For anything beyond a trusted home network, put TLS in front
-([REVERSE_PROXY.md](REVERSE_PROXY.md)) or keep it on the server only with
-`WARGO_LISTEN=127.0.0.1:2207` and reach it through a proxy, tunnel or
-`ssh -L 2207:127.0.0.1:2207 <server>`.
+The container listens on **port 2207 on every network interface**, so you can
+reach it from your local network at `http://<server-ip>:2207` (or
+`http://<hostname>.local:2207`). Plain HTTP on your network works, but your
+password and session are sent unencrypted, and passkeys and terminal
+copy/paste need HTTPS or `localhost`. Outside a trusted home network, either
+put HTTPS in front ([REVERSE_PROXY.md](REVERSE_PROXY.md)), or keep Wargo on
+the server only with `WARGO_LISTEN=127.0.0.1:2207` and reach it through a
+proxy, a tunnel or `ssh -L 2207:127.0.0.1:2207 <server>`.
 
-Sign in with your **host** account's password (then set up TOTP or a
-passkey, as natively). Image tags: `vX.Y.Z[-pre]` per release, `latest` and
-`next` for the newest release (until 1.0, `latest` includes pre-releases).
-Pin a version with `WARGO_TAG=v1.0.0-alpha.1`. Images are built for amd64 and
-arm64.
+Sign in with your **server** account's password, then set up a two-factor
+code or a passkey, just like a native install.
 
-## Configuration
+**Image tags:** each release gets its own tag (for example `v1.0.0-alpha.1`).
+`latest` and `next` point to the newest release; until 1.0, `latest` includes
+pre-releases. To stay on one version, set `WARGO_TAG=v1.0.0-alpha.1`. Images
+are built for amd64 and arm64.
 
-Everything works with environment variables alone; a TOML file at
-`/data/config.toml` (same format as [config.example.toml](../config.example.toml))
-is read when present. Environment variables override the file.
+## Settings
 
-| Variable | Meaning | Default |
+Environment variables are enough to run Wargo. If `/data/config.toml` exists
+(same format as [config.example.toml](../config.example.toml)), Wargo reads it
+too, and environment variables win over the file.
+
+| Variable | What it does | Default |
 |---|---|---|
-| `WARGO_HOST_ROOT` | Where the host's `/` is mounted; enables container mode | `/host` (set in the image) |
-| `WARGO_USER` | Host admin account allowed to sign in | first regular member of `wheel`/`sudo`/`admin` |
-| `WARGO_LISTEN` | Listen address | `0.0.0.0:2207` (all interfaces) |
-| `WARGO_ORIGINS` | Public URLs (comma-separated). **Required** for every public hostname you use: other host names are refused (HTTP 421) to block DNS-rebinding attacks. IPs, `localhost`, the machine's hostname and `.local`/`.lan` names work without it | — |
-| `WARGO_TRUSTED_PROXIES` | CIDRs whose forwarded headers are trusted | — |
-| `WARGO_FILES_ROOTS` | File manager places, `Name=/path,Other=/path` (host paths) | the admin's home, plus `/DATA` if present |
-| `WARGO_DATA_DIR` | Database, keys, upload staging | `/data` |
-| `WARGO_CONFIG` | Config file path | `/data/config.toml` |
+| `WARGO_HOST_ROOT` | Where the host's `/` is mounted. Setting it turns on container mode. | `/host` (set in the image) |
+| `WARGO_USER` | The server account that can sign in | first regular member of `wheel`, `sudo` or `admin` |
+| `WARGO_LISTEN` | Address and port to listen on | `0.0.0.0:2207` (every interface) |
+| `WARGO_ORIGINS` | Your public addresses, separated by commas. **Required** for every public hostname you use; Wargo refuses other hostnames (HTTP 421) to block DNS rebinding attacks. IP addresses, `localhost`, the server's hostname and `.local`/`.lan` names work without it. | none |
+| `WARGO_TRUSTED_PROXIES` | Address ranges (CIDRs) of proxies whose forwarded headers Wargo trusts | none |
+| `WARGO_FILES_ROOTS` | Folders shown in the file manager, as `Name=/path,Other=/path` (paths on the host) | your home folder, plus `/DATA` if it exists |
+| `WARGO_DATA_DIR` | Where the database, keys and uploads in progress are kept | `/data` |
+| `WARGO_CONFIG` | Path of the config file | `/data/config.toml` |
 
 These variables also work for native installs.
 
-Recovery (`wargo admin reset-auth`): `docker exec wargo wargo admin reset-auth`.
+**Locked out?** Run `docker exec wargo wargo admin reset-auth`, then sign in
+with your password.
 
-## Required run options and why
+## Why each run option is needed
 
 | Option | Needed for |
 |---|---|
-| `/:/host` | Files, host `/etc/passwd`/`group`/`shadow` (sign-in), `/proc`, `/sys`, os-release, package databases, upgrade logs |
-| `pid: host` | Process list and signals; entering the host namespaces |
-| `privileged: true` | `nsenter` into the host's mount/IPC/cgroup namespaces, per-thread identity switching, reading host-only `/proc` entries |
-| `network_mode: host` | Network metrics and interfaces; listening on the host |
-| `uts: host` | The host's hostname |
-| `/var/run/docker.sock` | Containers page, launcher suggestions, integrations discovery |
+| `/:/host` | Files; the host's `/etc/passwd`, `group` and `shadow` (sign-in); `/proc` and `/sys`; OS details; package databases; upgrade logs |
+| `pid: host` | The process list, sending signals, and running commands on the host |
+| `privileged: true` | Running commands inside the host's environment (`nsenter`), acting as your account for file access, and reading host-only system information |
+| `network_mode: host` | Network statistics and interfaces, and listening on the server's own address |
+| `uts: host` | Showing the server's real hostname |
+| `/var/run/docker.sock` | The Containers page, app suggestions for the launcher, and finding integrations |
 
-On start Wargo checks these and exits with an explicit message when one is
-missing (for example "not in the host PID namespace: set pid: host").
+When it starts, Wargo checks these and stops with a clear message if one is
+missing, for example "not in the host PID namespace: set pid: host".
 
 ## How it works
 
-All mode-specific logic lives in `internal/host`:
+This section is for the curious. All container-specific code lives in
+`internal/host`.
 
 - **Paths.** Every host path Wargo reads (`/etc/os-release`, `/sys/...`,
   `/proc/1/mountinfo`, `/var/lib/pacman`, `/dev/disk/by-label`, mount points,
-  compose files, file-manager roots) is mapped below `/host`. Symlinks are
-  resolved *inside* the host root, so `/home -> /var/home` or absolute links
-  can't point into the container. gopsutil gets `HOST_PROC`, `HOST_SYS`,
-  `HOST_ETC`, `HOST_VAR`, `HOST_RUN`, `HOST_DEV`, `HOST_ROOT` and
-  `HOST_PROC_MOUNTINFO` (PID 1's mount table, i.e. the host's mounts).
-- **Users.** The host's `passwd`, `group` and `shadow` files are parsed
-  directly (the container's `os/user` would only know the image's accounts).
-- **Host commands** run through `nsenter -t 1 -m -u -i -n -C -- …` in the
-  host's namespaces, with the host's binaries. Commands that natively run
-  unprivileged (update checks, `docker compose`, container shells) drop to
-  the admin account with the host's `setpriv --reuid --regid --init-groups`
-  (falling back to `su`), so they get exactly the user's uid, gid and
-  supplementary groups.
-- **Terminal.** Host shells are `su -l <user>` on the host (real login
-  session, groups, home and shell); the root shell is `su -l <user> -c 'exec
-  sudo -i'`, so the host's sudo asks for your password inside the terminal
-  exactly like natively; container shells use the host's `docker exec` as
-  your user; tmux runs on the host.
-- **Files.** Each file-manager request and each background job step runs with
-  the calling thread's filesystem identity (fsuid/fsgid and supplementary
-  groups) switched to the admin account, using raw per-thread syscalls on a
-  locked OS thread. Permissions therefore match a native install exactly and
-  new files belong to you. Only "Administrator approval" retries run as root.
-  Uploads are staged in `/data/uploads` (owned by the admin); the trash lives
-  on the host in `~/.local/share/wargo/trash`.
-- **OS updates.** Checks run on the host as your user. Upgrades run as a
-  transient host systemd unit (`systemd-run`) whose command is the host's
-  `/bin/sh` with a constant wrapper script; the log is written to
-  `/var/log/wargo/<id>.log` on the host and followed by Wargo through the
-  host mount, so an upgrade survives a Wargo restart.
-- **Approval prompts.** sudo can't help inside a container, so admin actions
-  are approved with your account password (verified against the host's
-  shadow file, throttled) or a passkey. See [SECURITY.md](SECURITY.md).
+  compose files, file manager folders) is looked up under `/host`. Symlinks
+  are followed *inside* the host's filesystem, so links like
+  `/home -> /var/home` can't point into the container. The metrics library
+  (gopsutil) is told where the host's `/proc`, `/sys`, `/etc` and so on are,
+  and reads the host's mount table from PID 1.
+- **Users.** Wargo reads the host's `passwd`, `group` and `shadow` files
+  directly, because the container itself only knows the image's accounts.
+- **Host commands** run inside the host's environment through
+  `nsenter -t 1 -m -u -i -n -C -- …`, using the host's own programs. Commands
+  that natively run without root (update checks, `docker compose`, container
+  shells) switch to your account with the host's
+  `setpriv --reuid --regid --init-groups` (or `su` if that's missing), so they
+  get exactly your user and groups.
+- **Terminal.** A host shell is `su -l <user>` on the host, a real login with
+  your groups, home folder and shell. The root shell is
+  `su -l <user> -c 'exec sudo -i'`, so the host's sudo asks for your password
+  in the terminal, just like natively. Container shells use the host's
+  `docker exec` as your user, and tmux runs on the host.
+- **Files.** Each file manager request, and each step of a background job,
+  runs with the file access identity of your account (switched per thread,
+  on a locked thread). So permissions match a native install exactly, and new
+  files belong to you. Only actions you approve as administrator run as root.
+  Uploads in progress are kept in `/data/uploads`, and the trash is on the
+  host in `~/.local/share/wargo/trash`.
+- **OS updates.** Update checks run on the host as your account. Upgrades run
+  as a temporary systemd unit on the host (`systemd-run`) with a fixed wrapper
+  script. The log goes to `/var/log/wargo/<id>.log` on the host and Wargo
+  follows it there, so an upgrade keeps going even if Wargo restarts.
+- **Approvals.** sudo can't help inside a container, so admin actions are
+  approved with your account password (checked against the host's shadow
+  file, with attempts slowed down) or a passkey. See
+  [SECURITY.md](SECURITY.md).
 
 ## Limitations
 
-- Wargo does not update its own container. The Containers page marks it,
-  asks for explicit confirmation before stopping or restarting it and refuses
-  to recreate it; update with `docker compose pull && docker compose up -d`.
-- `wargo-privd` is not used; passkey approvals are verified by Wargo itself.
-- Host accounts from LDAP/SSSD/systemd-homed (not in `/etc/passwd` and
-  `/etc/shadow`) can't sign in; use a local account.
-- The host needs `nsenter` support in the kernel (any modern Linux) and, for
-  the best user switching, util-linux `setpriv` (present on Debian, Ubuntu,
-  Arch, Fedora, openSUSE; otherwise `su` is used).
-- Terminal processes are children of Wargo and live in its container cgroup:
-  stopping or restarting the container ends open shells, including a tmux
-  server that Wargo started.
+- Wargo doesn't update its own container. The Containers page marks it, asks
+  you to confirm before stopping or restarting it, and won't recreate it.
+  Update it with `docker compose pull && docker compose up -d`.
+- `wargo-privd` isn't used; Wargo checks passkey approvals itself.
+- Accounts that come from LDAP, SSSD or systemd-homed (not listed in
+  `/etc/passwd` and `/etc/shadow`) can't sign in. Use a local account.
+- The host needs a kernel that supports `nsenter` (any modern Linux). For the
+  best account switching it also needs util-linux `setpriv`, which Debian,
+  Ubuntu, Arch, Fedora and openSUSE include; otherwise `su` is used.
+- Terminal sessions run inside Wargo's container, so stopping or restarting
+  the container closes open shells, including a tmux server Wargo started.
 
-## Building locally
+## Building the image yourself
 
 ```sh
 docker build -t wargo:local .
 docker run --rm wargo:local version
 ```
 
-The image is multi-stage: Node builds the web UI, Go builds the binary with
-cgo (PAM and libxcrypt), and the runtime is `debian:bookworm-slim` with
-`util-linux`, `libpam0g`, `libcrypt1`, `ca-certificates` and `tini`.
+The build has three stages: Node builds the web UI, Go builds the binary
+(linked with PAM and libxcrypt), and the final image is
+`debian:bookworm-slim` with `util-linux`, `libpam0g`, `libcrypt1`,
+`ca-certificates` and `tini`.

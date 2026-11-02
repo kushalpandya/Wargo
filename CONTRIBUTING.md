@@ -37,20 +37,20 @@ node scripts/audit.mjs http://127.0.0.1:5173/<page>   # layout + accessibility (
 ```
 
 `web/scripts/shot.mjs` takes screenshots at phone, tablet and desktop sizes in
-light and dark themes — please check both themes for UI changes.
+light and dark themes. Please check both themes for UI changes.
 
 ## Guidelines
 
-- Keep it light: Wargo aims to stay a single small binary using little
-  memory. Avoid new dependencies unless they clearly pay for themselves.
-- Never hold root. Anything privileged goes through the elevation flow
-  (`internal/elevate`) and the validated helper (`internal/helper`).
-- Every file operation goes through `os.Root`; every command is built as an
-  argument list, never a shell string.
-- Use the shared UI kit (`web/src/components/ui`) and theme tokens rather than
-  raw colours, and keep pages usable on phones.
-- Commit titles are short, imperative and sentence-case ("Add …", "Fix …");
-  explain the why in a short body.
+- Keep it light. Wargo should stay a single small binary that uses little
+  memory, so only add a dependency when it is clearly worth it.
+- Never keep root access. Anything that needs root goes through the approval
+  flow (`internal/elevate`) and the checked helper (`internal/helper`).
+- Every file operation goes through `os.Root`, and every command is built as
+  a list of arguments, never as a shell string.
+- Use the shared UI components (`web/src/components/ui`) and theme colours
+  instead of fixed colours, and keep pages usable on phones.
+- Commit titles are short commands in sentence case ("Add …", "Fix …").
+  Explain why in a short body.
 
 ## Project layout
 
