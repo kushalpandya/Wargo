@@ -1,0 +1,208 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package launcher
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/kushalpandya/wargo/internal/httpx"
+)
+
+const maxIconSize = 512 << 10
+
+var (
+	iconNameRe = regexp.MustCompile(`^[a-f0-9]{64}\.(png|svg|webp|jpg)$`)
+	slugRe     = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
+)
+
+func validIconName(n string) bool { return iconNameRe.MatchString(n) }
+
+var iconTypes = map[string]string{
+	"png": "image/png", "svg": "image/svg+xml", "webp": "image/webp", "jpg": "image/jpeg",
+}
+
+// sniffIcon returns the file extension for an accepted image, or "".
+func sniffIcon(b []byte) string {
+	switch http.DetectContentType(b) {
+	case "image/png":
+		return "png"
+	case "image/jpeg":
+		return "jpg"
+	case "image/webp":
+		return "webp"
+	}
+	head := b
+	if len(head) > 1024 {
+		head = head[:1024]
+	}
+	t := strings.ToLower(strings.TrimSpace(string(bytes.TrimPrefix(head, []byte("\xef\xbb\xbf")))))
+	if (strings.HasPrefix(t, "<?xml") || strings.HasPrefix(t, "<svg") || strings.HasPrefix(t, "<!--") ||
+		strings.HasPrefix(t, "<!doctype svg")) && bytes.Contains(bytes.ToLower(b), []byte("<svg")) {
+		return "svg"
+	}
+	return ""
+}
+
+// saveIcon stores b content-addressed and returns its file name.
+func (s *Service) saveIcon(b []byte) (string, error) {
+	if len(b) == 0 {
+		return "", httpx.BadRequest("empty file")
+	}
+	if len(b) > maxIconSize {
+		return "", httpx.BadRequest("icon is larger than 512 KB")
+	}
+	ext := sniffIcon(b)
+	if ext == "" {
+		return "", httpx.BadRequest("unsupported image type (use PNG, SVG, WebP or JPEG)")
+	}
+	sum := sha256.Sum256(b)
+	name := hex.EncodeToString(sum[:]) + "." + ext
+	if err := os.MkdirAll(s.iconDir, 0o700); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(s.iconDir, name)
+	if _, err := os.Stat(dst); err == nil {
+		return name, nil
+	}
+	tmp, err := os.CreateTemp(s.iconDir, ".upload-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	return name, os.Rename(tmp.Name(), dst)
+}
+
+func (s *Service) handleIconUpload(w http.ResponseWriter, r *http.Request) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxIconSize+64<<10)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		return httpx.BadRequest("expected multipart/form-data")
+	}
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			return httpx.BadRequest("missing file")
+		}
+		if err != nil {
+			return httpx.BadRequest("upload too large or malformed")
+		}
+		if p.FormName() != "file" {
+			p.Close()
+			continue
+		}
+		b, err := io.ReadAll(io.LimitReader(p, maxIconSize+1))
+		p.Close()
+		if err != nil {
+			return httpx.BadRequest("upload too large or malformed")
+		}
+		name, err := s.saveIcon(b)
+		s.audit.Record(r, "launcher.icon_upload", name, err, nil)
+		if err != nil {
+			return err
+		}
+		httpx.OK(w, map[string]string{"icon": name})
+		return nil
+	}
+}
+
+// fetchIcon downloads a dashboard-icons PNG by slug.
+func (s *Service) fetchIcon(ctx context.Context, slug string) (string, error) {
+	if !slugRe.MatchString(slug) {
+		return "", httpx.BadRequest("invalid icon name (lowercase letters, digits and dashes)")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.iconBase+slug+".png", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Wargo")
+	resp, err := s.iconClient.Do(req)
+	if err != nil {
+		return "", httpx.Errorf(http.StatusBadGateway, "fetch_failed", "Could not reach the icon CDN")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", httpx.Errorf(http.StatusNotFound, "icon_not_found", fmt.Sprintf("No icon named %q in dashboard-icons", slug))
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", httpx.Errorf(http.StatusBadGateway, "fetch_failed", "Icon CDN answered "+resp.Status)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxIconSize+1))
+	if err != nil {
+		return "", httpx.Errorf(http.StatusBadGateway, "fetch_failed", "Icon download failed")
+	}
+	if len(b) > maxIconSize {
+		return "", httpx.BadRequest("icon is larger than 512 KB")
+	}
+	if sniffIcon(b) != "png" {
+		return "", httpx.Errorf(http.StatusBadGateway, "fetch_failed", "CDN did not return a PNG")
+	}
+	return s.saveIcon(b)
+}
+
+func (s *Service) handleIconFetch(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Slug string `json:"slug"`
+	}
+	if err := httpx.Decode(r, &req); err != nil {
+		return err
+	}
+	slug := strings.ToLower(strings.TrimSpace(req.Slug))
+	name, err := s.fetchIcon(r.Context(), slug)
+	s.audit.Record(r, "launcher.icon_fetch", slug, err, nil)
+	if err != nil {
+		return err
+	}
+	httpx.OK(w, map[string]string{"icon": name})
+	return nil
+}
+
+func (s *Service) handleIconGet(w http.ResponseWriter, r *http.Request) error {
+	name := r.PathValue("name")
+	if !validIconName(name) {
+		return httpx.ErrNotFound
+	}
+	root, err := os.OpenRoot(s.iconDir)
+	if err != nil {
+		return httpx.ErrNotFound
+	}
+	defer root.Close()
+	f, err := root.Open(name)
+	if err != nil {
+		return httpx.ErrNotFound
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || !st.Mode().IsRegular() {
+		return httpx.ErrNotFound
+	}
+	ext := name[strings.LastIndexByte(name, '.')+1:]
+	h := w.Header()
+	h.Set("Content-Type", iconTypes[ext])
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	if ext == "svg" {
+		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+	}
+	http.ServeContent(w, r, "", st.ModTime(), f)
+	return nil
+}

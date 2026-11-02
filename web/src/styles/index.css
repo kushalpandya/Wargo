@@ -9,7 +9,8 @@
  * "Northern" palette: cold slate/ice neutrals with a single warm ember
  * accent. Every colour is a CSS variable so light/dark swap in one place.
  */
-:root {
+:root,
+.theme-light {
   --bg: #f2f4f6;
   --surface: #ffffff;
   --surface-2: #f7f8fa;

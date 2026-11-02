@@ -55,7 +55,7 @@ export function TileGrid({ tiles, compact }: { tiles: Tile[]; compact?: boolean 
                     <span className="truncate text-[0.8125rem] font-medium">{t.name}</span>
                     {t.status && <StatusDot tone={t.status === "up" ? "ok" : "crit"} label={t.status === "up" ? "Online" : "Offline"} />}
                   </div>
-                  <div className="num truncate text-2xs text-subtle">{t.url.replace(/^https?:\/\//, "")}</div>
+                  <div className="num truncate text-2xs text-muted">{t.url.replace(/^https?:\/\//, "")}</div>
                 </div>
                 {t.newTab && <ExternalLink className="size-3.5 shrink-0 text-subtle opacity-0 transition-opacity group-hover:opacity-100" />}
               </a>
