@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Copy, Download } from "lucide-react";
@@ -25,7 +25,12 @@ export function TotpEnroll({ onDone }: { onDone: (codes: string[]) => void }) {
     mutationFn: () => api.post<{ recoveryCodes: string[] }>("/api/auth/totp/enable", { code }),
     onSuccess: (r) => onDone(r.recoveryCodes),
   });
+  // Guard against double invocation (React StrictMode): each setup call
+  // generates a new secret, so only the first may run.
+  const started = useRef(false);
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     begin.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
