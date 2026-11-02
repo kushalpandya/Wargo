@@ -112,10 +112,21 @@ type Metrics struct {
 	History  Duration `toml:"history"`
 }
 
+// DefaultListen is the listen address when neither the config file nor
+// WARGO_LISTEN sets one. Native installs stay on loopback (publish through
+// a reverse proxy); the container image listens on all interfaces so it is
+// reachable on the LAN without extra setup, like other homelab dashboards.
+func DefaultListen() string {
+	if host.Container() {
+		return "0.0.0.0:2207"
+	}
+	return "127.0.0.1:2207"
+}
+
 // Default returns a configuration suitable for a fresh install.
 func Default() Config {
 	c := Config{
-		Listen: "127.0.0.1:2207",
+		Listen: DefaultListen(),
 		Auth: Auth{
 			PAMService:  "wargo",
 			SessionIdle: Duration{30 * time.Minute},
@@ -351,7 +362,7 @@ func ListenAddr(path string) string {
 	if b, err := os.ReadFile(path); err == nil && toml.Unmarshal(b, &c) == nil && c.Listen != "" {
 		return c.Listen
 	}
-	return "127.0.0.1:2207"
+	return DefaultListen()
 }
 
 // LoopbackOnly reports whether Listen binds a loopback address only.

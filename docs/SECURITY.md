@@ -17,8 +17,9 @@ for the Docker image.)
   dedicated service account. PAM (`pam_unix`) can only verify the password of
   the account the process runs as, and running as that user gives the
   terminal and file manager natural ownership semantics.
-- Listens on `127.0.0.1:2207` by default. Publish it through nginx, Caddy or
-  cloudflared (see [REVERSE_PROXY.md](REVERSE_PROXY.md)).
+- Native installs listen on `127.0.0.1:2207` by default; publish them through
+  nginx, Caddy or cloudflared (see [REVERSE_PROXY.md](REVERSE_PROXY.md)). The
+  Docker image listens on all interfaces (see [Container mode](#container-mode)).
 - **Host allow-list (DNS rebinding):** every request must name a known host —
   an IP address, `localhost`, a single-label or private name (`.local`,
   `.lan`, `.home.arpa`, `.internal`…), the machine's hostname, or a host in
@@ -158,8 +159,10 @@ When Wargo runs from the Docker image ([DOCKER.md](DOCKER.md)), set up with
 - **Self protection.** Wargo identifies its own container and asks for
   explicit confirmation before stopping or restarting it, and refuses to
   recreate (update) it; it never signals its own process or its init.
-- **Network.** The default listen address stays `127.0.0.1:2207` (host
-  network). Only set `WARGO_LISTEN=0.0.0.0:2207` behind TLS.
+- **Network.** The image listens on `0.0.0.0:2207` (host network) so it is
+  reachable on the LAN out of the box; plain HTTP exposes the password and
+  session to the local network. Put TLS in front, or set
+  `WARGO_LISTEN=127.0.0.1:2207` to keep it on the server only.
 
 ## Integrations
 

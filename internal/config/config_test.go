@@ -107,8 +107,8 @@ func TestContainerDefaults(t *testing.T) {
 	if len(c.Files.Roots) != 1 || c.Files.Roots[0].Path != "/home/alice" {
 		t.Fatalf("roots %+v", c.Files.Roots)
 	}
-	if c.Listen != "127.0.0.1:2207" {
-		t.Fatalf("container default listen must stay loopback, got %s", c.Listen)
+	if c.Listen != "0.0.0.0:2207" {
+		t.Fatalf("container default listen should cover the LAN, got %s", c.Listen)
 	}
 	c.DataDir = ""
 	if defaultDataDir() != ContainerDataDir {
@@ -150,5 +150,11 @@ func TestValidateOrigins(t *testing.T) {
 		if err := c.Validate(); (err == nil) != ok {
 			t.Errorf("%q: err=%v", o, err)
 		}
+	}
+}
+
+func TestNativeDefaultListenIsLoopback(t *testing.T) {
+	if c := Default(); c.Listen != "127.0.0.1:2207" {
+		t.Fatalf("native default listen must stay loopback, got %s", c.Listen)
 	}
 }

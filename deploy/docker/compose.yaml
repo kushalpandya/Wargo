@@ -24,9 +24,9 @@ services:
       # Host admin account to sign in as. Default: the first member of
       # wheel/sudo/admin with uid >= 1000.
       WARGO_USER: ${WARGO_USER:-}
-      # Defaults to 127.0.0.1:2207 (reverse proxy on the same host).
-      # For LAN access set 0.0.0.0:2207 — and put TLS in front of it.
-      # WARGO_LISTEN: 0.0.0.0:2207
+      # Defaults to 0.0.0.0:2207 (reachable on the LAN over plain HTTP).
+      # To keep it on this server only (reverse proxy or tunnel here):
+      # WARGO_LISTEN: 127.0.0.1:2207
       # Public URLs for WebSockets and passkeys (comma-separated):
       # WARGO_ORIGINS: https://wargo.example.com
       # Reverse proxies whose X-Forwarded-For is trusted:

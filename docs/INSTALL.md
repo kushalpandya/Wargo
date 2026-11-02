@@ -70,7 +70,7 @@ curl -fsSLO https://raw.githubusercontent.com/kushalpandya/wargo/main/deploy/doc
 WARGO_USER=$USER docker compose up -d
 ```
 
-Open **http://127.0.0.1:2207** and sign in with your **host** account's
+Open **http://<server-ip>:2207** (it listens on your LAN) and sign in with your **host** account's
 username and password.
 
 The container needs broad access to the host (privileged, host PID and

@@ -40,10 +40,14 @@ WARGO_USER=$USER docker compose -f deploy/docker/compose.yaml up -d
 docker logs wargo        # shows the account in use and any self-check problem
 ```
 
-Wargo listens on **`127.0.0.1:2207`** by default — reachable from a reverse
-proxy or tunnel on the same host ([REVERSE_PROXY.md](REVERSE_PROXY.md)). For
-LAN access set `WARGO_LISTEN=0.0.0.0:2207`, but only behind TLS: passkeys and
-`Secure` cookies need HTTPS anyway.
+The container listens on **all interfaces, port 2207**, so it is reachable on
+your LAN at `http://<server-ip>:2207` (or `http://<hostname>.local:2207`).
+Plain HTTP on the LAN works, but the password and session travel
+unencrypted, and passkeys and copy/paste in the terminal need HTTPS or
+`localhost`. For anything beyond a trusted home network, put TLS in front
+([REVERSE_PROXY.md](REVERSE_PROXY.md)) or keep it on the server only with
+`WARGO_LISTEN=127.0.0.1:2207` and reach it through a proxy, tunnel or
+`ssh -L 2207:127.0.0.1:2207 <server>`.
 
 Sign in with your **host** account's password (then set up TOTP or a
 passkey, as natively). Image tags: `vX.Y.Z[-pre]` per release, `latest` and
@@ -61,7 +65,7 @@ is read when present. Environment variables override the file.
 |---|---|---|
 | `WARGO_HOST_ROOT` | Where the host's `/` is mounted; enables container mode | `/host` (set in the image) |
 | `WARGO_USER` | Host admin account allowed to sign in | first regular member of `wheel`/`sudo`/`admin` |
-| `WARGO_LISTEN` | Listen address | `127.0.0.1:2207` |
+| `WARGO_LISTEN` | Listen address | `0.0.0.0:2207` (all interfaces) |
 | `WARGO_ORIGINS` | Public URLs (comma-separated). **Required** for every public hostname you use: other host names are refused (HTTP 421) to block DNS-rebinding attacks. IPs, `localhost`, the machine's hostname and `.local`/`.lan` names work without it | — |
 | `WARGO_TRUSTED_PROXIES` | CIDRs whose forwarded headers are trusted | — |
 | `WARGO_FILES_ROOTS` | File manager places, `Name=/path,Other=/path` (host paths) | the admin's home, plus `/DATA` if present |
