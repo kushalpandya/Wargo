@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import type { Tone } from "@/components/ui/misc";
 import { ExternalLink } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { Container, Port } from "./types";
@@ -87,4 +88,12 @@ export function parseTime(s?: string): number {
   if (!s) return 0;
   const t = new Date(s.replace(/(\.\d{3})\d+/, "$1")).getTime();
   return isNaN(t) ? 0 : t;
+}
+
+/** Status-dot tone for a container (state + health). */
+export function containerTone(c: Pick<Container, "state" | "health">): Tone {
+  if (c.state !== "running") return c.state === "restarting" ? "warn" : c.state === "paused" ? "frost" : "neutral";
+  if (c.health === "unhealthy") return "crit";
+  if (c.health === "starting") return "warn";
+  return "ok";
 }

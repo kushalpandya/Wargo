@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCapabilities } from "@/app/session";
-import { useMetrics } from "@/features/overview/useMetrics";
-import { LauncherStrip } from "@/features/overview/LauncherStrip";
+import { useMetrics } from "@/features/system/useMetrics";
+import { LauncherStrip } from "./LauncherStrip";
 import { SummaryTiles } from "@/features/system/Tiles";
 import { SpecsCard } from "./SpecsCard";
 import { ContainersCard } from "./ContainersCard";

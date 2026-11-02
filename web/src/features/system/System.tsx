@@ -5,9 +5,9 @@ import { cn } from "@/lib/cn";
 import { Card, CardBody, CardHeader, Stat } from "@/components/ui/card";
 import { Meter, PageHeader, Skeleton } from "@/components/ui/misc";
 import { TimeChart } from "@/components/charts/TimeChart";
-import { useMetrics, useSeries, type Point, type Snapshot } from "@/features/overview/useMetrics";
-import { StorageCard } from "@/features/overview/Storage";
-import { SensorsCard } from "@/features/overview/Sensors";
+import { useMetrics, useSeries, type Point, type Snapshot } from "@/features/system/useMetrics";
+import { StorageCard } from "@/features/system/Storage";
+import { SensorsCard } from "@/features/system/Sensors";
 import { ProcessesPanel } from "@/features/processes/Processes";
 import { SummaryTiles } from "./Tiles";
 

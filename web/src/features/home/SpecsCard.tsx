@@ -8,8 +8,8 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/misc";
 import { Logo } from "@/app/Logo";
 import { useCapabilities, useMe } from "@/app/session";
-import type { Snapshot, SystemInfo } from "@/features/overview/useMetrics";
-import { useStorage } from "@/features/overview/Storage";
+import type { Snapshot, SystemInfo } from "@/features/system/useMetrics";
+import { useStorage } from "@/features/system/Storage";
 
 export interface Specs {
   model?: string;

@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/misc";
 import { Table, Td, Th, THead, Tr } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
-import { containerTone } from "@/features/overview/ContainersSummary";
+import { containerTone } from "@/features/containers/util";
 import { ContainerSheet, type SheetTab } from "./ContainerSheet";
 import { ContainerIcon } from "./ContainerIcon";
 import { useCheckContainerUpdates, useContainers, useContainerUpdates } from "./api";

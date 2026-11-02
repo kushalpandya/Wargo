@@ -9,7 +9,7 @@ import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/dialog";
 import { Badge, EmptyState, ErrorNote, Field, Meter, Skeleton, StatusDot } from "@/components/ui/misc";
-import { containerTone } from "@/features/overview/ContainersSummary";
+import { containerTone } from "@/features/containers/util";
 import { LogsView } from "./LogsView";
 import { ContainerIcon } from "./ContainerIcon";
 import { parseTime, PortLinks, splitImage } from "./util";

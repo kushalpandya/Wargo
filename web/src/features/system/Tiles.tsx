@@ -6,8 +6,8 @@ import { bytes, level, pct, rate } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Card } from "@/components/ui/card";
 import { Ring, Sparkline } from "@/components/charts/Sparkline";
-import type { Point, Snapshot } from "@/features/overview/useMetrics";
-import { useStorage, type Filesystem } from "@/features/overview/Storage";
+import type { Point, Snapshot } from "@/features/system/useMetrics";
+import { useStorage, type Filesystem } from "@/features/system/Storage";
 
 type Tone = "ok" | "warn" | "crit" | "accent" | "frost";
 
