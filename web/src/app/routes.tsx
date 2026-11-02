@@ -9,8 +9,8 @@ import { Layout } from "./Layout";
 import { Login } from "@/features/auth/Login";
 import { TotpSetupPage } from "@/features/auth/TotpSetup";
 
-const Overview = lazy(() => import("@/features/overview/Overview"));
-const Processes = lazy(() => import("@/features/processes/Processes"));
+const Home = lazy(() => import("@/features/home/Home"));
+const System = lazy(() => import("@/features/system/System"));
 const Containers = lazy(() => import("@/features/containers/Containers"));
 const Terminal = lazy(() => import("@/features/terminal/Terminal"));
 const Files = lazy(() => import("@/features/files/Files"));
@@ -69,9 +69,10 @@ export const router = createBrowserRouter([
       {
         element: <Layout />,
         children: [
-          { index: true, element: <Overview /> },
+          { index: true, element: <Home /> },
+          { path: "system", element: <System /> },
           { path: "apps", element: <Apps /> },
-          { path: "processes", element: <Processes /> },
+          { path: "processes", element: <Navigate to="/system" replace /> },
           { path: "containers", element: <Containers /> },
           { path: "containers/:id", element: <Containers /> },
           { path: "terminal", element: <Terminal /> },
