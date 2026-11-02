@@ -40,7 +40,7 @@ export interface Capabilities {
   launcher?: { enabled: boolean; placement: "overview" | "page" };
   pkg?: { backend: string; available: boolean; distro: string };
   files?: { roots: { name: string; path: string }[] };
-  terminal?: { available: boolean; shell: string; tmux: boolean };
+  terminal?: { available: boolean; shell: string; tmux: boolean; sudo?: boolean; docker?: boolean; maxSessions?: number };
 }
 
 export function useCapabilities() {
