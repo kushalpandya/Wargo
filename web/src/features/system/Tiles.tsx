@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Ring, Sparkline } from "@/components/charts/Sparkline";
 import type { Point, Snapshot } from "@/features/system/useMetrics";
 import { useStorage, type Filesystem } from "@/features/system/Storage";
+import { LinkIcon, linkDetails, linkName } from "./LinkLabel";
 
 type Tone = "ok" | "warn" | "crit" | "accent" | "frost";
 
@@ -108,6 +109,7 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
   const hasTemp = !!s?.cpuTemp;
   const tt = hasTemp ? tempTone(s!.cpuTemp) : "ok";
   const to = link ? "/system" : undefined;
+  const primary = s?.net?.find((n) => n.name === s.primaryIf) ?? s?.net?.find((n) => n.link?.up && n.link.kind !== "bridge");
   const [rxV, rxU] = split(rate(s?.netRx ?? 0));
   const [memV, memU] = split(bytes(s?.memory.used ?? 0));
 
@@ -154,6 +156,14 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
         to={to}
         icon={<Network />}
         title="Network"
+        corner={
+          primary?.link && linkName(primary.link) ? (
+            <span className="inline-flex min-w-0 max-w-36 items-center gap-1 text-xs font-medium text-muted" title={[linkName(primary.link), linkDetails(primary.link)].filter(Boolean).join(" · ")}>
+              <LinkIcon link={primary.link} />
+              <span className="truncate">{linkName(primary.link)}</span>
+            </span>
+          ) : undefined
+        }
         value={s ? rxV : "–"}
         unit={s ? `${rxU} down` : undefined}
         sub={s ? `↑ ${rate(s.netTx)} up` : undefined}

@@ -10,6 +10,7 @@ import { StorageCard } from "@/features/system/Storage";
 import { SensorsCard } from "@/features/system/Sensors";
 import { ProcessesPanel } from "@/features/processes/Processes";
 import { SummaryTiles } from "./Tiles";
+import { LinkIcon, linkDetails, linkName } from "./LinkLabel";
 
 const toneOf = (p: number) => level(p);
 
@@ -65,24 +66,34 @@ function NetworkCard({ snap, points }: { snap: Snapshot | null; points: Point[] 
         </div>
       </CardBody>
       <div className="border-t border-border">
-        {ifs.map((n) => (
-          <div key={n.name} className="flex items-center gap-3 border-b border-border px-3.5 py-2 text-xs last:border-0">
-            <span className="num w-28 truncate font-medium text-fg" title={n.name}>
-              {n.name}
-            </span>
-            <span className="num hidden min-w-0 flex-1 truncate text-subtle sm:block" title={n.addrs?.join(", ")}>
-              {n.addrs?.[0]?.replace(/\/\d+$/, "") ?? ""}
-            </span>
-            <span className="num ml-auto inline-flex w-24 items-center justify-end gap-1 text-frost">
-              <ArrowDown className="size-3" />
-              {rate(n.rxRate)}
-            </span>
-            <span className="num inline-flex w-24 items-center justify-end gap-1 text-accent">
-              <ArrowUp className="size-3" />
-              {rate(n.txRate)}
-            </span>
-          </div>
-        ))}
+        {ifs.map((n) => {
+          const name = linkName(n.link);
+          const details = [linkDetails(n.link), n.addrs?.[0]?.replace(/\/\d+$/, "")].filter(Boolean).join(" · ");
+          return (
+            <div key={n.name} className="flex items-center gap-3 border-b border-border px-3.5 py-2 text-xs last:border-0">
+              <LinkIcon link={n.link} className={cn("size-4", n.link?.up === false ? "text-subtle" : n.name === snap?.primaryIf ? "text-frost" : "text-muted")} />
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-baseline gap-1.5">
+                  <span className="truncate font-medium text-fg">{name ?? n.name}</span>
+                  {name && <span className="num shrink-0 text-subtle">{n.name}</span>}
+                </div>
+                {details && (
+                  <div className="num truncate text-subtle" title={n.addrs?.join(", ")}>
+                    {details}
+                  </div>
+                )}
+              </div>
+              <span className="num inline-flex w-24 shrink-0 items-center justify-end gap-1 text-frost">
+                <ArrowDown className="size-3" />
+                {rate(n.rxRate)}
+              </span>
+              <span className="num inline-flex w-24 shrink-0 items-center justify-end gap-1 text-accent">
+                <ArrowUp className="size-3" />
+                {rate(n.txRate)}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </Card>
   );

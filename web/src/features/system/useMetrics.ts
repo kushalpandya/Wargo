@@ -13,13 +13,26 @@ export interface Temp {
   kind: "cpu" | "core" | "disk" | "gpu" | "board" | "wifi" | "other";
 }
 
+/** What a network interface is connected to. */
+export interface Link {
+  kind: "wifi" | "ethernet" | "vpn" | "bridge" | "other";
+  up: boolean;
+  ssid?: string;
+  signalDbm?: number;
+  band?: string;
+  rateMbps?: number;
+  connection?: string;
+}
+
 export interface Snapshot {
   ts: number;
   cpu: { total: number; perCore: number[]; load: [number, number, number]; freqMHz: number };
   memory: { total: number; used: number; available: number; cached: number; buffers: number; swapTotal: number; swapUsed: number; usedPct: number };
   temps: Temp[] | null;
   fans: { chip: string; label: string; rpm: number }[] | null;
-  net: { name: string; rxRate: number; txRate: number; rxTotal: number; txTotal: number; addrs?: string[] }[] | null;
+  net: { name: string; rxRate: number; txRate: number; rxTotal: number; txTotal: number; addrs?: string[]; link?: Link }[] | null;
+  /** Interface carrying the default route. */
+  primaryIf?: string;
   netRx: number;
   netTx: number;
   disks: { name: string; readRate: number; writeRate: number; busy: number }[] | null;
