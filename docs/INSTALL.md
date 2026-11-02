@@ -5,7 +5,7 @@ install it:
 
 | | Native (recommended) | Docker |
 |---|---|---|
-| Needs | systemd, glibc 2.31+ (Debian 11+, Ubuntu 20.04+, Fedora, Arch/Manjaro, openSUSE…) | Docker with Compose |
+| Needs | systemd, glibc 2.28+ (Debian 10+, Ubuntu 20.04+, RHEL/Rocky/Alma 8+, Fedora, Arch/Manjaro, openSUSE…) | Docker with Compose |
 | Install | one command | one `compose.yaml` |
 | Admin actions | your sudo password or a passkey, enforced by the OS | your password or a passkey, enforced by Wargo |
 

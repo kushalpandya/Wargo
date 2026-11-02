@@ -30,19 +30,18 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
-    # Build on Debian 11 (glibc 2.31) so the cgo binary runs on every
-    # reasonably modern distribution (Debian 11+, Ubuntu 20.04+, Fedora,
-    # Arch, openSUSE). Building on the runner itself would require its
-    # glibc (2.39).
-    container: debian:bullseye
+    # Build on AlmaLinux 8 (glibc 2.28, supported until 2029) so the cgo
+    # binary runs on every reasonably modern distribution (Debian 10+,
+    # Ubuntu 20.04+, RHEL/Rocky/Alma 8+, Fedora, Arch, openSUSE). Building
+    # on the runner itself would require its glibc (2.39).
+    container: almalinux:8
     env:
-      MAX_GLIBC: "2.31"
+      MAX_GLIBC: "2.28"
     steps:
       - name: Build dependencies
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates git curl xz-utils build-essential binutils libpam0g-dev
+          dnf install -y --setopt=install_weak_deps=False \
+            ca-certificates git-core gcc make binutils pam-devel tar gzip xz findutils diffutils which
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false

@@ -208,7 +208,7 @@ another unprivileged user on the host. Highlights of what was fixed:
   zip caps; config imports open files without following symlinks.
 - Bounded growth: audit log retention (180 days / 50,000 entries), capped
   fields, event and job buffers.
-- Builds: release binaries need only glibc 2.31 + libpam; CI actions pinned
+- Builds: release binaries need only glibc 2.28 + libpam; CI actions pinned
   to commit SHAs with least-privilege permissions; releases ship
   `SHA256SUMS`; `govulncheck` clean with Go 1.26.10.
 
