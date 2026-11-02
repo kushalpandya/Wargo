@@ -27,6 +27,7 @@ import { setTheme, useThemeMode, type ThemeMode } from "@/lib/theme";
 import { useSocketStatus } from "@/lib/ws";
 import { useCapabilities, useMe } from "./session";
 import { Logo } from "./Logo";
+import { UpdatesBadge } from "@/features/updates/UpdatesBadge";
 import { Menu, MenuItem, MenuLabel, MenuSeparator, Tooltip } from "@/components/ui/menu";
 import { IconButton } from "@/components/ui/button";
 import { Badge, Spinner, StatusDot } from "@/components/ui/misc";
@@ -36,6 +37,7 @@ interface NavItem {
   label: string;
   icon: ReactNode;
   show?: boolean;
+  badge?: ReactNode;
 }
 
 function useNav(): { section?: string; items: NavItem[] }[] {
@@ -50,7 +52,7 @@ function useNav(): { section?: string; items: NavItem[] }[] {
         { to: "/containers", label: "Containers", icon: <Boxes /> },
         { to: "/terminal", label: "Terminal", icon: <SquareTerminal /> },
         { to: "/files", label: "Files", icon: <FolderTree /> },
-        { to: "/updates", label: "Updates", icon: <PackageCheck /> },
+        { to: "/updates", label: "Updates", icon: <PackageCheck />, badge: <UpdatesBadge /> },
       ],
     },
     {
@@ -94,6 +96,7 @@ function NavLinks({ compact, onNavigate }: { compact?: boolean; onNavigate?: () 
                       {isActive && <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent" aria-hidden="true" />}
                       <span className={cn(isActive ? "text-accent" : "text-subtle group-hover:text-muted")}>{it.icon}</span>
                       <span className={cn(compact && "sr-only")}>{it.label}</span>
+                      {it.badge && <span className={cn(compact ? "absolute right-1 top-0.5 scale-90" : "ml-auto")}>{it.badge}</span>}
                     </>
                   )}
                 </NavLink>
