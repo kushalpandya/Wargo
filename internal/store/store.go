@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -51,6 +53,13 @@ var migrations = []string{
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, err
+	}
+	// The directory holds the database (sessions, audit log) and the
+	// secret key: keep it private even if it was created by hand.
+	if st, err := os.Stat(dataDir); err == nil && st.Mode().Perm()&0o077 != 0 {
+		if err := os.Chmod(dataDir, st.Mode().Perm()&0o700); err != nil {
+			slog.Warn("data directory is accessible by other users", "dir", dataDir, "mode", st.Mode().Perm(), "err", err)
+		}
 	}
 	key, err := loadKey(filepath.Join(dataDir, "secret.key"))
 	if err != nil {
@@ -98,19 +107,83 @@ func (s *Store) migrate() error {
 	return nil
 }
 
+// loadKey reads the instance key, creating it on first start. An existing
+// key of the wrong size is an error, never silently replaced (that would
+// make every sealed secret unreadable). Creation is atomic and exclusive,
+// so concurrent starts (`wargo admin` while serving) agree on one key.
 func loadKey(path string) ([]byte, error) {
-	b, err := os.ReadFile(path)
-	if err == nil && len(b) == 32 {
-		return b, nil
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+	b, err := readKey(path)
+	if err == nil || !errors.Is(err, os.ErrNotExist) {
+		return b, err
 	}
 	b = make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return nil, err
 	}
-	return b, os.WriteFile(path, b, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".secret-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	// link(2) fails if the key appeared meanwhile; then use that one.
+	if err := os.Link(tmp.Name(), path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return readKey(path)
+		}
+		// Filesystems without hard links: exclusive create instead.
+		f, cerr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(cerr, os.ErrExist) {
+			return readKey(path)
+		}
+		if cerr != nil {
+			return nil, cerr
+		}
+		_, werr := f.Write(b)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			os.Remove(path)
+			return nil, werr
+		}
+	}
+	return b, nil
+}
+
+func readKey(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err == nil && st.Mode().Perm()&0o077 != 0 {
+		if err := f.Chmod(0o600); err != nil {
+			return nil, fmt.Errorf("%s is readable by other users and can't be fixed: %w", path, err)
+		}
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 64))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) != 32 {
+		return nil, fmt.Errorf("%s is corrupt (%d bytes, want 32); restore it from a backup or remove it (stored integration secrets will be lost)", path, len(b))
+	}
+	return b, nil
 }
 
 // Get decodes the JSON setting key into v. Returns false if absent.

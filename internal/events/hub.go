@@ -92,18 +92,31 @@ func (h *Hub) Subscribers(topic string) int {
 	return n
 }
 
-func (h *Hub) add(topics []string) *subscriber {
-	s := &subscriber{topics: map[string]bool{}, ch: make(chan []byte, 64)}
+// maxTopics bounds the topics one connection may subscribe to.
+const maxTopics = 64
+
+func topicSet(topics []string) map[string]bool {
+	out := map[string]bool{}
 	for _, t := range topics {
-		if t = strings.TrimSpace(t); t != "" {
-			s.topics[t] = true
+		if t = strings.TrimSpace(t); t != "" && len(t) <= 128 && len(out) < maxTopics {
+			out[t] = true
 		}
 	}
+	return out
+}
+
+func (h *Hub) add(topics []string) *subscriber {
+	s := &subscriber{topics: topicSet(topics), ch: make(chan []byte, 64)}
 	h.mu.Lock()
 	h.subs[s] = struct{}{}
 	for t := range s.topics {
 		if m, ok := h.last[t]; ok {
-			s.ch <- m
+			// Never block while holding the hub lock (a full buffer
+			// would otherwise stall every publisher).
+			select {
+			case s.ch <- m:
+			default:
+			}
 		}
 	}
 	h.mu.Unlock()
@@ -142,10 +155,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 			}
 			if json.Unmarshal(b, &req) == nil && req.Topics != nil {
 				h.mu.Lock()
-				s.topics = map[string]bool{}
-				for _, t := range req.Topics {
-					s.topics[t] = true
-				}
+				s.topics = topicSet(req.Topics)
 				var replay [][]byte
 				for t := range s.topics {
 					if m, ok := h.last[t]; ok {

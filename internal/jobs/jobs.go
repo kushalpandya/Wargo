@@ -26,7 +26,10 @@ const (
 	Canceled  State = "canceled"
 )
 
-const maxLogLines = 2000
+const (
+	maxLogLines = 2000
+	maxLineLen  = 8 << 10
+)
 
 // Snapshot is the JSON view of a job.
 type Snapshot struct {
@@ -150,6 +153,14 @@ func (j *Job) Progress(stage string, frac float64, current string) {
 // Log appends output lines and streams them on "jobs.log".
 func (j *Job) Log(text string) {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if len(lines) > maxLogLines {
+		lines = lines[len(lines)-maxLogLines:]
+	}
+	for i, l := range lines {
+		if len(l) > maxLineLen {
+			lines[i] = l[:maxLineLen] + "…"
+		}
+	}
 	j.mu.Lock()
 	j.log = append(j.log, lines...)
 	if len(j.log) > maxLogLines {

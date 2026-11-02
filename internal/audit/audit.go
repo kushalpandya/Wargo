@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/store"
@@ -29,9 +31,67 @@ type Entry struct {
 type Log struct {
 	st    *store.Store
 	proxy *httpx.ProxyTrust
+
+	mu      sync.Mutex
+	inserts int
 }
 
-func New(st *store.Store, proxy *httpx.ProxyTrust) *Log { return &Log{st: st, proxy: proxy} }
+// Retention: entries older than MaxAge are deleted, and at most MaxRows
+// are kept, so the log can't grow without bound (several writers are
+// reachable before sign-in).
+const (
+	MaxAge     = 180 * 24 * time.Hour
+	MaxRows    = 50_000
+	pruneEvery = 500
+
+	maxTarget  = 512
+	maxUA      = 512
+	maxResult  = 2048
+	maxDetails = 16 << 10
+)
+
+// maxRows is MaxRows (a variable so tests can use a small cap).
+var maxRows = MaxRows
+
+func New(st *store.Store, proxy *httpx.ProxyTrust) *Log {
+	l := &Log{st: st, proxy: proxy}
+	l.Prune()
+	return l
+}
+
+// Prune applies the retention policy.
+func (l *Log) Prune() {
+	cutoff := time.Now().Add(-MaxAge).Unix()
+	if _, err := l.st.DB.Exec(`DELETE FROM audit_log WHERE ts < ?`, cutoff); err != nil {
+		slog.Warn("audit prune", "err", err)
+		return
+	}
+	if _, err := l.st.DB.Exec(`DELETE FROM audit_log WHERE id <= (SELECT id FROM audit_log ORDER BY id DESC LIMIT 1 OFFSET ?)`, maxRows); err != nil {
+		slog.Warn("audit prune", "err", err)
+	}
+}
+
+func (l *Log) maybePrune() {
+	l.mu.Lock()
+	l.inserts++
+	due := l.inserts%pruneEvery == 0
+	l.mu.Unlock()
+	if due {
+		l.Prune()
+	}
+}
+
+// clip shortens s to at most n bytes (on a rune boundary).
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	s = s[:n]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s + "…"
+}
 
 type ctxKey struct{}
 
@@ -50,20 +110,26 @@ func (l *Log) Record(r *http.Request, action, target string, err error, details 
 	var d []byte
 	if details != nil {
 		d, _ = json.Marshal(details)
+		if len(d) > maxDetails {
+			d, _ = json.Marshal(map[string]any{"truncated": clip(string(d), maxDetails)})
+		}
 	}
+	target, result = clip(target, maxTarget), clip(result, maxResult)
 	_, e := l.st.DB.Exec(
 		`INSERT INTO audit_log(ts, ip, ua, action, target, result, elevation, details) VALUES(?,?,?,?,?,?,?,?)`,
-		time.Now().Unix(), l.proxy.ClientIP(r), r.UserAgent(), action, target, result, elev, string(d))
+		time.Now().Unix(), l.proxy.ClientIP(r), clip(r.UserAgent(), maxUA), action, target, result, elev, string(d))
 	if e != nil {
 		slog.Error("audit write failed", "err", e)
 	}
 	slog.Info("audit", "action", action, "target", target, "result", result, "elevation", elev)
+	l.maybePrune()
 }
 
 // RecordSystem writes an entry not tied to an HTTP request.
 func (l *Log) RecordSystem(action, target, result string) {
 	_, _ = l.st.DB.Exec(`INSERT INTO audit_log(ts, ip, action, target, result) VALUES(?,?,?,?,?)`,
-		time.Now().Unix(), "local", action, target, result)
+		time.Now().Unix(), "local", action, clip(target, maxTarget), clip(result, maxResult))
+	l.maybePrune()
 }
 
 func (l *Log) Register(mux *http.ServeMux) {
