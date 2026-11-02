@@ -37,6 +37,10 @@ jobs:
     container: almalinux:8
     env:
       MAX_GLIBC: "2.28"
+      # msteinert/pam builds with -std=c99; glibc < 2.34 only declares
+      # RTLD_NEXT with _GNU_SOURCE. (Setting CGO_CFLAGS replaces Go's
+      # default "-O2 -g", so keep those.)
+      CGO_CFLAGS: "-O2 -g -D_GNU_SOURCE"
     steps:
       - name: Build dependencies
         run: |
