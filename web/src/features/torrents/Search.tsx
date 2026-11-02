@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
-import { AlertTriangle, Download, ExternalLink, Magnet, Search as SearchIcon, SendToBack } from "lucide-react";
+import { AlertTriangle, ArrowRight, Download, ExternalLink, Magnet, Search as SearchIcon, SendToBack } from "lucide-react";
 import { api, qs } from "@/lib/api";
 import { ago, bytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -172,24 +172,32 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
 
       <Card className={cn(embedded && "flex min-h-96 flex-col")}>
         <form onSubmit={submit} role="search" className="flex flex-wrap items-center gap-2 border-b border-border p-3">
-          <div className="relative min-w-0 flex-1 basis-64">
-            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
-            <input
-              type="search"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Search torrents, e.g. debian 12 netinst"
-              aria-label="Search query"
-              autoFocus={!q}
-              maxLength={200}
-              enterKeyHint="search"
-              className="h-9 w-full min-w-0 rounded-md border border-border bg-surface-2 pl-9 pr-3 text-[0.9375rem] text-fg placeholder:text-subtle hover:border-border-strong focus:border-focus focus:outline-none focus:ring-2 focus:ring-focus/25 [&::-webkit-search-cancel-button]:hidden"
-            />
+          <div className="flex min-w-0 flex-1 basis-64">
+            <div className="relative min-w-0 flex-1">
+              <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
+              <input
+                type="search"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="Search torrents, e.g. debian 12 netinst"
+                aria-label="Search query"
+                autoFocus={!q}
+                maxLength={200}
+                enterKeyHint="search"
+                className="h-9 w-full min-w-0 rounded-l-md rounded-r-none border border-r-0 border-border bg-surface-2 pl-9 pr-3 text-[0.9375rem] text-fg placeholder:text-subtle hover:border-border-strong focus:border-focus focus:outline-none focus:ring-2 focus:ring-focus/25 [&::-webkit-search-cancel-button]:hidden"
+              />
+            </div>
+            <button
+              type="submit"
+              aria-label={search.isFetching ? "Searching" : "Search"}
+              title="Search"
+              disabled={!draft.trim() || search.isFetching}
+              className="flex h-9 w-10 shrink-0 items-center justify-center rounded-r-md border border-accent bg-accent text-accent-fg transition-colors hover:bg-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/25 disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-3 disabled:text-subtle"
+            >
+              {search.isFetching ? <Spinner className="size-4" /> : <ArrowRight className="size-4" />}
+            </button>
           </div>
           <IndexerPicker indexers={indexerList} value={idx} onChange={(v) => update({ idx: v.join(",") || null })} />
-          <Button type="submit" variant="primary" className="h-9 px-4" loading={search.isFetching} icon={<SearchIcon />}>
-            Search
-          </Button>
           <div className="flex w-full flex-wrap items-center gap-1.5" role="group" aria-label="Categories">
             <span className="mr-1 text-2xs font-semibold uppercase tracking-wider text-subtle">Category</span>
             <CatChip active={cats.length === 0} onClick={() => update({ cat: null })}>

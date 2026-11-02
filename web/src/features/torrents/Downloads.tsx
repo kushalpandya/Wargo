@@ -11,7 +11,7 @@ import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { SearchInput, Segmented, Select } from "@/components/ui/form";
+import { SearchInput, Select } from "@/components/ui/form";
 import { Badge, EmptyState, ErrorNote, Meter, PageHeader, Skeleton, Spinner, type Tone } from "@/components/ui/misc";
 import { SortTh, Table, Td, Th, THead, Tr, useSort } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
@@ -19,6 +19,18 @@ import { errorMessage, type Torrent, type TorrentStatus, type TransmissionPayloa
 
 type Filter = "all" | "downloading" | "seeding" | "paused" | "errors";
 type SortKey = "name" | "status" | "progress" | "down" | "up" | "eta" | "size" | "ratio" | "added";
+
+const SORT_OPTIONS: [SortKey, string, "asc" | "desc"][] = [
+  ["added", "Recently added", "desc"],
+  ["name", "Name", "asc"],
+  ["status", "Status", "asc"],
+  ["progress", "Progress", "desc"],
+  ["down", "Download speed", "desc"],
+  ["up", "Upload speed", "desc"],
+  ["eta", "Time left", "asc"],
+  ["size", "Size", "desc"],
+  ["ratio", "Ratio", "desc"],
+];
 
 const FILTERS: [Filter, string][] = [
   ["all", "All"],
@@ -201,62 +213,42 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
               <StatCell label="Free space" icon={<HardDrive />} value={stats ? (stats.freeSpace !== undefined ? bytes(stats.freeSpace) : "—") : undefined} />
             </div>
             <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
-              <div className="flex items-center gap-1.5 @2xl:hidden">
-                <label htmlFor="filter-torrents" className="text-2xs font-semibold uppercase tracking-wider text-subtle">
-                  Show
-                </label>
-                <Select id="filter-torrents" className="w-auto" value={filter} onChange={(e) => setFilter(e.target.value as Filter)}>
-                  {FILTERS.map(([v, l]) => (
-                    <option key={v} value={v}>
-                      {l} ({counts[v]})
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="@max-2xl:hidden">
-                <Segmented<Filter>
-                  label="Filter torrents"
-                  value={filter}
-                  onChange={setFilter}
-                  options={FILTERS.map(([v, l]) => ({
-                    value: v,
-                    label: (
-                      <>
+              <SearchInput value={q} onChange={setQ} placeholder="Filter by name…" label="Filter torrents by name" className="min-w-0 flex-1 basis-32" />
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <label htmlFor="filter-torrents" className="text-2xs font-semibold uppercase tracking-wider text-subtle @max-3xl:sr-only">
+                    Show
+                  </label>
+                  <Select id="filter-torrents" className="w-auto" title="Show" value={filter} onChange={(e) => setFilter(e.target.value as Filter)}>
+                    {FILTERS.map(([v, l]) => (
+                      <option key={v} value={v}>
+                        {l} ({counts[v]})
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <label htmlFor="sort-torrents" className="text-2xs font-semibold uppercase tracking-wider text-subtle @max-3xl:sr-only">
+                    Sort
+                  </label>
+                  <Select
+                    id="sort-torrents"
+                    className="w-auto"
+                    title="Sort"
+                    value={sort.key}
+                    // Picks the column; its header still flips the direction.
+                    onChange={(e) => {
+                      const key = e.target.value as SortKey;
+                      setSort({ key, dir: SORT_OPTIONS.find(([k]) => k === key)![2] });
+                    }}
+                  >
+                    {SORT_OPTIONS.map(([k, l]) => (
+                      <option key={k} value={k}>
                         {l}
-                        <span className={cn("num text-2xs", v === "errors" && counts.errors ? "text-crit" : "text-subtle")}>{counts[v]}</span>
-                      </>
-                    ),
-                  }))}
-                />
-              </div>
-              <SearchInput
-                value={q}
-                onChange={setQ}
-                placeholder="Filter by name…"
-                label="Filter torrents by name"
-                className="min-w-0 flex-1 basis-44 @max-2xl:order-last @max-2xl:basis-full @5xl:max-w-xs"
-              />
-              <div className="flex items-center gap-1.5 @3xl:hidden">
-                <label htmlFor="sort-torrents" className="text-2xs font-semibold uppercase tracking-wider text-subtle">
-                  Sort
-                </label>
-                <Select
-                  id="sort-torrents"
-                  className="w-auto"
-                  value={`${sort.key}:${sort.dir}`}
-                  onChange={(e) => {
-                    const [key, dir] = e.target.value.split(":") as [SortKey, "asc" | "desc"];
-                    setSort({ key, dir });
-                  }}
-                >
-                  <option value="added:desc">Recently added</option>
-                  <option value="name:asc">Name</option>
-                  <option value="progress:desc">Progress</option>
-                  <option value="down:desc">Download speed</option>
-                  <option value="up:desc">Upload speed</option>
-                  <option value="size:desc">Size</option>
-                  <option value="ratio:desc">Ratio</option>
-                </Select>
+                      </option>
+                    ))}
+                  </Select>
+                </div>
               </div>
             </div>
 
