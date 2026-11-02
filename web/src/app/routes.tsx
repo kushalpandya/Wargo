@@ -92,9 +92,9 @@ export const router = createBrowserRouter([
         element: <Layout />,
         children: [
           { index: true, element: <Home /> },
-          { path: "system", element: <System /> },
+          { path: "system/*", element: <System /> },
           { path: "apps", element: <Apps /> },
-          { path: "processes", element: <Navigate to="/system" replace /> },
+          { path: "processes", element: <Navigate to="/system/processes" replace /> },
           { path: "containers", element: <Containers /> },
           { path: "containers/:id", element: <Containers /> },
           { path: "terminal", element: <Terminal /> },

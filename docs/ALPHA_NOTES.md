@@ -66,6 +66,10 @@ terminal, editor and charts load on demand.
 - **Files:** no server-side thumbnails (grid loads full images). Recursive
   chmod/chown and trash moves don't elevate. Listings cap at 20k entries.
   Interrupted uploads need the file re-selected after a reload.
+- **System → Events (planned):** a third tab beside Activity Monitor and
+  Processes listing system events, especially errors and warnings reported
+  by the OS (journal, kernel), plus notable events Wargo itself gathers
+  (failed sign-ins, container health changes, update results).
 - **Terminal:** tmux mode untested (tmux not installed). Tab names stored per
   browser.
 - **Torrents:** some indexers report a .torrent link that actually redirects

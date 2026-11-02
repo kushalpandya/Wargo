@@ -230,7 +230,7 @@ export default function Page() {
   return <ProcessesPanel />;
 }
 
-/** Process list; `embedded` renders a section heading instead of a page title (System page). */
+/** Process list; `embedded` leaves the title to the System page's tab. */
 // Memoised: parents re-render on every 1 s metrics tick.
 export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embedded?: boolean }) {
   const qc = useQueryClient();
@@ -421,9 +421,10 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
 
 function SectionHeader({ title, description, actions }: { title: string; description?: React.ReactNode; actions?: React.ReactNode }) {
   return (
-    <div className="mb-3 mt-6 flex flex-wrap items-end justify-between gap-3">
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0">
-        <h2 id="processes-heading" className="text-[0.9375rem] font-semibold tracking-tight">
+        {/* The System page's "Processes" tab is the visible title. */}
+        <h2 id="processes-heading" className="sr-only">
           {title}
         </h2>
         {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}

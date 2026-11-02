@@ -6,10 +6,12 @@ import { cssVar, useIsDark } from "@/lib/theme";
 
 export interface SeriesDef {
   label: string;
-  /** CSS variable name, e.g. "--accent". */
+  /** CSS variable name, e.g. "--accent", or a literal CSS color. */
   color: string;
   fill?: boolean;
   dash?: boolean;
+  /** Line width in CSS pixels (default 1.5). */
+  width?: number;
 }
 
 /**
@@ -79,11 +81,11 @@ export function TimeChart({
       series: [
         {},
         ...series.map((s) => {
-          const c = cssVar(s.color);
+          const c = s.color.startsWith("--") ? cssVar(s.color) : s.color;
           return {
             label: s.label,
             stroke: c,
-            width: 1.5,
+            width: s.width ?? 1.5,
             dash: s.dash ? [4, 3] : undefined,
             fill: s.fill ? (u: uPlot) => {
               const g = u.ctx.createLinearGradient(0, u.bbox.top, 0, u.bbox.top + u.bbox.height);

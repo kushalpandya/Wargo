@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { memo } from "react";
+import { memo, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { HardDrive, Thermometer } from "lucide-react";
 import { api } from "@/lib/api";
@@ -52,81 +52,156 @@ function driveKind(d: Drive) {
   return d.rotational ? "HDD" : "SATA SSD";
 }
 
+interface PartRow {
+  name: string;
+  size: number;
+  /** Mounted filesystems on this partition (several for bind mounts or btrfs subvolumes). */
+  fs: Filesystem[];
+}
+
+const usageTone = (p: number, base: "accent" | "frost") => (level(p, 80, 92) === "ok" ? base : level(p, 80, 92));
+
+function ColumnTitle({ id, children }: { id: string; children: React.ReactNode }) {
+  return (
+    <h3 id={id} className="px-3.5 pb-1.5 pt-3 text-2xs font-semibold uppercase tracking-wider text-subtle">
+      {children}
+    </h3>
+  );
+}
+
+function PartitionRow({ p }: { p: PartRow }) {
+  const f = p.fs[0];
+  return (
+    <li className="px-3.5 py-2 text-xs">
+      <div className="flex min-w-0 items-baseline gap-2">
+        <span className="num shrink-0 font-medium text-fg">{p.name}</span>
+        <span className="num min-w-0 flex-1 truncate text-muted" title={p.fs.map((x) => x.mount).join(", ")}>
+          {f ? p.fs.map((x) => x.mount).join(", ") : "Not mounted"}
+        </span>
+        {f?.readOnly && <Badge tone="warn">ro</Badge>}
+        <span className="num shrink-0 text-subtle">{bytes(f?.total || p.size)}</span>
+      </div>
+      {f && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <Meter value={f.usedPct} tone={usageTone(f.usedPct, "frost")} label={`${f.mount} used`} />
+          <span className="num shrink-0 whitespace-nowrap text-right text-subtle">
+            <span className="text-fg">{pct(f.usedPct)}</span> · {bytes(f.free)} free · {f.fstype}
+            {f.label ? ` · ${f.label}` : ""}
+          </span>
+        </div>
+      )}
+    </li>
+  );
+}
+
 // Memoised: parents re-render on every 1 s metrics tick.
 export const StorageCard = memo(function StorageCard() {
   const { data, isLoading } = useStorage();
-  const fsByPart = new Map((data?.filesystems ?? []).map((f) => [f.partition, f]));
+  const [hover, setHover] = useState<string | null>(null);
+
+  const { groups, other } = useMemo(() => {
+    const byPart = new Map<string, Filesystem[]>();
+    for (const f of data?.filesystems ?? []) {
+      if (!f.partition) continue;
+      if (!byPart.has(f.partition)) byPart.set(f.partition, []);
+      byPart.get(f.partition)!.push(f);
+    }
+    const claimed = new Set<string>();
+    const groups = (data?.drives ?? []).map((d) => {
+      const parts: PartRow[] = d.partitions.map((p) => {
+        claimed.add(p.name);
+        return { name: p.name, size: p.size, fs: byPart.get(p.name) ?? [] };
+      });
+      // A filesystem directly on the whole drive (no partition table).
+      if (byPart.has(d.name)) {
+        claimed.add(d.name);
+        parts.push({ name: d.name, size: d.size, fs: byPart.get(d.name)! });
+      }
+      return { drive: d, parts };
+    });
+    // Mounted filesystems on devices outside the drive list (LVM, RAID, …).
+    const rest = new Map<string, PartRow>();
+    for (const f of data?.filesystems ?? []) {
+      const key = f.partition || f.device;
+      if (f.partition && claimed.has(f.partition)) continue;
+      if (!rest.has(key)) rest.set(key, { name: key.replace(/^\/dev\//, ""), size: f.total, fs: [] });
+      rest.get(key)!.fs.push(f);
+    }
+    return { groups, other: [...rest.values()] };
+  }, [data]);
 
   return (
-    <Card className="h-full">
+    <Card>
       <CardHeader
         title="Storage"
         icon={<HardDrive />}
         meta={data ? `${data.drives.length} drive${data.drives.length === 1 ? "" : "s"} · ${data.filesystems.length} mounted` : undefined}
       />
-      {isLoading && (
-        <div className="space-y-3 p-3.5">
-          <Skeleton className="h-16" />
-          <Skeleton className="h-16" />
+      {isLoading ? (
+        <div className="grid gap-3 p-3.5 lg:grid-cols-2">
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
+        </div>
+      ) : (
+        <div className="grid divide-border max-lg:divide-y lg:grid-cols-2 lg:divide-x">
+          <section aria-labelledby="storage-drives" className="min-w-0 lg:max-h-[26rem] lg:overflow-y-auto">
+            <ColumnTitle id="storage-drives">Physical drives</ColumnTitle>
+            <ul className="divide-y divide-border">
+              {groups.map(({ drive: d, parts }) => {
+                const usedPct = d.total ? (d.used / d.total) * 100 : 0;
+                return (
+                  <li
+                    key={d.name}
+                    className={cn("px-3.5 py-2.5 transition-colors", hover === d.name && "bg-surface-2")}
+                    onMouseEnter={() => setHover(d.name)}
+                    onMouseLeave={() => setHover(null)}
+                  >
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="min-w-0 truncate font-medium">{d.model || d.name}</span>
+                      <Badge>{driveKind(d)}</Badge>
+                      {d.removable && <Badge tone="frost">Removable</Badge>}
+                      {d.temp ? (
+                        <span className="num ml-auto inline-flex items-center gap-1 text-xs text-muted">
+                          <Thermometer className="size-3" />
+                          {temp(d.temp)}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="num mt-0.5 text-xs text-subtle">
+                      /dev/{d.name} · {bytes(d.size)} · {parts.length} partition{parts.length === 1 ? "" : "s"}
+                    </div>
+                    {d.total > 0 ? (
+                      <div className="mt-2 flex items-center gap-3">
+                        <Meter value={usedPct} tone={usageTone(usedPct, "accent")} className="h-2" label={`${d.name} used`} />
+                        <span className="num shrink-0 text-right text-xs text-muted">
+                          <span className="text-fg">{pct(usedPct)}</span> · {bytes(d.used)} of {bytes(d.total)}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="mt-1.5 text-xs text-subtle">No mounted filesystems</p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+          <section aria-labelledby="storage-parts" className="min-w-0 lg:max-h-[26rem] lg:overflow-y-auto">
+            <ColumnTitle id="storage-parts">Partitions</ColumnTitle>
+            {[...groups.map((g) => ({ key: g.drive.name, title: `${g.drive.model || g.drive.name} · /dev/${g.drive.name}`, parts: g.parts })), ...(other.length ? [{ key: "_other", title: "Other mounted devices", parts: other }] : [])]
+              .filter((g) => g.parts.length > 0)
+              .map((g) => (
+                <div key={g.key} className={cn("transition-colors", hover === g.key && "bg-surface-2")}>
+                  <div className="num truncate border-t border-border bg-surface-2/50 px-3.5 py-1 text-2xs text-subtle">{g.title}</div>
+                  <ul className="divide-y divide-border">
+                    {g.parts.map((p) => (
+                      <PartitionRow key={p.name} p={p} />
+                    ))}
+                  </ul>
+                </div>
+              ))}
+          </section>
         </div>
       )}
-      <ul className="divide-y divide-border">
-        {data?.drives.map((d) => {
-          const usedPct = d.total ? (d.used / d.total) * 100 : 0;
-          const mounted = d.partitions.map((p) => fsByPart.get(p.name)).filter(Boolean) as Filesystem[];
-          const direct = fsByPart.get(d.name);
-          if (direct) mounted.push(direct);
-          return (
-            <li key={d.name} className="px-3.5 py-3">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="font-medium">{d.model || d.name}</span>
-                <Badge>{driveKind(d)}</Badge>
-                {d.removable && <Badge tone="frost">Removable</Badge>}
-                <span className="num text-xs text-subtle">
-                  /dev/{d.name} · {bytes(d.size)}
-                </span>
-                {d.temp ? (
-                  <span className="num ml-auto inline-flex items-center gap-1 text-xs text-muted">
-                    <Thermometer className="size-3" />
-                    {temp(d.temp)}
-                  </span>
-                ) : null}
-              </div>
-              {d.total > 0 ? (
-                <div className="mt-2 flex items-center gap-3">
-                  <Meter value={usedPct} tone={level(usedPct, 80, 92) === "ok" ? "accent" : level(usedPct, 80, 92)} className="h-2" label={`${d.name} used`} />
-                  <span className="num w-44 shrink-0 text-right text-xs text-muted">
-                    <span className="text-fg">{pct(usedPct)}</span> · {bytes(d.used)} of {bytes(d.total)}
-                  </span>
-                </div>
-              ) : (
-                <p className="mt-1.5 text-xs text-subtle">No mounted filesystems</p>
-              )}
-              {mounted.length > 0 && (
-                <div className="mt-2.5 grid gap-1.5">
-                  {mounted.map((f) => (
-                    <div key={f.mount} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md bg-surface-2 px-2.5 py-1.5 text-xs sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_auto]">
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <span className="num truncate font-medium text-fg" title={f.mount}>
-                          {f.mount}
-                        </span>
-                        {f.readOnly && <Badge tone="warn">ro</Badge>}
-                      </div>
-                      <div className="order-3 col-span-2 flex items-center gap-2 sm:order-none sm:col-span-1">
-                        <Meter value={f.usedPct} tone={level(f.usedPct, 80, 92) === "ok" ? "frost" : level(f.usedPct, 80, 92)} label={`${f.mount} used`} />
-                      </div>
-                      <span className={cn("num whitespace-nowrap text-right text-subtle")}>
-                        <span className="text-fg">{pct(f.usedPct)}</span> · {bytes(f.free)} free · {f.fstype}
-                        {f.label ? ` · ${f.label}` : ""}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
     </Card>
   );
 });

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ArrowDown, ArrowUp, Activity, Cpu, HardDrive, Network } from "lucide-react";
+import { useMemo } from "react";
+import { Navigate, useParams } from "react-router";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowDown, ArrowUp, Activity, HardDrive, ListTree, Network } from "lucide-react";
+import { api } from "@/lib/api";
+import { useIsDark } from "@/lib/theme";
+import { NavTabs } from "@/components/ui/tabs";
 import { bytes, level, pct, rate } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Card, CardBody, CardHeader, Stat } from "@/components/ui/card";
@@ -14,34 +20,112 @@ import { LinkIcon, linkDetails, linkName } from "./LinkLabel";
 
 const toneOf = (p: number) => level(p);
 
-function CoreGrid({ cores }: { cores: number[] }) {
+/** Distinct, theme-aware colour for core i of n. */
+function coreColor(i: number, n: number, dark: boolean) {
+  const h = Math.round((i * 360) / Math.max(n, 1) + 25) % 360;
+  return dark ? `hsl(${h} 70% 62%)` : `hsl(${h} 62% 40%)`;
+}
+
+function CpuMemoryCard({ snap: s, points }: { snap: Snapshot | null; points: Point[] }) {
+  const dark = useIsDark();
+  const n = s?.cpu.perCore.length ?? points.at(-1)?.cores?.length ?? 0;
+  const coreData = useMemo(() => {
+    const xs = points.map((p) => p.t / 1000);
+    // Samples from before an upgrade have no per-core values: gaps.
+    const ys = Array.from({ length: n }, (_, i) => points.map((p) => p.cores?.[i] ?? null));
+    return [xs, ...ys] as unknown as [number[], ...number[][]];
+  }, [points, n]);
+  const coreSeries = useMemo(() => Array.from({ length: n }, (_, i) => ({ label: `Core ${i}`, color: coreColor(i, n, dark), width: 1.25 })), [n, dark]);
+  const hasSwap = !!s?.memory.swapTotal;
+  const memData = useSeries(points, hasSwap ? ["mem", "swap"] : ["mem"]);
+
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(2.75rem,1fr))] gap-1.5" role="list" aria-label="Per-core usage">
-      {cores.map((v, i) => {
-        const t = toneOf(v);
-        return (
-          <div
-            key={i}
-            role="listitem"
-            aria-label={`Core ${i}: ${Math.round(v)}%`}
-            className="relative overflow-hidden rounded border border-border bg-surface-2 px-1.5 py-1"
-          >
-            <div
-              className={cn("absolute inset-x-0 bottom-0 transition-[height] duration-500", t === "crit" ? "bg-crit/25" : t === "warn" ? "bg-warn/25" : "bg-accent/20")}
-              style={{ height: `${Math.max(2, v)}%` }}
-            />
-            <div className="relative text-2xs text-muted">{i}</div>
-            <div className="num relative text-xs">{Math.round(v)}</div>
+    <Card>
+      <CardHeader title="CPU & memory" icon={<Activity />} meta={s ? `${pct(s.cpu.total)} · ${n} threads · last 10 min` : "last 10 min"} />
+      <CardBody>
+        {n > 0 ? (
+          <TimeChart label="Usage of each processor core over the last 10 minutes" data={coreData} series={coreSeries} height={190} yMax={100} yFormat={(v) => `${v}%`} />
+        ) : (
+          <Skeleton className="h-[190px]" />
+        )}
+        {s && (
+          <ul aria-label="Per-core usage" className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(4.25rem,1fr))] gap-1.5">
+            {s.cpu.perCore.map((v, i) => {
+              const t = toneOf(v);
+              return (
+                <li key={i} aria-label={`Core ${i}: ${Math.round(v)}%`} className="flex items-center gap-1.5 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-2xs">
+                  <span className="size-2 shrink-0 rounded-full" style={{ background: coreColor(i, n, dark) }} aria-hidden="true" />
+                  <span className="num text-subtle" aria-hidden="true">
+                    {i}
+                  </span>
+                  <span className={cn("num ml-auto", t === "crit" ? "text-crit" : t === "warn" ? "text-warn" : "text-fg")} aria-hidden="true">
+                    {Math.round(v)}%
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <div className="mt-3 grid grid-cols-3 gap-3 border-t border-border pt-3">
+          <Stat label="Load 1m" value={s?.cpu.load[0].toFixed(2) ?? "–"} />
+          <Stat label="Load 5m" value={s?.cpu.load[1].toFixed(2) ?? "–"} />
+          <Stat label="Load 15m" value={s?.cpu.load[2].toFixed(2) ?? "–"} />
+        </div>
+        <div className="mt-3 border-t border-border pt-3">
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+            <span className="flex items-center gap-3 text-muted">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-0.5 w-3 rounded bg-frost" /> Memory
+              </span>
+              {hasSwap && (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-0.5 w-3 rounded bg-warn" /> Swap
+                </span>
+              )}
+            </span>
+            <span className="num truncate">{s ? `${bytes(s.memory.used)} used · ${bytes(s.memory.cached)} cache · ${bytes(s.memory.available)} free` : "–"}</span>
           </div>
-        );
-      })}
-    </div>
+          <TimeChart
+            label="Memory and swap usage over the last 10 minutes"
+            data={memData}
+            height={80}
+            yMax={100}
+            series={[{ label: "Memory", color: "--frost", fill: true }, ...(hasSwap ? [{ label: "Swap", color: "--warn", dash: true }] : [])]}
+            yFormat={(v) => `${v}%`}
+          />
+          {s && (
+            <Meter
+              value={0}
+              label="Memory composition"
+              className="mt-2 h-2"
+              segments={[
+                { value: (s.memory.used / s.memory.total) * 100, className: "bg-frost", label: "Used" },
+                { value: ((s.memory.cached + s.memory.buffers) / s.memory.total) * 100, className: "bg-frost/30", label: "Cache" },
+              ]}
+            />
+          )}
+        </div>
+      </CardBody>
+    </Card>
   );
+}
+
+function usePublicIP() {
+  return useQuery({
+    queryKey: ["system", "public-ip"],
+    queryFn: () => api.get<{ ip?: string; source?: string; checkedAt?: number; error?: string }>("/api/system/public-ip"),
+    staleTime: 30 * 60_000,
+    refetchInterval: 30 * 60_000,
+  });
 }
 
 function NetworkCard({ snap, points }: { snap: Snapshot | null; points: Point[] }) {
   const data = useSeries(points, ["rx", "tx"]);
   const ifs = (snap?.net ?? []).filter((n) => n.rxTotal + n.txTotal > 0);
+  const pub = usePublicIP();
+  const primary = snap?.net?.find((n) => n.name === snap.primaryIf);
+  // First IPv4 address of the interface carrying the default route.
+  const lan = (primary?.addrs?.find((a) => !a.includes(":")) ?? primary?.addrs?.[0])?.replace(/\/\d+$/, "");
   return (
     <Card>
       <CardHeader title="Network" icon={<Network />} meta={snap ? `↓ ${rate(snap.netRx)}  ↑ ${rate(snap.netTx)}` : undefined} />
@@ -65,6 +149,23 @@ function NetworkCard({ snap, points }: { snap: Snapshot | null; points: Point[] 
           </span>
         </div>
       </CardBody>
+      <dl className="grid grid-cols-2 gap-3 border-t border-border px-3.5 py-2.5 text-xs">
+        <div className="min-w-0">
+          <dt className="text-subtle">LAN address</dt>
+          <dd className="num truncate text-fg" title={primary?.addrs?.join(", ")}>
+            {lan ?? "–"}
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-subtle">Public IP</dt>
+          <dd
+            className={cn("num truncate", pub.data?.ip ? "text-fg" : "text-subtle")}
+            title={pub.data?.ip ? `Looked up via ${pub.data.source}, refreshed every 30 minutes` : pub.data?.error}
+          >
+            {pub.data?.ip ?? (pub.isLoading ? "Looking up…" : "Unavailable")}
+          </dd>
+        </div>
+      </dl>
       <div className="border-t border-border">
         {ifs.map((n) => {
           const name = linkName(n.link);
@@ -141,94 +242,48 @@ function DiskIOCard({ snap, points }: { snap: Snapshot | null; points: Point[] }
   );
 }
 
-export default function System() {
+function ActivityMonitor() {
   const { latest: s, points } = useMetrics();
-  const cpuMem = useSeries(points, ["cpu", "mem"]);
   const tempSeries = useSeries(points, ["temp"]);
-
   return (
-    <div className="mx-auto max-w-[1600px]">
-      <PageHeader title="System" description="Live resource usage, hardware sensors, storage and processes." />
+    <>
       <SummaryTiles snap={s} points={points} />
-
-      <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
-          <CardHeader
-            title="CPU & memory"
-            icon={<Activity />}
-            meta="last 10 min"
-            actions={
-              <div className="flex items-center gap-3 text-xs text-muted">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-0.5 w-3 rounded bg-accent" /> CPU
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-0.5 w-3 rounded bg-frost" /> Memory
-                </span>
-              </div>
-            }
-          />
-          <CardBody>
-            <TimeChart
-              label="CPU and memory usage over time"
-              data={cpuMem}
-              height={210}
-              yMax={100}
-              series={[
-                { label: "CPU", color: "--accent", fill: true },
-                { label: "Memory", color: "--frost" },
-              ]}
-              yFormat={(v) => `${v}%`}
-            />
-          </CardBody>
-        </Card>
-        <Card>
-          <CardHeader title="Cores" icon={<Cpu />} meta={s ? `${s.cpu.perCore.length} threads` : undefined} />
-          <CardBody>
-            {s ? <CoreGrid cores={s.cpu.perCore} /> : <Skeleton className="h-28" />}
-            <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-3">
-              <Stat label="Load 1m" value={s?.cpu.load[0].toFixed(2) ?? "–"} />
-              <Stat label="Load 5m" value={s?.cpu.load[1].toFixed(2) ?? "–"} />
-              <Stat label="Load 15m" value={s?.cpu.load[2].toFixed(2) ?? "–"} />
-            </div>
-            <div className="mt-3 border-t border-border pt-3">
-              <div className="mb-1.5 flex justify-between gap-2 text-xs">
-                <span className="text-muted">Memory</span>
-                <span className="num truncate">
-                  {s ? `${bytes(s.memory.used)} used · ${bytes(s.memory.cached)} cache · ${bytes(s.memory.available)} free` : "–"}
-                </span>
-              </div>
-              {s && (
-                <Meter
-                  value={0}
-                  label="Memory composition"
-                  className="h-2"
-                  segments={[
-                    { value: (s.memory.used / s.memory.total) * 100, className: "bg-frost", label: "Used" },
-                    { value: ((s.memory.cached + s.memory.buffers) / s.memory.total) * 100, className: "bg-frost/30", label: "Cache" },
-                  ]}
-                />
-              )}
-            </div>
-          </CardBody>
-        </Card>
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <CpuMemoryCard snap={s} points={points} />
+        {/* On wide screens the CPU card sets the row height; sensors scroll within it. */}
+        <div className="min-w-0 lg:relative">
+          <SensorsCard snap={s} series={tempSeries} className="lg:absolute lg:inset-0" />
+        </div>
       </div>
-
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
         <NetworkCard snap={s} points={points} />
         <DiskIOCard snap={s} points={points} />
       </div>
-
-      <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-3">
-        <div className="xl:col-span-2">
-          <StorageCard />
-        </div>
-        <SensorsCard snap={s} series={tempSeries} />
+      <div className="mt-3">
+        <StorageCard />
       </div>
+    </>
+  );
+}
 
-      <section aria-labelledby="processes-heading">
-        <ProcessesPanel embedded />
-      </section>
+export default function System() {
+  const { "*": sub } = useParams();
+  if (sub && sub !== "processes") return <Navigate to="/system" replace />;
+  const processes = sub === "processes";
+  return (
+    <div className="mx-auto max-w-[1600px]">
+      <PageHeader
+        title="System"
+        description={processes ? "Everything running on this host." : "Live resource usage, hardware sensors, network and storage."}
+      />
+      <NavTabs
+        label="System sections"
+        items={[
+          { to: "/system", end: true, label: <><Activity /> Activity Monitor</> },
+          { to: "/system/processes", label: <><ListTree /> Processes</> },
+        ]}
+      />
+      {processes ? <ProcessesPanel embedded /> : <ActivityMonitor />}
     </div>
   );
 }

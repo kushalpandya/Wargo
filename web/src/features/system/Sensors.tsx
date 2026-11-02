@@ -40,7 +40,7 @@ function TempRow({ t }: { t: Temp }) {
   );
 }
 
-export function SensorsCard({ snap, series }: { snap: Snapshot | null; series: [number[], ...number[][]] }) {
+export function SensorsCard({ snap, series, className }: { snap: Snapshot | null; series: [number[], ...number[][]]; className?: string }) {
   const [showCores, setShowCores] = useState(false);
   const groups = useMemo(() => {
     const g = new Map<Temp["kind"], Temp[]>();
@@ -52,13 +52,14 @@ export function SensorsCard({ snap, series }: { snap: Snapshot | null; series: [
   }, [snap]);
 
   return (
-    <Card className="h-full">
+    <Card className={cn("flex flex-col", className)}>
       <CardHeader title="Sensors" icon={<Thermometer />} meta={snap?.temps ? `${snap.temps.length} readings` : undefined} />
-      <div className="px-3.5 pt-3">
+      <div className="shrink-0 px-3.5 pt-3">
         <TimeChart label="CPU temperature over time" data={series} height={90} series={[{ label: "CPU", color: "--ok", fill: true }]} yFormat={(v) => `${v}°`} />
       </div>
       {!snap && <Skeleton className="m-3.5 h-32" />}
-      <div className="px-3.5 pb-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3.5 pb-3">
+        {snap && !snap.temps?.length && !snap.fans?.length && <p className="py-6 text-center text-xs text-muted">No temperature or fan sensors were found on this host.</p>}
         {groups.map(([kind, list]) => {
           if (kind === "core") {
             return (

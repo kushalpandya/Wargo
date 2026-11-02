@@ -54,6 +54,8 @@ export interface Point {
   dw: number;
   temp: number;
   load: number;
+  /** Per-core usage (absent in samples from older servers). */
+  cores?: number[];
 }
 
 export interface SystemInfo {
@@ -109,6 +111,7 @@ export function useMetrics() {
       dw: s.diskWrite,
       temp: s.cpuTemp,
       load: s.cpu.load[0],
+      cores: s.cpu.perCore.map((v) => Math.round(v * 10) / 10),
     };
     setPoints((cur) => (cur.length && cur[cur.length - 1].t >= p.t ? cur : [...cur.slice(-(MAX - 1)), p]));
   });
