@@ -1,0 +1,9 @@
+{
+  "name": "wargo-demo",
+  "private": true,
+  "description": "In-browser fake backend for the Wargo demo site (GitHub Pages).",
+  "license": "AGPL-3.0-only",
+  "devDependencies": {
+    "msw": "3.0.3"
+  }
+}
