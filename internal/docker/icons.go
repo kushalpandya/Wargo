@@ -3,6 +3,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -156,7 +157,18 @@ func (src iconSource) key() string {
 }
 
 // iconLabelKeys are labels that may hold a logo URL (CasaOS sets "icon").
-var iconLabelKeys = []string{"icon", "io.casaos.icon", "io.casaos.app.icon", "casaos.icon"}
+var iconLabelKeys = []string{"icon", "io.casaos.icon", "io.casaos.app.icon", "casaos.icon", "net.unraid.docker.icon"}
+
+// isWargo reports whether a container runs Wargo: this instance, or any
+// container from Wargo's image (ghcr.io/kushalpandya/wargo or a local build
+// named "wargo").
+func (s *Service) isWargo(a *apiContainer) bool {
+	if s.selfID != "" && a.ID == s.selfID {
+		return true
+	}
+	repo, _ := splitRef(a.Image)
+	return repo == "wargo" || repo == "ghcr.io/kushalpandya/wargo"
+}
 
 // iconCandidates lists logo sources in order of preference: dashboard-icons
 // slugs for the image, compose service and container name, then a
@@ -388,6 +400,13 @@ func (s *Service) handleIcon(w http.ResponseWriter, r *http.Request) error {
 	a, err := s.rawContainer(ctx, id)
 	if err != nil {
 		return dockerErr(err)
+	}
+	if len(s.ownIcon) > 0 && s.isWargo(a) {
+		h := w.Header()
+		h.Set("Content-Type", "image/png")
+		h.Set("Cache-Control", "private, max-age=604800")
+		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(s.ownIcon))
+		return nil
 	}
 	srcs := iconCandidates(a)
 	notFound := func() error {

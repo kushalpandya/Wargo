@@ -160,6 +160,10 @@ func (s *Service) enrich(ctx context.Context, raw []apiContainer, l []Container)
 			il = a.Labels
 		}
 		c.Version = imageVersion(il, c.Tag, c.ImageID)
+		if a != nil && len(s.ownIcon) > 0 && s.isWargo(a) {
+			c.Icon = "/api/containers/" + c.ID + "/icon"
+			continue
+		}
 		if a == nil || s.icons == nil {
 			continue
 		}

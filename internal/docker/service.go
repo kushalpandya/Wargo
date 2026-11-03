@@ -33,6 +33,7 @@ const (
 // Service is the containers feature.
 type Service struct {
 	selfID  string // Wargo's own container id (container mode)
+	ownIcon []byte // Wargo's logo (PNG) for containers running Wargo
 	c       *Client
 	hub     *events.Hub
 	jobs    *jobs.Manager
@@ -79,6 +80,9 @@ type Options struct {
 	Store *store.Store
 	// DataDir enables container logos, cached in <DataDir>/icons/containers.
 	DataDir string
+	// OwnIcon is Wargo's own logo (PNG), shown for containers running
+	// Wargo without looking anywhere online.
+	OwnIcon []byte
 	// UpdateInterval is how often images are checked in the background
 	// (0 disables; the first check runs ~2 minutes after start).
 	UpdateInterval time.Duration
@@ -95,6 +99,7 @@ func (s *Service) Configure(o Options) *Service {
 	if o.DataDir != "" {
 		s.icons = newIconStore(o.DataDir)
 	}
+	s.ownIcon = o.OwnIcon
 	s.loadUpdates()
 	return s
 }

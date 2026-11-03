@@ -3,8 +3,11 @@
 package main
 
 import (
+	"io/fs"
+
 	"github.com/kushalpandya/wargo/internal/docker"
 	"github.com/kushalpandya/wargo/internal/server"
+	"github.com/kushalpandya/wargo/web"
 )
 
 func init() {
@@ -13,6 +16,14 @@ func init() {
 			Store:          d.Store,
 			DataDir:        d.Cfg.DataDir,
 			UpdateInterval: d.Cfg.Docker.UpdateCheckInterval.Duration,
+			OwnIcon:        ownIcon(),
 		}), nil
 	})
+}
+
+// ownIcon is Wargo's app icon from the embedded web UI, used as the logo of
+// containers running Wargo (nil if the UI was built without it).
+func ownIcon() []byte {
+	b, _ := fs.ReadFile(web.Dist(), "icon-192.png")
+	return b
 }

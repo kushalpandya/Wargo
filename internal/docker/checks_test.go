@@ -338,3 +338,22 @@ func TestDueAfterFailure(t *testing.T) {
 		t.Fatal("overdue check after a failure should wait for retryAt")
 	}
 }
+
+func TestIsWargo(t *testing.T) {
+	s := &Service{selfID: "self123"}
+	for _, c := range []struct {
+		a    apiContainer
+		want bool
+	}{
+		{apiContainer{ID: "self123", Image: "sha256:abc"}, true},
+		{apiContainer{ID: "x", Image: "ghcr.io/kushalpandya/wargo:latest"}, true},
+		{apiContainer{ID: "x", Image: "ghcr.io/kushalpandya/wargo@sha256:abc"}, true},
+		{apiContainer{ID: "x", Image: "wargo:dev"}, true},
+		{apiContainer{ID: "x", Image: "someone/wargo-fork:1"}, false},
+		{apiContainer{ID: "x", Image: "lscr.io/linuxserver/transmission"}, false},
+	} {
+		if got := s.isWargo(&c.a); got != c.want {
+			t.Errorf("%+v: got %v", c.a, got)
+		}
+	}
+}
