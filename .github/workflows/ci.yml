@@ -149,6 +149,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: write # start the demo site build (pages.yml)
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -174,6 +175,9 @@ jobs:
           case "$TAG" in *-*) pre="--prerelease";; esac
           gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --title "Wargo $TAG" \
             --generate-notes --verify-tag $pre
+          # A release made with GITHUB_TOKEN doesn't trigger other workflows,
+          # so start the demo site build for this tag directly.
+          gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main -f ref="$TAG"
 
   # Multi-arch container image (container mode, see docs/DOCKER.md), built
   # from the binaries the build job compiled natively on each architecture

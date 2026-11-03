@@ -5,8 +5,9 @@
 # Builds the web UI of a release together with the demo sources from the
 # gh-pages branch (an in-browser fake backend with made-up data; sign in
 # with demo / demo) and publishes it. Nothing from the gh-pages branch ever
-# goes into Wargo itself. Runs for every published release, or by hand with
-# any tag or branch.
+# goes into Wargo itself. Started by ci.yml after each release (a release
+# created there doesn't trigger "published" here), or by hand with any tag
+# or branch.
 name: Demo site
 on:
   release:
