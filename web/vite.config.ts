@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const api = process.env.WARGO_API ?? "http://127.0.0.1:2207";
 
-/** Preloads the main UI font (latin IBM Plex Sans) so text doesn't reflow on first paint. */
+/** Preloads the main UI font (latin Plus Jakarta Sans) so text doesn't reflow on first paint. */
 function preloadFont(): Plugin {
   let base = "/";
   return {
@@ -16,7 +16,7 @@ function preloadFont(): Plugin {
       base = c.base;
     },
     transformIndexHtml(_html, ctx) {
-      const file = Object.keys(ctx.bundle ?? {}).find((f) => /ibm-plex-sans-latin-wght-normal-[\w-]+\.woff2$/.test(f));
+      const file = Object.keys(ctx.bundle ?? {}).find((f) => /plus-jakarta-sans-latin-wght-normal-[\w-]+\.woff2$/.test(f));
       if (!file) return;
       return [{ tag: "link", attrs: { rel: "preload", href: `${base}${file}`, as: "font", type: "font/woff2", crossorigin: "" }, injectTo: "head" }];
     },

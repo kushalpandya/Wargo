@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { HTMLAttributes, ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Link } from "react-router";
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { useMedia } from "@/lib/hooks";
+import { usePageSlots } from "@/app/pageSlots";
 
 export type Tone = "neutral" | "ok" | "warn" | "crit" | "accent" | "frost";
 
@@ -17,7 +22,7 @@ export function Badge({ tone = "neutral", className, children, ...rest }: HTMLAt
   return (
     <span
       className={cn(
-        "inline-flex h-5 items-center gap-1 whitespace-nowrap rounded border px-1.5 text-2xs font-medium uppercase tracking-wide",
+        "inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-2xs font-semibold",
         tones[tone],
         className,
       )}
@@ -112,26 +117,111 @@ export function Kbd({ children }: { children: ReactNode }) {
   return <kbd className="rounded border border-border bg-surface-2 px-1 py-px text-2xs text-muted">{children}</kbd>;
 }
 
-/** Page title row with optional actions. */
-export function PageHeader({ title, description, actions, children }: { title: string; description?: ReactNode; actions?: ReactNode; children?: ReactNode }) {
+/** The page title as shown in the top bar. */
+function BarTitle({ title, className, ...rest }: { title: string; className?: string; "aria-current"?: "page" }) {
   return (
-    <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-      <div className="min-w-0">
-        <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
-        {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
-      </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
-      {children}
-    </div>
+    <h1 className={cn("truncate text-lg font-bold leading-tight tracking-tight", className)} {...rest}>
+      {title}
+    </h1>
   );
 }
 
-/** Label/value pair used in detail lists. */
+/**
+ * The page's title, description and main actions. Inside the app shell they
+ * go to the top bar (see app/pageSlots); actions stay in the page on phones,
+ * where the top bar has no room. Elsewhere it renders as a row in the page.
+ */
+export function PageHeader({
+  title,
+  description,
+  actions,
+  children,
+  inline,
+  parent,
+}: {
+  title: string;
+  /** Shown before the title as a breadcrumb ("Settings › Appearance"). */
+  parent?: { label: string; to: string };
+  description?: ReactNode;
+  actions?: ReactNode;
+  children?: ReactNode;
+  /** Description on the title's line ("Title • description") on wide screens, below it on phones. */
+  inline?: boolean;
+}) {
+  const slots = usePageSlots();
+  const wide = useMedia("(min-width: 768px)");
+  if (!slots.title) {
+    return (
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold tracking-tight">{parent ? `${parent.label} › ${title}` : title}</h1>
+          {description && <p className="mt-1 text-sm text-muted">{description}</p>}
+        </div>
+        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+        {children}
+      </div>
+    );
+  }
+  const actionsInBar = !!actions && wide && !!slots.actions;
+  return (
+    <>
+      {createPortal(
+        inline ? (
+          <div className="flex min-w-0 flex-col md:flex-row md:items-center md:gap-2.5">
+            <BarTitle title={title} className="shrink-0" />
+            {description && (
+              <div className="flex min-w-0 items-center gap-2.5 text-xs text-muted md:text-sm">
+                <span className="text-subtle max-md:hidden" aria-hidden="true">
+                  •
+                </span>
+                {description}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="min-w-0">
+            {parent ? (
+              <nav aria-label="Breadcrumb" className="min-w-0">
+                <ol className="flex min-w-0 items-center gap-1.5 text-lg leading-tight tracking-tight">
+                  <li className="shrink-0">
+                    <Link to={parent.to} className="-my-2 inline-flex min-h-10 items-center font-semibold text-muted transition-colors hover:text-fg">
+                      {parent.label}
+                    </Link>
+                  </li>
+                  <li className="flex min-w-0 items-center gap-1.5">
+                    <ChevronRight className="size-4 shrink-0 text-subtle" aria-hidden="true" />
+                    <BarTitle title={title} aria-current="page" />
+                  </li>
+                </ol>
+              </nav>
+            ) : (
+              <BarTitle title={title} />
+            )}
+            {description && <div className="truncate text-xs text-muted max-sm:hidden">{description}</div>}
+          </div>
+        ),
+        slots.title,
+      )}
+      {actionsInBar && createPortal(<div className="flex items-center gap-2">{actions}</div>, slots.actions!)}
+      {((actions && !actionsInBar) || children) && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {!actionsInBar && actions}
+          {children}
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * Label/value pair used in detail lists. `mono` now only lines numbers up
+ * (tabular figures, UI font); the name is kept for existing callers.
+ */
 export function Field({ label, children, mono }: { label: ReactNode; children: ReactNode; mono?: boolean }) {
   return (
     <div className="flex min-w-0 items-baseline justify-between gap-3 py-1.5">
       <dt className="shrink-0 text-muted">{label}</dt>
-      <dd className={cn("min-w-0 truncate text-right", mono && "num text-[0.8125rem]")}>{children}</dd>
+      <dd className={cn("min-w-0 truncate text-right", mono && "num text-ui")}>{children}</dd>
     </div>
   );
 }

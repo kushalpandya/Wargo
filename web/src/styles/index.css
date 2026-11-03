@@ -5,68 +5,180 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * "Northern" palette: cold slate/ice neutrals with a single warm ember
- * accent. Every colour is a CSS variable so light/dark swap in one place.
+ * Wargo palette: "Daylight" (light) and "Dusk" (dark). Pastel hues on cool,
+ * lilac-tinted neutrals, written in OKLCH so lightness (and therefore
+ * contrast) stays predictable across hues. Text-on-surface colours meet
+ * WCAG AA in both themes; the -soft colours are tints for fills only.
+ * Every colour is a CSS variable, so light and dark swap in one place.
  */
 :root,
 .theme-light {
-  --bg: #f2f4f6;
-  --surface: #ffffff;
-  --surface-2: #f7f8fa;
-  --surface-3: #eef1f4;
-  --border: #dde2e8;
-  --border-strong: #c5cdd6;
-  --fg: #121820;
-  --fg-muted: #4a5561;
-  --fg-subtle: #646f7b;
-  --accent: #9a5508;
-  --accent-strong: #844805;
-  --accent-soft: #f6e7d2;
-  --accent-fg: #ffffff;
-  --frost: #246d92;
-  --frost-soft: #dcecf4;
-  --ok: #1a7a4e;
-  --ok-soft: #dcf1e6;
-  --warn: #8a5900;
-  --warn-soft: #f6ead0;
-  --crit: #b8322a;
-  --crit-soft: #f8dfdc;
-  --focus: #246d92;
-  --shadow: 0 1px 2px rgb(16 24 32 / 0.05);
-  --overlay: rgb(10 14 18 / 0.35);
+  --bg: oklch(0.972 0.007 285);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.983 0.005 285);
+  --surface-3: oklch(0.953 0.011 285);
+  --border: oklch(0.918 0.012 285);
+  --border-strong: oklch(0.852 0.018 285);
+  --fg: oklch(0.255 0.03 282);
+  --fg-muted: oklch(0.43 0.028 282);
+  --fg-subtle: oklch(0.52 0.024 282);
+
+  /* Accent: periwinkle. */
+  --accent: oklch(0.53 0.17 278);
+  --accent-strong: oklch(0.47 0.17 278);
+  --accent-soft: oklch(0.945 0.035 280);
+  --accent-fg: oklch(0.99 0.01 280);
+
+  /* Status and secondary colours. */
+  --frost: oklch(0.5 0.105 228);
+  --frost-soft: oklch(0.948 0.03 225);
+  --ok: oklch(0.5 0.115 158);
+  --ok-soft: oklch(0.948 0.04 160);
+  --warn: oklch(0.52 0.12 62);
+  --warn-soft: oklch(0.955 0.045 80);
+  --crit: oklch(0.53 0.18 18);
+  --crit-soft: oklch(0.948 0.03 15);
+  --focus: oklch(0.53 0.17 278);
+
+  /* Pastel family: tints for tiles (-tint), strokes and fills for charts. */
+  --iris: oklch(0.6 0.15 280);
+  --iris-tint: oklch(0.955 0.03 282);
+  --mint: oklch(0.6 0.12 165);
+  --mint-tint: oklch(0.958 0.032 165);
+  --sky: oklch(0.6 0.11 230);
+  --sky-tint: oklch(0.956 0.028 228);
+  --peach: oklch(0.65 0.13 50);
+  --peach-tint: oklch(0.962 0.03 55);
+  --rose: oklch(0.6 0.16 10);
+  --rose-tint: oklch(0.958 0.028 10);
+  --butter: oklch(0.7 0.12 90);
+  --butter-tint: oklch(0.968 0.04 95);
+
+  --shadow: 0 1px 2px oklch(0.3 0.05 280 / 0.05), 0 6px 20px -10px oklch(0.3 0.06 280 / 0.12);
+  --shadow-pop: 0 2px 6px oklch(0.3 0.05 280 / 0.08), 0 16px 40px -12px oklch(0.3 0.08 280 / 0.22);
+  --overlay: oklch(0.2 0.03 280 / 0.35);
   color-scheme: light;
 }
 
 .dark {
-  --bg: #0a0d11;
-  --surface: #10151b;
-  --surface-2: #141a21;
-  --surface-3: #1a212a;
-  --border: #212932;
-  --border-strong: #2f3944;
-  --fg: #e2e7ed;
-  --fg-muted: #a0abb7;
-  --fg-subtle: #808c99;
-  --accent: #f0a43a;
-  --accent-strong: #f5b65e;
-  --accent-soft: #2c2113;
-  --accent-fg: #1a1104;
-  --frost: #74bde0;
-  --frost-soft: #13252f;
-  --ok: #52c492;
-  --ok-soft: #10261d;
-  --warn: #e7b84a;
-  --warn-soft: #2a2312;
-  --crit: #f06a60;
-  --crit-soft: #2e1614;
-  --focus: #74bde0;
-  --shadow: none;
-  --overlay: rgb(0 0 0 / 0.6);
+  /* Deep ink-violet, never pure black: easy on OLED screens at night. */
+  --bg: oklch(0.13 0.016 282);
+  --surface: oklch(0.168 0.018 282);
+  --surface-2: oklch(0.188 0.019 282);
+  --surface-3: oklch(0.218 0.021 282);
+  --border: oklch(0.245 0.02 282);
+  --border-strong: oklch(0.32 0.024 282);
+  --fg: oklch(0.935 0.014 282);
+  --fg-muted: oklch(0.79 0.02 282);
+  --fg-subtle: oklch(0.69 0.022 282);
+
+  --accent: oklch(0.79 0.115 280);
+  --accent-strong: oklch(0.85 0.09 280);
+  --accent-soft: oklch(0.26 0.05 280);
+  --accent-fg: oklch(0.2 0.04 280);
+
+  --frost: oklch(0.82 0.085 220);
+  --frost-soft: oklch(0.25 0.04 225);
+  --ok: oklch(0.83 0.11 158);
+  --ok-soft: oklch(0.24 0.04 160);
+  --warn: oklch(0.85 0.1 78);
+  --warn-soft: oklch(0.26 0.045 75);
+  --crit: oklch(0.77 0.125 15);
+  --crit-soft: oklch(0.25 0.05 15);
+  --focus: oklch(0.79 0.115 280);
+
+  --iris: oklch(0.77 0.12 282);
+  --iris-tint: oklch(0.2 0.035 282);
+  --mint: oklch(0.82 0.1 165);
+  --mint-tint: oklch(0.195 0.03 170);
+  --sky: oklch(0.8 0.09 225);
+  --sky-tint: oklch(0.195 0.03 230);
+  --peach: oklch(0.82 0.1 55);
+  --peach-tint: oklch(0.205 0.03 50);
+  --rose: oklch(0.78 0.11 10);
+  --rose-tint: oklch(0.2 0.032 10);
+  --butter: oklch(0.87 0.1 92);
+  --butter-tint: oklch(0.21 0.03 95);
+
+  --shadow: inset 0 1px 0 oklch(1 0 0 / 0.035), 0 1px 2px oklch(0 0 0 / 0.25);
+  --shadow-pop: inset 0 1px 0 oklch(1 0 0 / 0.05), 0 18px 48px -12px oklch(0 0 0 / 0.6);
+  --overlay: oklch(0.1 0.02 282 / 0.6);
   color-scheme: dark;
 }
 
+/*
+ * Accent colours (Settings → Appearance), per browser: html[data-accent].
+ * Periwinkle is the default (the base palette above). Text in the accent
+ * colour stays above WCAG AA on surfaces in both themes.
+ */
+html[data-accent="lilac"]:not(.dark) {
+  --accent: oklch(0.52 0.17 305);
+  --accent-strong: oklch(0.46 0.17 305);
+  --accent-soft: oklch(0.945 0.035 305);
+  --focus: oklch(0.52 0.17 305);
+}
+html.dark[data-accent="lilac"] {
+  --accent: oklch(0.79 0.12 305);
+  --accent-strong: oklch(0.85 0.096 305);
+  --accent-soft: oklch(0.26 0.05 305);
+  --accent-fg: oklch(0.2 0.04 305);
+  --focus: oklch(0.79 0.12 305);
+}
+html[data-accent="sky"]:not(.dark) {
+  --accent: oklch(0.5 0.13 235);
+  --accent-strong: oklch(0.44 0.13 235);
+  --accent-soft: oklch(0.945 0.035 235);
+  --focus: oklch(0.5 0.13 235);
+}
+html.dark[data-accent="sky"] {
+  --accent: oklch(0.8 0.1 235);
+  --accent-strong: oklch(0.86 0.08 235);
+  --accent-soft: oklch(0.26 0.05 235);
+  --accent-fg: oklch(0.2 0.04 235);
+  --focus: oklch(0.8 0.1 235);
+}
+html[data-accent="mint"]:not(.dark) {
+  --accent: oklch(0.5 0.11 165);
+  --accent-strong: oklch(0.44 0.11 165);
+  --accent-soft: oklch(0.945 0.035 165);
+  --focus: oklch(0.5 0.11 165);
+}
+html.dark[data-accent="mint"] {
+  --accent: oklch(0.82 0.11 165);
+  --accent-strong: oklch(0.88 0.088 165);
+  --accent-soft: oklch(0.26 0.05 165);
+  --accent-fg: oklch(0.2 0.04 165);
+  --focus: oklch(0.82 0.11 165);
+}
+html[data-accent="rose"]:not(.dark) {
+  --accent: oklch(0.53 0.17 10);
+  --accent-strong: oklch(0.47 0.17 10);
+  --accent-soft: oklch(0.945 0.035 10);
+  --focus: oklch(0.53 0.17 10);
+}
+html.dark[data-accent="rose"] {
+  --accent: oklch(0.78 0.12 10);
+  --accent-strong: oklch(0.84 0.096 10);
+  --accent-soft: oklch(0.26 0.05 10);
+  --accent-fg: oklch(0.2 0.04 10);
+  --focus: oklch(0.78 0.12 10);
+}
+html[data-accent="peach"]:not(.dark) {
+  --accent: oklch(0.53 0.14 55);
+  --accent-strong: oklch(0.47 0.14 55);
+  --accent-soft: oklch(0.945 0.035 55);
+  --focus: oklch(0.53 0.14 55);
+}
+html.dark[data-accent="peach"] {
+  --accent: oklch(0.83 0.11 55);
+  --accent-strong: oklch(0.89 0.088 55);
+  --accent-soft: oklch(0.26 0.05 55);
+  --accent-fg: oklch(0.2 0.04 55);
+  --focus: oklch(0.83 0.11 55);
+}
+
 @theme inline {
-  --font-sans: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", monospace;
 
   --color-bg: var(--bg);
@@ -92,9 +204,40 @@
   --color-crit-soft: var(--crit-soft);
   --color-focus: var(--focus);
   --color-overlay: var(--overlay);
+  --color-iris: var(--iris);
+  --color-iris-tint: var(--iris-tint);
+  --color-mint: var(--mint);
+  --color-mint-tint: var(--mint-tint);
+  --color-sky: var(--sky);
+  --color-sky-tint: var(--sky-tint);
+  --color-peach: var(--peach);
+  --color-peach-tint: var(--peach-tint);
+  --color-rose: var(--rose);
+  --color-rose-tint: var(--rose-tint);
+  --color-butter: var(--butter);
+  --color-butter-tint: var(--butter-tint);
 
-  --text-2xs: 0.6875rem;
-  --text-2xs--line-height: 1rem;
+  /* Type scale: a notch larger than Tailwind's defaults for legibility. */
+  --text-2xs: 0.75rem;
+  --text-2xs--line-height: 1.05rem;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.2rem;
+  --text-ui: 0.875rem;
+  --text-ui--line-height: 1.3rem;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.4rem;
+  --text-md: 1rem;
+  --text-md--line-height: 1.5rem;
+
+  /* Corners: controls 6px, panels 8px, cards 10px. */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.625rem;
+  --radius-2xl: 0.75rem;
+
+  --shadow-card: var(--shadow);
+  --shadow-pop: var(--shadow-pop);
 }
 
 @layer base {
@@ -104,9 +247,8 @@
   }
   body {
     @apply bg-bg text-fg font-sans antialiased;
-    font-size: 0.875rem;
-    line-height: 1.45;
-    font-feature-settings: "ss01", "ss02";
+    font-size: 0.9375rem;
+    line-height: 1.5;
   }
   :focus-visible {
     outline: 2px solid var(--focus);
@@ -116,14 +258,12 @@
     background: color-mix(in oklab, var(--accent) 30%, transparent);
   }
   code,
-  kbd,
-  .num {
+  kbd {
     font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
   }
+  /* Numbers line up (tabular figures) but stay in the UI font. */
   .num {
-    font-feature-settings: "zero" 0;
-    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
   }
   * {
     scrollbar-width: thin;
@@ -132,16 +272,117 @@
 }
 
 @layer utilities {
-  .tabular {
-    font-variant-numeric: tabular-nums;
-  }
   .scroll-area {
     overflow: auto;
     overscroll-behavior: contain;
   }
-  .hairline {
-    border-color: var(--border);
+}
+
+/* Sign-in pages: a fuller pastel wash behind the card. Compound selector so
+   it wins over .wargo-canvas, which the same element also carries. */
+.wargo-canvas.wargo-auth {
+  background:
+    radial-gradient(40rem 30rem at 15% 10%, color-mix(in oklab, var(--iris) 22%, transparent), transparent 70%),
+    radial-gradient(36rem 28rem at 85% 85%, color-mix(in oklab, var(--mint) 20%, transparent), transparent 70%),
+    radial-gradient(30rem 22rem at 80% 10%, color-mix(in oklab, var(--peach) 14%, transparent), transparent 70%),
+    var(--bg);
+}
+
+/*
+ * Home: a bento grid driven by the width of <main> (container queries), so
+ * wide and ultrawide screens get more columns instead of empty margins.
+ */
+.home-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "apps" "tiles" "feed" "specs";
+}
+/* Every breakpoint lists each apps/feed combination: an area left in the
+   template without its element still adds an empty row and its gap. */
+.home-grid:not([data-apps]) {
+  grid-template-areas: "tiles" "feed" "specs";
+}
+.home-grid:not([data-feed]) {
+  grid-template-areas: "apps" "tiles" "specs";
+}
+.home-grid:not([data-apps]):not([data-feed]) {
+  grid-template-areas: "tiles" "specs";
+}
+@container main (min-width: 64rem) {
+  .home-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "apps apps" "tiles tiles" "specs feed";
+    align-items: start;
   }
+  .home-grid:not([data-apps]) {
+    grid-template-areas: "tiles tiles" "specs feed";
+  }
+  .home-grid:not([data-feed]) {
+    grid-template-areas: "apps apps" "tiles tiles" "specs specs";
+  }
+  .home-grid:not([data-apps]):not([data-feed]) {
+    grid-template-areas: "tiles tiles" "specs specs";
+  }
+}
+@container main (min-width: 108rem) {
+  .home-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
+    grid-template-rows: auto auto 1fr;
+    grid-template-areas: "apps apps feed" "tiles tiles feed" "specs specs feed";
+  }
+  .home-grid:not([data-apps]) {
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "tiles tiles feed" "specs specs feed";
+  }
+  /* Feed collapsed or turned off: the rest of Home takes the full width. */
+  .home-grid:not([data-feed]) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto;
+    grid-template-areas: "apps apps" "tiles tiles" "specs specs";
+  }
+  .home-grid:not([data-apps]):not([data-feed]) {
+    grid-template-areas: "tiles tiles" "specs specs";
+  }
+  /* The feed starts at the top of the content and fills the rest of the
+     screen (below the 4rem top bar, above main's 2rem bottom padding),
+     staying in view while Home scrolls; its items scroll inside it. */
+  .home-feed {
+    position: sticky;
+    top: 4.25rem;
+    height: calc(100dvh - 4.25rem - 2rem);
+    min-height: 24rem;
+  }
+}
+
+/* Settings sections: balanced columns, see SettingsGrid. */
+.settings-grid {
+  columns: 30rem;
+  column-gap: 1rem;
+  max-width: calc(3 * 42rem + 2 * 1rem);
+}
+.settings-grid > * {
+  break-inside: avoid;
+  margin-bottom: 1rem;
+}
+.settings-grid > .settings-wide {
+  column-span: all;
+}
+/* One card per row, capped so lines stay readable on wide screens. */
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 52rem;
+}
+
+/* App background: a faint pastel wash at the top so the canvas isn't flat. */
+.wargo-canvas {
+  background:
+    radial-gradient(60rem 28rem at 12% -6rem, color-mix(in oklab, var(--iris) 14%, transparent), transparent 70%),
+    radial-gradient(50rem 24rem at 88% -8rem, color-mix(in oklab, var(--mint) 12%, transparent), transparent 70%),
+    var(--bg);
+  background-repeat: no-repeat;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -153,17 +394,17 @@
   }
 }
 
-/* uPlot */
+/* uPlot: the app font, a dashed crosshair in theme colours. */
 .uplot,
 .uplot * {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 .u-legend {
   display: none;
 }
-.u-over,
-.u-under {
-  border-radius: 2px;
+.u-cursor-x {
+  border-right: 1px dashed color-mix(in oklab, var(--fg-subtle) 55%, transparent) !important;
 }
 .u-cursor-pt {
   border-radius: 50%;

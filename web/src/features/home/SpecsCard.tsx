@@ -5,10 +5,12 @@ import {
   AppWindow,
   ArrowLeftRight,
   Binary,
+  Boxes,
   CircuitBoard,
   Clock,
   Container,
   Cpu,
+  Globe,
   Gpu,
   Languages,
   Network,
@@ -19,13 +21,14 @@ import {
   Timer,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { bytes, duration, pct } from "@/lib/format";
+import { bytes, duration } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/misc";
 import { Logo } from "@/app/Logo";
-import { useCapabilities, useMe } from "@/app/session";
-import type { Snapshot, SystemInfo } from "@/features/system/useMetrics";
+import { useCapabilities } from "@/app/session";
+import { usePublicIP, type Snapshot, type SystemInfo } from "@/features/system/useMetrics";
+import { useContainers } from "@/features/containers/api";
 
 export interface Desktop {
   name: string;
@@ -39,6 +42,8 @@ export interface Specs {
   model?: string;
   board?: string;
   gpus?: string[];
+  /** Per-GPU memory, same order as gpus. */
+  gpuDetails?: { name: string; vram?: number; shared?: boolean }[];
   shell?: string;
   init?: string;
   timezone?: string;
@@ -75,7 +80,7 @@ function SpecItem({ icon, label, value, title }: Item) {
       </span>
       <div className="min-w-0 flex-1">
         <div className="text-2xs font-medium uppercase tracking-wider text-subtle">{label}</div>
-        <div className="num truncate text-[0.8125rem] text-fg" title={title ?? (typeof value === "string" ? value : undefined)}>
+        <div className="num truncate text-ui text-fg" title={title ?? (typeof value === "string" ? value : undefined)}>
           {value}
         </div>
       </div>
@@ -105,11 +110,14 @@ export function SpecsCard({ snap }: { snap: Snapshot | null }) {
     queryFn: () => api.get<SystemInfoWithSpecs>("/api/system/info"),
     staleTime: 2 * 60_000,
   });
-  const { data: me } = useMe();
   const { data: caps } = useCapabilities();
   const sp = info?.specs;
   const de = sp?.desktop;
   const arch = info ? (info.arch === "amd64" ? "x86_64" : info.arch === "arm64" ? "aarch64" : info.arch) : "";
+  const gpuList = sp?.gpuDetails ?? (sp?.gpus ?? []).map((name) => ({ name, vram: undefined, shared: undefined }));
+  // Same interval as the feed's: one poll for both (the topic keeps it live).
+  const { data: containers } = useContainers({ enabled: !!caps?.docker?.available, refetchInterval: 60_000 });
+  const publicIp = usePublicIP();
 
   const hardware: Item[] = [
     { icon: <Server />, label: "Host", value: sp?.model },
@@ -117,10 +125,14 @@ export function SpecsCard({ snap }: { snap: Snapshot | null }) {
     {
       icon: <Cpu />,
       label: "Processor",
-      value: info ? `${info.cpuModel}` : undefined,
+      value: info ? `${info.cpuModel}${info.cpuMaxMHz ? ` @ ${(info.cpuMaxMHz / 1000).toFixed(1)} GHz` : ""}` : undefined,
       title: info ? `${info.cpuModel} · ${info.cores} cores / ${info.threads} threads` : undefined,
     },
-    ...(sp?.gpus ?? []).map((g, i) => ({ icon: <Gpu />, label: sp!.gpus!.length > 1 ? `Graphics ${i + 1}` : "Graphics", value: g })),
+    ...gpuList.map((g, i) => ({
+      icon: <Gpu />,
+      label: gpuList.length > 1 ? `Graphics ${i + 1}` : "Graphics",
+      value: `${g.name}${g.vram ? ` · ${bytes(g.vram)}` : g.shared ? " · shared memory" : ""}`,
+    })),
     {
       icon: <ArrowLeftRight />,
       label: "Swap",
@@ -156,6 +168,12 @@ export function SpecsCard({ snap }: { snap: Snapshot | null }) {
 
   const network: Item[] = [
     { icon: <Network />, label: "Local IP", value: sp?.localIp },
+    {
+      icon: <Globe />,
+      label: "Public IP",
+      value: publicIp.data?.ip ?? (publicIp.isLoading ? "…" : publicIp.data?.error ? "Unavailable" : undefined),
+      title: publicIp.data?.source ? `Looked up via ${publicIp.data.source}` : undefined,
+    },
     { icon: <Clock />, label: "Timezone", value: sp?.timezone },
     { icon: <Languages />, label: "Locale", value: sp?.locale },
   ];
@@ -194,10 +212,10 @@ export function SpecsCard({ snap }: { snap: Snapshot | null }) {
               up {duration(snap.uptime)}
             </span>
           )}
-          {me?.user && <span className="num text-subtle">{me.user}@{info?.hostname ?? ""}</span>}
-          {snap && info && (
-            <span className="num text-subtle">
-              {info.cores}C/{info.threads}T · {pct(snap.cpu.total)} CPU
+          {containers && (
+            <span className="num inline-flex items-center gap-1 text-subtle" title="Containers installed and running">
+              <Boxes className="size-3.5" aria-hidden="true" />
+              {containers.length} installed · {containers.filter((c) => c.state === "running").length} running
             </span>
           )}
         </div>

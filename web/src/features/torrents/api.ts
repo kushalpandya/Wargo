@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ApiError } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { api, ApiError } from "@/lib/api";
 
 export interface Category {
   id: number;
@@ -73,6 +74,20 @@ export interface TransmissionPayload {
   };
   error?: string;
   at: string;
+}
+
+export const torrentsKey = ["transmission", "torrents"] as const;
+
+/** GET /api/transmission/torrents. Not retried: Transmission being down is common and reported in the UI. */
+export function useTorrents({ enabled = true, refetchInterval }: { enabled?: boolean; refetchInterval?: number } = {}) {
+  return useQuery({
+    queryKey: torrentsKey,
+    queryFn: () => api.get<TransmissionPayload>("/api/transmission/torrents"),
+    enabled,
+    refetchInterval,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
 }
 
 export interface TransmissionClientHint {

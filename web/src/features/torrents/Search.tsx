@@ -184,7 +184,7 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
                 autoFocus={!q}
                 maxLength={200}
                 enterKeyHint="search"
-                className="h-9 w-full min-w-0 rounded-l-md rounded-r-none border border-r-0 border-border bg-surface-2 pl-9 pr-3 text-[0.9375rem] text-fg placeholder:text-subtle hover:border-border-strong focus:border-focus focus:outline-none focus:ring-2 focus:ring-focus/25 [&::-webkit-search-cancel-button]:hidden"
+                className="h-9 w-full min-w-0 rounded-l-md rounded-r-none border border-r-0 border-border bg-surface-2 pl-9 pr-3 text-md text-fg placeholder:text-subtle hover:border-border-strong focus:border-focus focus:outline-none focus:ring-2 focus:ring-focus/25 [&::-webkit-search-cancel-button]:hidden"
               />
             </div>
             <button
@@ -220,7 +220,7 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
             <p className="num text-xs text-muted">{elapsed}s · public indexers can take up to 30 seconds</p>
           </div>
         ) : search.error ? (
-          <div className="p-3.5">
+          <div className="p-4">
             <ErrorNote error={search.error} />
           </div>
         ) : search.data ? (
@@ -352,7 +352,7 @@ function Intro() {
 
 function IndexerErrors({ errors }: { errors: SearchResponse["errors"] }) {
   return (
-    <details className="group border-b border-border bg-warn-soft/40 px-3.5 py-2 text-xs">
+    <details className="group border-b border-border bg-warn-soft/40 px-4 py-2 text-xs">
       <summary className="flex cursor-pointer list-none items-center gap-2 text-warn">
         <AlertTriangle className="size-3.5 shrink-0" />
         <span>
@@ -470,7 +470,7 @@ function ResultRow({ r, busy, magnetOnly, actions, queueReason }: RowProps) {
 function ResultCard({ r, busy, magnetOnly, actions, queueReason }: RowProps) {
   const tReason = torrentReason(r, magnetOnly);
   return (
-    <li className="border-b border-border px-3.5 py-3">
+    <li className="border-b border-border px-4 py-3">
       <Title r={r} />
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         <span className="num text-muted">{bytes(r.size)}</span>

@@ -1,23 +1,47 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { UseMutationResult } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { FormField, Input } from "@/components/ui/form";
 import { ErrorNote } from "@/components/ui/misc";
+import { toast } from "@/components/ui/toast";
 import { useMe } from "@/app/session";
 import { copyText } from "@/lib/clipboard";
 
-/** Heading for a settings page. */
-export function SettingsHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
-  return (
-    <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-      <div className="min-w-0">
-        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-        {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
-      </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
-    </div>
-  );
+/**
+ * Cards of a settings section in balanced columns (like masonry): each card
+ * keeps its own height and the next one starts right below it, so cards of
+ * different heights never leave gaps. Columns are at least 30rem and the
+ * whole grid is capped so a card never grows past ~42rem: one column on
+ * laptops, two or three on wide screens. Give a child "settings-wide" to
+ * span every column.
+ */
+export function SettingsGrid({ children }: { children: ReactNode }) {
+  return <div className="settings-grid">{children}</div>;
+}
+
+/** Cards of a settings section, one per row, at a comfortable reading width. */
+export function SettingsStack({ children }: { children: ReactNode }) {
+  return <div className="settings-stack">{children}</div>;
+}
+
+/** SettingRows (or other items with the same padding) separated by lines. */
+export function SettingsList({ children }: { children: ReactNode }) {
+  return <div className="divide-y divide-border/70">{children}</div>;
+}
+
+/**
+ * A settings object saved whole on every change. Returns what to show (the
+ * save in flight, else the server's copy) and an updater that builds on it,
+ * so quick successive changes don't undo each other.
+ */
+export function usePatchSave<T extends object>(data: T | undefined, save: UseMutationResult<T, Error, T>) {
+  const value = save.isPending && save.variables ? save.variables : data;
+  const update = (patch: Partial<T>) => {
+    if (value) save.mutate({ ...value, ...patch }, { onError: (e) => toast.error("Could not save", e) });
+  };
+  return [value, update] as const;
 }
 
 /** Label/description on the left, control on the right (stacks on phones). */

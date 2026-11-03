@@ -17,7 +17,7 @@ export function NavTabs({ label, items, className }: { label: string; items: { t
           end={i.end}
           className={({ isActive }) =>
             cn(
-              "-mb-px inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 text-[0.8125rem] font-medium transition-colors [&_svg]:size-4",
+              "-mb-px inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 text-ui font-medium transition-colors [&_svg]:size-4",
               "focus-visible:rounded-t-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/25",
               isActive ? "border-accent text-fg" : "border-transparent text-muted hover:border-border-strong hover:text-fg",
             )

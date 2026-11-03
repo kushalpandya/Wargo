@@ -39,7 +39,7 @@ export function Dialog({
         >
           <div className="flex items-start gap-3 border-b border-border px-4 py-3">
             <div className="min-w-0 flex-1">
-              <D.Title className="text-[0.9375rem] font-semibold [overflow-wrap:anywhere]">{title}</D.Title>
+              <D.Title className="text-md font-semibold [overflow-wrap:anywhere]">{title}</D.Title>
               {description ? (
                 <D.Description className="mt-0.5 text-sm text-muted [overflow-wrap:anywhere]">{description}</D.Description>
               ) : (
@@ -133,7 +133,7 @@ export function Sheet({
         >
           <div className="flex items-start gap-3 border-b border-border px-4 py-3">
             <div className="min-w-0 flex-1">
-              <D.Title className="truncate text-[0.9375rem] font-semibold">{title}</D.Title>
+              <D.Title className="truncate text-md font-semibold">{title}</D.Title>
               {description ? (
                 <D.Description className="mt-0.5 truncate text-sm text-muted">{description}</D.Description>
               ) : (

@@ -8,17 +8,17 @@ type Variant = "primary" | "secondary" | "ghost" | "danger" | "outline-danger";
 type Size = "xs" | "sm" | "md";
 
 const variants: Record<Variant, string> = {
-  primary: "bg-accent text-accent-fg hover:bg-accent-strong border-transparent font-medium",
-  secondary: "bg-surface-2 text-fg border-border hover:bg-surface-3 hover:border-border-strong",
-  ghost: "bg-transparent text-muted border-transparent hover:bg-surface-3 hover:text-fg",
-  danger: "bg-crit text-white border-transparent hover:brightness-110 font-medium",
+  primary: "bg-accent text-accent-fg hover:bg-accent-strong border-transparent font-semibold shadow-[0_1px_2px_oklch(0.3_0.1_280/0.2)]",
+  secondary: "bg-surface text-fg border-border font-medium hover:bg-surface-3 hover:border-border-strong",
+  ghost: "bg-transparent text-muted border-transparent font-medium hover:bg-surface-3 hover:text-fg",
+  danger: "bg-crit text-surface border-transparent hover:brightness-110 font-semibold",
   "outline-danger": "bg-transparent text-crit border-border hover:bg-crit-soft hover:border-crit/40",
 };
 
 const sizes: Record<Size, string> = {
-  xs: "h-6 px-2 text-xs gap-1 rounded-[5px]",
-  sm: "h-7 px-2.5 text-[0.8125rem] gap-1.5 rounded-md",
-  md: "h-8 px-3 text-sm gap-2 rounded-md",
+  xs: "h-7 px-2.5 text-xs gap-1 rounded-md",
+  sm: "h-8 px-3 text-ui gap-1.5 rounded-md",
+  md: "h-9 px-3.5 text-ui gap-2 rounded-md",
 };
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -81,7 +81,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   { label, size = "md", variant = "ghost", className, children, type = "button", ...rest },
   ref,
 ) {
-  const dim = size === "xs" ? "size-6" : size === "sm" ? "size-7" : "size-8";
+  const dim = size === "xs" ? "size-7" : size === "sm" ? "size-8" : "size-9";
   return (
     <button
       ref={ref}
@@ -90,7 +90,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       title={label}
       className={cn(
         "inline-flex shrink-0 items-center justify-center rounded-md border transition-colors",
-        "disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-4",
+        "disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-[1.125rem]",
         variants[variant],
         dim,
         className,

@@ -160,7 +160,7 @@ export function LogsView({ id, name, className }: { id: string; name: string; cl
         tabIndex={0}
         role="log"
         aria-label={`Logs for ${name}`}
-        className="num min-h-0 flex-1 overflow-auto bg-bg px-3 py-2 text-[0.75rem] leading-[1.5] focus-visible:outline-none"
+        className="num min-h-0 flex-1 overflow-auto bg-bg px-3 py-2 text-2xs leading-[1.5] focus-visible:outline-none"
       >
         {visible.length === 0 ? (
           <p className="py-8 text-center text-sm text-subtle">{state === "connecting" ? "Loading…" : ql ? "No matching lines" : "No output yet"}</p>

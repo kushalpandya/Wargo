@@ -34,7 +34,7 @@ export default function Apps() {
         <div className="mb-4">
           <LauncherDisabledNotice
             action={
-              <Link to="/settings/launcher" className="inline-flex min-h-8 items-center text-sm font-medium text-accent underline underline-offset-2">
+              <Link to="/settings/general" className="inline-flex min-h-8 items-center text-sm font-medium text-accent underline underline-offset-2">
                 Launcher settings
               </Link>
             }

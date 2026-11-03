@@ -12,7 +12,7 @@ import { Card, CardBody, CardHeader, Stat } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { SearchInput } from "@/components/ui/form";
-import { Badge, EmptyState, ErrorNote, Notice, Skeleton, Spinner } from "@/components/ui/misc";
+import { Badge, EmptyState, ErrorNote, Notice, PageHeader, Skeleton, Spinner } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
 import { statusKey, usePkgStatus, pendingCount, type CheckResult, type JobSnapshot, type PkgStatus, type Precheck } from "./api";
 import { useContainers, useContainerUpdates } from "@/features/containers/api";
@@ -160,7 +160,7 @@ function Summary({ status, checking }: { status: PkgStatus; checking: boolean })
   const n = c?.updates.length ?? 0;
   return (
     <Card className="mb-4">
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-3.5 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-4 sm:grid-cols-4">
         <Stat
           label="Pending"
           value={c && !c.error ? n : "—"}
@@ -194,7 +194,7 @@ function Summary({ status, checking }: { status: PkgStatus; checking: boolean })
           <div className="mt-0.5 truncate text-xs text-muted">{c ? `took ${(c.durationMs / 1000).toFixed(1)} s` : "checks run only on request"}</div>
         </div>
       </div>
-      <div className="flex items-start gap-2 border-t border-border px-3.5 py-2 text-xs text-muted">
+      <div className="flex items-start gap-2 border-t border-border px-4 py-2 text-xs text-muted">
         <ShieldCheck className="mt-px size-3.5 shrink-0 text-frost" />
         <span>Wargo never checks or installs updates on its own. Packages are installed only when you click Update all.</span>
       </div>
@@ -297,7 +297,7 @@ function SystemUpdates() {
       )}
 
       {st.reboot.required && !(showRun && st.lastRun?.rebootRequired && !running) && !running && (
-        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-warn/30 bg-warn-soft px-3.5 py-2.5">
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-warn/30 bg-warn-soft px-4 py-2.5">
           <RotateCw className="size-4 shrink-0 text-warn" />
           <div className="min-w-0 flex-1 text-sm">
             <span className="font-medium">Reboot recommended.</span> <span className="text-muted">{st.reboot.reason}</span>
@@ -389,7 +389,7 @@ function SystemToolbar({ status, actions }: { status: PkgStatus; actions: React.
 type Tab = "system" | "containers";
 
 const tabCls =
-  "inline-flex h-10 items-center gap-2 border-b-2 border-transparent px-3 text-[0.8125rem] font-medium text-muted hover:text-fg data-[state=active]:border-accent data-[state=active]:text-fg [&_svg]:size-4";
+  "inline-flex h-10 items-center gap-2 border-b-2 border-transparent px-3 text-ui font-medium text-muted hover:text-fg data-[state=active]:border-accent data-[state=active]:text-fg [&_svg]:size-4";
 
 function Count({ n, loading, tone }: { n?: number; loading?: boolean; tone?: "accent" }) {
   if (loading) return <Spinner className="size-3" />;
@@ -422,11 +422,11 @@ export default function UpdatesPage() {
   const tab: Tab = param === "containers" || param === "system" ? param : pkgN === 0 && (ctrN ?? 0) > 0 ? "containers" : "system";
 
   return (
-    <div className="mx-auto max-w-[1600px]">
+    <div className="min-w-0">
       <Tabs.Root value={tab} onValueChange={(v) => setParams({ tab: v }, { replace: true })}>
+        <PageHeader title="Updates" description="OS packages and container images, installed when you choose." />
         <div className="mb-4 border-b border-border">
-          <h1 className="text-lg font-semibold tracking-tight">Updates</h1>
-          <Tabs.List className="-mb-px mt-2 flex gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Update sources">
+          <Tabs.List className="-mb-px flex gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Update sources">
             <Tabs.Trigger value="system" className={tabCls}>
               <PackageCheck /> System packages <Count n={pkgN} loading={!!pkg.data?.checking || !!pkg.data?.running} tone="accent" />
             </Tabs.Trigger>

@@ -9,7 +9,7 @@ import type { Container } from "./types";
 const failed = new Set<string>();
 
 const sizes = {
-  sm: "size-6 rounded text-[0.6875rem]",
+  sm: "size-6 rounded text-2xs",
   md: "size-8 rounded-md text-sm",
   lg: "size-10 rounded-lg text-base",
 } as const;

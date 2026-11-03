@@ -21,7 +21,7 @@ export interface Action {
 export type ActionGroups = Action[][];
 
 const itemCls =
-  "flex h-7 cursor-default select-none items-center gap-2 rounded px-2 text-[0.8125rem] outline-none [&_svg]:size-3.5 data-[highlighted]:bg-surface-3 data-[state=open]:bg-surface-3 data-[disabled]:opacity-40";
+  "flex h-7 cursor-default select-none items-center gap-2 rounded px-2 text-ui outline-none [&_svg]:size-3.5 data-[highlighted]:bg-surface-3 data-[state=open]:bg-surface-3 data-[disabled]:opacity-40";
 const contentCls = "z-50 min-w-52 rounded-md border border-border-strong bg-surface p-1 shadow-xl focus:outline-none";
 
 function ItemBody({ a, sub }: { a: Action; sub?: boolean }) {
@@ -124,7 +124,7 @@ export function ActionSheet({ open, onOpenChange, title, subtitle, groups }: { o
         <D.Content className="fixed inset-x-0 bottom-0 z-50 max-h-[85dvh] overflow-auto rounded-t-xl border-t border-border-strong bg-surface pb-[calc(env(safe-area-inset-bottom)+0.5rem)] focus:outline-none">
           <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-border-strong" aria-hidden="true" />
           <div className="border-b border-border px-4 pb-3 pt-2">
-            <D.Title className="truncate text-[0.9375rem] font-semibold">{title}</D.Title>
+            <D.Title className="truncate text-md font-semibold">{title}</D.Title>
             <D.Description className={cn("truncate text-xs text-muted", !subtitle && "sr-only")}>{subtitle ?? "Actions"}</D.Description>
           </div>
           {gs.map((g, i) => (
@@ -140,7 +140,7 @@ export function ActionSheet({ open, onOpenChange, title, subtitle, groups }: { o
                     window.setTimeout(a.run, 10);
                   }}
                   className={cn(
-                    "flex h-11 w-full items-center gap-3 rounded-md px-3 text-left text-[0.9375rem] active:bg-surface-3 disabled:opacity-40 [&_svg]:size-[1.1rem]",
+                    "flex h-11 w-full items-center gap-3 rounded-md px-3 text-left text-md active:bg-surface-3 disabled:opacity-40 [&_svg]:size-[1.1rem]",
                     a.danger ? "text-crit" : "text-fg",
                   )}
                 >

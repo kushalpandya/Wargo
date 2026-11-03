@@ -50,7 +50,7 @@ export default function IntegrationSettings() {
   }
   if (status.error || !status.data) return <Notice tone="crit">{errorMessage(status.error)}</Notice>;
   return (
-    <div className="space-y-4">
+    <div className="settings-stack">
       <ProwlarrCard status={status.data} discover={discover} />
       <TransmissionCard status={status.data} discover={discover} />
     </div>
@@ -230,7 +230,7 @@ function ProwlarrCard({ status, discover }: { status: IntegrationsStatus; discov
           </>
         }
       />
-      <form onSubmit={submit} className="space-y-3.5 p-3.5">
+      <form onSubmit={submit} className="space-y-3.5 p-4">
         {p.configured && !p.available && p.error && <Notice tone="crit">{p.error}</Notice>}
         <DetectPanel discover={discover} empty={candidates.length === 0}>
           {candidates.map((c) => (
@@ -385,7 +385,7 @@ function TransmissionCard({ status, discover }: { status: IntegrationsStatus; di
           </>
         }
       />
-      <form onSubmit={submit} className="space-y-3.5 p-3.5">
+      <form onSubmit={submit} className="space-y-3.5 p-4">
         {t.configured && !t.available && t.error && <Notice tone="crit">{t.error}</Notice>}
         <DetectPanel discover={discover} empty={candidates.length === 0 && !hint}>
           {candidates.map((c) => (

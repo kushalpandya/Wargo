@@ -4,15 +4,25 @@ import { cssVar } from "@/lib/theme";
 
 let ctx: CanvasRenderingContext2D | null = null;
 
-/** Normalises any CSS colour to #rrggbb so xterm (and alpha maths) can use it. */
+/**
+ * Normalises any CSS colour (hex, rgb(), oklch()…) to #rrggbb so xterm (and
+ * the alpha maths below) can use it. The browser resolves it by painting a
+ * pixel: reading fillStyle back can return oklch() as written.
+ */
 function hex(color: string, fallback: string): string {
   if (!color) return fallback;
-  ctx ??= document.createElement("canvas").getContext("2d");
-  if (!ctx) return color;
+  if (!ctx) {
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = 1;
+    ctx = cv.getContext("2d", { willReadFrequently: true });
+  }
+  if (!ctx) return fallback;
+  ctx.clearRect(0, 0, 1, 1);
   ctx.fillStyle = fallback;
   ctx.fillStyle = color;
-  const v = ctx.fillStyle;
-  return v.startsWith("#") ? v : fallback;
+  ctx.fillRect(0, 0, 1, 1);
+  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+  return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
 }
 
 function rgba(color: string, alpha: number): string {
@@ -30,9 +40,9 @@ function mix(a: string, b: string, t: number): string {
 }
 
 /**
- * Terminal palette derived from the Northern design tokens. The ANSI
- * colours reuse the semantic tokens (crit/ok/warn/frost/accent) so shell
- * output matches the rest of the dashboard in both themes.
+ * Terminal palette derived from the design tokens: pastel ANSI colours
+ * that match the rest of the dashboard and stay readable as text in both
+ * themes (light mode uses the deeper status shades).
  */
 export function terminalTheme(dark: boolean): ITheme {
   const v = (name: string, fb: string) => hex(cssVar(name), fb);
@@ -46,9 +56,9 @@ export function terminalTheme(dark: boolean): ITheme {
   const warn = v("--warn", dark ? "#e7b84a" : "#8a5900");
   const crit = v("--crit", dark ? "#f06a60" : "#b8322a");
   const border = v("--border-strong", dark ? "#2f3944" : "#c5cdd6");
-  // Two hues the token set doesn't have, tuned to sit beside frost/crit.
-  const magenta = dark ? "#c49be8" : "#7b4fa8";
-  const cyan = dark ? "#6fd0c8" : "#16756f";
+  // Lilac and teal: from the pastel family in dark mode, deeper in light.
+  const magenta = hex(dark ? cssVar("--iris") : "oklch(0.5 0.16 300)", dark ? "#c49be8" : "#7b4fa8");
+  const cyan = hex(dark ? cssVar("--mint") : "oklch(0.5 0.09 190)", dark ? "#6fd0c8" : "#16756f");
   const white = dark ? mix(fg, bg, 0.12) : mix(fg, bg, 0.45);
   const black = dark ? mix(bg, fg, 0.22) : fg;
   const bright = (c: string) => (dark ? mix(c, "#ffffff", 0.22) : mix(c, "#000000", 0.12));

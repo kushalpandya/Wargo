@@ -111,17 +111,20 @@ function Summary({ data }: { data?: ProcList }) {
     <Card className="mb-4 grid grid-cols-2 divide-border max-sm:[&>*:nth-child(n+3)]:border-t sm:grid-cols-4 sm:divide-x">
       {s
         ? items.map((it, i) => (
-            <div key={it.label} className={cn("min-w-0 px-3.5 py-3", i % 2 === 1 && "max-sm:border-l max-sm:border-border")}>
+            <div key={it.label} className={cn("min-w-0 px-4 py-3", i % 2 === 1 && "max-sm:border-l max-sm:border-border")}>
               <div className="text-2xs font-medium uppercase tracking-wider text-subtle">{it.label}</div>
               <div className={cn("num mt-0.5 text-xl font-medium leading-tight", it.tone && toneText[it.tone])}>{it.value}</div>
+              {/* Cells without a meter keep its space, so all cells are the same height. */}
               {it.meter !== undefined ? (
                 <Meter value={it.meter} tone={it.tone ?? "accent"} className="mt-1.5" label={it.label} />
-              ) : null}
+              ) : (
+                <div className="mt-1.5 h-1.5" aria-hidden="true" />
+              )}
               <div className="mt-1 truncate text-xs text-muted">{it.sub}</div>
             </div>
           ))
         : Array.from({ length: 4 }, (_, i) => (
-            <div key={i} className="px-3.5 py-3">
+            <div key={i} className="px-4 py-3">
               <Skeleton className="h-3 w-16" />
               <Skeleton className="mt-2 h-6 w-20" />
             </div>
@@ -207,7 +210,7 @@ function MobileRow({ row, tree, onOpen }: { row: Row; tree: boolean; onOpen: (pi
       <button
         type="button"
         onClick={() => onOpen(p.pid)}
-        className="flex min-h-12 w-full items-center gap-3 border-b border-border px-3.5 py-2 text-left hover:bg-surface-2"
+        className="flex min-h-12 w-full items-center gap-3 border-b border-border px-4 py-2 text-left hover:bg-surface-2"
         style={tree ? { paddingLeft: 14 + Math.min(depth, 6) * 12 } : undefined}
       >
         <div className="min-w-0 flex-1">
@@ -345,11 +348,11 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
           {!live && <span className="text-xs font-medium text-warn" role="status">Paused</span>}
         </div>
         {query.error ? (
-          <div className="p-3.5">
+          <div className="p-4">
             <ErrorNote error={query.error} />
           </div>
         ) : !data ? (
-          <div className="space-y-2 p-3.5">
+          <div className="space-y-2 p-4">
             {Array.from({ length: 10 }, (_, i) => (
               <Skeleton key={i} className="h-6" />
             ))}
@@ -383,7 +386,7 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
                 </tbody>
               </Table>
             </div>
-            <div className="flex items-center gap-2 border-b border-border px-3.5 py-2 md:hidden">
+            <div className="flex items-center gap-2 border-b border-border px-4 py-2 md:hidden">
               <span className="text-2xs font-medium uppercase tracking-wider text-subtle">Sort</span>
               <Segmented
                 size="sm"
@@ -404,7 +407,7 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
                 ))}
               </ul>
             </div>
-            <div ref={setFooterEl} className="flex flex-wrap items-center gap-3 border-t border-border px-3.5 py-2.5 text-xs text-muted">
+            <div ref={setFooterEl} className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-2.5 text-xs text-muted">
               <span className="num">
                 Showing {shown.length} of {rows.length}
               </span>

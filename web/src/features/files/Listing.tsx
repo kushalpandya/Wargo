@@ -208,13 +208,13 @@ function Row({
           {thumb ? (
             <img src={downloadUrl(props.root, joinPath(props.dir, e.name), true)} alt="" loading="lazy" decoding="async" className="size-full object-cover" draggable={false} />
           ) : (
-            <FileIcon entry={e} className="size-10" strokeWidth={1.25} />
+            <FileIcon entry={e} className="size-14" strokeWidth={1.1} />
           )}
         </div>
         <div className="absolute left-1.5 top-1.5">{check}</div>
         <div className="absolute right-1 top-1 rounded-md bg-surface/80">{more}</div>
         <div role="gridcell" className="min-w-0 px-2 py-1.5">
-          <div className="truncate text-[0.8125rem] font-medium" title={e.name}>
+          <div className="truncate text-ui font-medium" title={e.name}>
             {e.name}
           </div>
           <div className="num truncate text-2xs text-muted">{kind === "dir" ? (e.type === "symlink" ? `→ ${e.target}` : "Folder") : `${sizeText} · ${ago(e.mtime)}`}</div>
@@ -228,9 +228,9 @@ function Row({
       <div {...common} className={cn("group flex min-h-14 cursor-default select-none items-center gap-3 border-b border-border px-3", sel ? "bg-accent-soft" : "active:bg-surface-2", focused && !props.coarse && "ring-2 ring-inset ring-focus/50", dropCls)}>
         {selecting && check}
         <div role="gridcell" className="flex min-w-0 flex-1 items-center gap-3">
-        <FileIcon entry={e} className="size-5" />
+        <FileIcon entry={e} className="size-7" strokeWidth={1.5} />
         <div className="min-w-0 flex-1 py-2">
-          <div className={cn("truncate text-[0.9375rem]", e.name.startsWith(".") && "text-muted")}>{e.name}</div>
+          <div className={cn("truncate text-md", e.name.startsWith(".") && "text-muted")}>{e.name}</div>
           <div className="num flex min-w-0 gap-1.5 truncate text-xs text-muted">
             {e.type === "symlink" ? linkNote : <span>{kind === "dir" ? datetime(e.mtime) : `${sizeText} · ${ago(e.mtime)}`}</span>}
           </div>
@@ -245,7 +245,7 @@ function Row({
     <div
       {...common}
       className={cn(
-        "group grid h-9 cursor-default select-none items-center gap-x-3 border-b border-border px-2 text-[0.8125rem]",
+        "group grid h-10 cursor-default select-none items-center gap-x-3 border-b border-border px-2 text-ui",
         listCols,
         sel ? "bg-accent-soft" : "hover:bg-surface-2",
         focused && "outline outline-2 -outline-offset-2 outline-focus/60",
@@ -254,8 +254,8 @@ function Row({
       )}
     >
       {check}
-      <div role="gridcell" className="flex min-w-0 items-center gap-2">
-        <FileIcon entry={e} className="size-4" />
+      <div role="gridcell" className="flex min-w-0 items-center gap-2.5">
+        <FileIcon entry={e} className="size-[1.375rem]" strokeWidth={1.6} />
         <span className={cn("truncate", e.name.startsWith(".") && "text-muted")} title={e.name}>
           {e.name}
         </span>

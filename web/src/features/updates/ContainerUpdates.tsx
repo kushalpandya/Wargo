@@ -57,12 +57,12 @@ const cols = "md:grid md:grid-cols-[minmax(12rem,1.2fr)_minmax(12rem,1.3fr)_minm
 
 function StaleRow({ c, u, onUpdate, busy }: { c: Container; u?: UpdateCheck; onUpdate: () => void; busy: boolean }) {
   return (
-    <li className={cn("flex items-start gap-3 border-b border-border px-3.5 py-2.5 last:border-0 hover:bg-surface-2 md:items-center", cols)}>
+    <li className={cn("flex items-start gap-3 border-b border-border px-4 py-2.5 last:border-0 hover:bg-surface-2 md:items-center", cols)}>
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
         <ContainerIcon c={c} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1.5">
-            <Link to={`/containers/${c.id}`} className="truncate text-[0.8125rem] font-medium text-fg hover:underline max-md:-my-2 max-md:py-2">
+            <Link to={`/containers/${c.id}`} className="truncate text-ui font-medium text-fg hover:underline max-md:-my-2 max-md:py-2">
               {c.name}
             </Link>
             <Origin c={c} />
@@ -104,7 +104,7 @@ function StaleRow({ c, u, onUpdate, busy }: { c: Container; u?: UpdateCheck; onU
 
 function ListHeader() {
   return (
-    <div aria-hidden="true" className={cn("hidden border-b border-border bg-surface-2 px-3.5 py-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle", cols)}>
+    <div aria-hidden="true" className={cn("hidden border-b border-border bg-surface-2 px-4 py-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle", cols)}>
       <span>Container</span>
       <span>Current → available</span>
       <span>Image</span>
@@ -118,10 +118,10 @@ function Collapsible({ title, icon, count, children, tone }: { title: string; ic
   return (
     <Card className="mt-4">
       <details className="group">
-        <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3.5 py-2 [&::-webkit-details-marker]:hidden">
+        <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-4 py-2 [&::-webkit-details-marker]:hidden">
           <ChevronRight className="size-4 shrink-0 text-subtle transition-transform group-open:rotate-90" aria-hidden="true" />
           <span className={cn("[&_svg]:size-4", tone === "warn" ? "text-warn" : "text-ok")}>{icon}</span>
-          <h2 className="text-[0.8125rem] font-semibold tracking-tight">{title}</h2>
+          <h2 className="text-ui font-semibold tracking-tight">{title}</h2>
           <span className="num text-xs text-subtle">{count}</span>
         </summary>
         <ul className="border-t border-border">{children}</ul>
@@ -134,7 +134,7 @@ function Summary({ st, checking, stale, current, errors, total }: { st?: Updates
   const checked = !!st?.checkedAt;
   return (
     <Card className="mb-4">
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-3.5 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-4 sm:grid-cols-4">
         <Stat
           label="Updates"
           value={checked ? stale : "—"}
@@ -166,7 +166,7 @@ function Summary({ st, checking, stale, current, errors, total }: { st?: Updates
           </div>
         </div>
       </div>
-      <div className="flex items-start gap-2 border-t border-border px-3.5 py-2 text-xs text-muted">
+      <div className="flex items-start gap-2 border-t border-border px-4 py-2 text-xs text-muted">
         <ShieldCheck className="mt-px size-3.5 shrink-0 text-frost" />
         <span>
           {st?.intervalMs
@@ -294,7 +294,7 @@ export function ContainerUpdates({
             ))}
           </ul>
           {stale.some((c) => res[c.id]?.error) && (
-            <div className="flex items-start gap-2 border-t border-border px-3.5 py-2 text-xs text-muted">
+            <div className="flex items-start gap-2 border-t border-border px-4 py-2 text-xs text-muted">
               <TriangleAlert className="mt-px size-3.5 shrink-0 text-warn" />
               <span>Some results are from an earlier check because the latest check failed for that image.</span>
             </div>
@@ -305,9 +305,9 @@ export function ContainerUpdates({
       {current.length > 0 && (stale.length > 0 || failed.length > 0) && (
         <Collapsible title="Up to date" icon={<CircleCheck />} count={current.length}>
           {current.map((c) => (
-            <li key={c.id} className="flex min-w-0 items-center gap-2.5 border-b border-border px-3.5 py-2 last:border-0">
+            <li key={c.id} className="flex min-w-0 items-center gap-2.5 border-b border-border px-4 py-2 last:border-0">
               <ContainerIcon c={c} size="sm" />
-              <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium">{c.name}</span>
+              <span className="min-w-0 flex-1 truncate text-ui font-medium">{c.name}</span>
               <span className="num max-w-[45%] truncate text-xs text-muted" title={c.image}>
                 {c.version}
               </span>
@@ -319,11 +319,11 @@ export function ContainerUpdates({
       {failed.length > 0 && (
         <Collapsible title="Could not be checked" icon={<TriangleAlert />} count={failed.length} tone="warn">
           {failed.map((c) => (
-            <li key={c.id} className="flex min-w-0 items-start gap-2.5 border-b border-border px-3.5 py-2 last:border-0">
+            <li key={c.id} className="flex min-w-0 items-start gap-2.5 border-b border-border px-4 py-2 last:border-0">
               <ContainerIcon c={c} size="sm" className="mt-0.5" />
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-baseline gap-2">
-                  <span className="truncate text-[0.8125rem] font-medium">{c.name}</span>
+                  <span className="truncate text-ui font-medium">{c.name}</span>
                   <ImageRef c={c} />
                 </div>
                 <div className="text-xs text-warn">{res[c.id]?.error}</div>

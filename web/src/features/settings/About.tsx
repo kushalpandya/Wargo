@@ -6,7 +6,8 @@ import { bytes, duration } from "@/lib/format";
 import { Logo } from "@/app/Logo";
 import { Card, CardBody, CardHeader, Stat } from "@/components/ui/card";
 import { ErrorNote, Field, Skeleton } from "@/components/ui/misc";
-import { SettingsHeader } from "./shared";
+import { SettingsGrid } from "./shared";
+import { AuditLog } from "./Audit";
 
 interface Self {
   version: string;
@@ -45,8 +46,7 @@ export default function About() {
   const i = info.data;
   return (
     <>
-      <SettingsHeader title="About" />
-      <div className="flex flex-col gap-4">
+      <SettingsGrid>
         <Card>
           <CardBody className="flex flex-wrap items-center gap-4">
             <Logo className="size-10" />
@@ -148,6 +148,9 @@ export default function About() {
             </p>
           </CardBody>
         </Card>
+      </SettingsGrid>
+      <div className="mt-6 max-w-[calc(3*42rem+2*1rem)]">
+        <AuditLog />
       </div>
     </>
   );

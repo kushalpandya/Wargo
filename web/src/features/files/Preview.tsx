@@ -237,7 +237,7 @@ export function Preview({
               <header className="flex min-h-12 items-center gap-2 border-b border-border px-2 py-1.5 sm:px-3">
                 <FileIcon entry={entry} className="ml-1 size-4" />
                 <div className="min-w-0 flex-1">
-                  <D.Title className="flex items-center gap-2 truncate text-[0.875rem] font-semibold">
+                  <D.Title className="flex items-center gap-2 truncate text-ui font-semibold">
                     <span className="truncate">{entry.name}</span>
                     {text.dirty && (
                       <span className="size-2 shrink-0 rounded-full bg-accent" role="img" aria-label="Unsaved changes" title="Unsaved changes" />

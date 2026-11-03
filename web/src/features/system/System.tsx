@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo } from "react";
 import { Navigate, useParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Activity, HardDrive, ListTree, Network, ScrollText } from "lucide-react";
-import { api } from "@/lib/api";
 import { useIsDark } from "@/lib/theme";
 import { NavTabs } from "@/components/ui/tabs";
 import { bytes, level, pct, rate } from "@/lib/format";
@@ -11,7 +9,7 @@ import { cn } from "@/lib/cn";
 import { Card, CardBody, CardHeader, Stat } from "@/components/ui/card";
 import { Meter, PageHeader, Skeleton } from "@/components/ui/misc";
 import { TimeChart } from "@/components/charts/TimeChart";
-import { useMetrics, useSeries, type Point, type Snapshot } from "@/features/system/useMetrics";
+import { useMetrics, usePublicIP, useSeries, type Point, type Snapshot } from "@/features/system/useMetrics";
 import { StorageCard } from "@/features/system/Storage";
 import { SensorsCard } from "@/features/system/Sensors";
 import { ProcessesPanel } from "@/features/processes/Processes";
@@ -24,7 +22,8 @@ const toneOf = (p: number) => level(p);
 /** Distinct, theme-aware colour for core i of n. */
 function coreColor(i: number, n: number, dark: boolean) {
   const h = Math.round((i * 360) / Math.max(n, 1) + 25) % 360;
-  return dark ? `hsl(${h} 70% 62%)` : `hsl(${h} 62% 40%)`;
+  // Same lightness and chroma for every core (OKLCH), so none stands out.
+  return dark ? `oklch(0.8 0.1 ${h})` : `oklch(0.58 0.13 ${h})`;
 }
 
 function CpuMemoryCard({ snap: s, points }: { snap: Snapshot | null; points: Point[] }) {
@@ -42,7 +41,7 @@ function CpuMemoryCard({ snap: s, points }: { snap: Snapshot | null; points: Poi
 
   return (
     <Card>
-      <CardHeader title="CPU & memory" icon={<Activity />} meta={s ? `${pct(s.cpu.total)} · ${n} threads · last 10 min` : "last 10 min"} />
+      <CardHeader title="CPU & memory" icon={<Activity />} tint="iris" meta={s ? `${pct(s.cpu.total)} · ${n} threads · last 10 min` : "last 10 min"} />
       <CardBody>
         {n > 0 ? (
           <TimeChart label="Usage of each processor core over the last 10 minutes" data={coreData} series={coreSeries} height={190} yMax={100} yFormat={(v) => `${v}%`} />
@@ -76,11 +75,11 @@ function CpuMemoryCard({ snap: s, points }: { snap: Snapshot | null; points: Poi
           <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
             <span className="flex items-center gap-3 text-muted">
               <span className="inline-flex items-center gap-1.5">
-                <span className="h-0.5 w-3 rounded bg-frost" /> Memory
+                <span className="h-1 w-3.5 rounded-full bg-mint" /> Memory
               </span>
               {hasSwap && (
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="h-0.5 w-3 rounded bg-warn" /> Swap
+                  <span className="h-1 w-3.5 rounded-full bg-peach" /> Swap
                 </span>
               )}
             </span>
@@ -91,7 +90,7 @@ function CpuMemoryCard({ snap: s, points }: { snap: Snapshot | null; points: Poi
             data={memData}
             height={80}
             yMax={100}
-            series={[{ label: "Memory", color: "--frost", fill: true }, ...(hasSwap ? [{ label: "Swap", color: "--warn", dash: true }] : [])]}
+            series={[{ label: "Memory", color: "--mint", fill: true }, ...(hasSwap ? [{ label: "Swap", color: "--peach", dash: true }] : [])]}
             yFormat={(v) => `${v}%`}
           />
           {s && (
@@ -100,8 +99,8 @@ function CpuMemoryCard({ snap: s, points }: { snap: Snapshot | null; points: Poi
               label="Memory composition"
               className="mt-2 h-2"
               segments={[
-                { value: (s.memory.used / s.memory.total) * 100, className: "bg-frost", label: "Used" },
-                { value: ((s.memory.cached + s.memory.buffers) / s.memory.total) * 100, className: "bg-frost/30", label: "Cache" },
+                { value: (s.memory.used / s.memory.total) * 100, className: "bg-mint", label: "Used" },
+                { value: ((s.memory.cached + s.memory.buffers) / s.memory.total) * 100, className: "bg-mint/35", label: "Cache" },
               ]}
             />
           )}
@@ -109,15 +108,6 @@ function CpuMemoryCard({ snap: s, points }: { snap: Snapshot | null; points: Poi
       </CardBody>
     </Card>
   );
-}
-
-function usePublicIP() {
-  return useQuery({
-    queryKey: ["system", "public-ip"],
-    queryFn: () => api.get<{ ip?: string; source?: string; checkedAt?: number; error?: string }>("/api/system/public-ip"),
-    staleTime: 30 * 60_000,
-    refetchInterval: 30 * 60_000,
-  });
 }
 
 function NetworkCard({ snap, points }: { snap: Snapshot | null; points: Point[] }) {
@@ -129,28 +119,28 @@ function NetworkCard({ snap, points }: { snap: Snapshot | null; points: Point[] 
   const lan = (primary?.addrs?.find((a) => !a.includes(":")) ?? primary?.addrs?.[0])?.replace(/\/\d+$/, "");
   return (
     <Card>
-      <CardHeader title="Network" icon={<Network />} meta={snap ? `↓ ${rate(snap.netRx)}  ↑ ${rate(snap.netTx)}` : undefined} />
+      <CardHeader title="Network" icon={<Network />} tint="sky" meta={snap ? `↓ ${rate(snap.netRx)}  ↑ ${rate(snap.netTx)}` : undefined} />
       <CardBody className="pb-2">
         <TimeChart
           label="Network throughput"
           data={data}
           height={150}
           series={[
-            { label: "Download", color: "--frost", fill: true },
-            { label: "Upload", color: "--accent" },
+            { label: "Download", color: "--sky", fill: true },
+            { label: "Upload", color: "--iris" },
           ]}
           yFormat={(v) => bytes(v, 0)}
         />
         <div className="mt-2 flex items-center gap-4 text-xs text-muted">
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-0.5 w-3 rounded bg-frost" /> Download
+            <span className="h-1 w-3.5 rounded-full bg-sky" /> Download
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-0.5 w-3 rounded bg-accent" /> Upload
+            <span className="h-1 w-3.5 rounded-full bg-iris" /> Upload
           </span>
         </div>
       </CardBody>
-      <dl className="grid grid-cols-2 gap-3 border-t border-border px-3.5 py-2.5 text-xs">
+      <dl className="grid grid-cols-2 gap-3 border-t border-border px-4 py-2.5 text-xs">
         <div className="min-w-0">
           <dt className="text-subtle">LAN address</dt>
           <dd className="num truncate text-fg" title={primary?.addrs?.join(", ")}>
@@ -172,7 +162,7 @@ function NetworkCard({ snap, points }: { snap: Snapshot | null; points: Point[] 
           const name = linkName(n.link);
           const details = [linkDetails(n.link), n.addrs?.[0]?.replace(/\/\d+$/, "")].filter(Boolean).join(" · ");
           return (
-            <div key={n.name} className="flex items-center gap-3 border-b border-border px-3.5 py-2 text-xs last:border-0">
+            <div key={n.name} className="flex items-center gap-3 border-b border-border px-4 py-2 text-xs last:border-0">
               <LinkIcon link={n.link} className={cn("size-4", n.link?.up === false ? "text-subtle" : n.name === snap?.primaryIf ? "text-frost" : "text-muted")} />
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-baseline gap-1.5">
@@ -205,30 +195,30 @@ function DiskIOCard({ snap, points }: { snap: Snapshot | null; points: Point[] }
   const data = useSeries(points, ["dr", "dw"]);
   return (
     <Card>
-      <CardHeader title="Disk activity" icon={<HardDrive />} meta={snap ? `R ${rate(snap.diskRead)}  W ${rate(snap.diskWrite)}` : undefined} />
+      <CardHeader title="Disk activity" icon={<HardDrive />} tint="peach" meta={snap ? `R ${rate(snap.diskRead)}  W ${rate(snap.diskWrite)}` : undefined} />
       <CardBody className="pb-2">
         <TimeChart
           label="Disk throughput"
           data={data}
           height={150}
           series={[
-            { label: "Read", color: "--ok", fill: true },
-            { label: "Write", color: "--warn" },
+            { label: "Read", color: "--mint", fill: true },
+            { label: "Write", color: "--peach" },
           ]}
           yFormat={(v) => bytes(v, 0)}
         />
         <div className="mt-2 flex items-center gap-4 text-xs text-muted">
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-0.5 w-3 rounded bg-ok" /> Read
+            <span className="h-1 w-3.5 rounded-full bg-mint" /> Read
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-0.5 w-3 rounded bg-warn" /> Write
+            <span className="h-1 w-3.5 rounded-full bg-peach" /> Write
           </span>
         </div>
       </CardBody>
       <div className="border-t border-border">
         {(snap?.disks ?? []).map((d) => (
-          <div key={d.name} className="flex items-center gap-3 border-b border-border px-3.5 py-2 text-xs last:border-0">
+          <div key={d.name} className="flex items-center gap-3 border-b border-border px-4 py-2 text-xs last:border-0">
             <span className="num w-20 truncate font-medium">{d.name}</span>
             <div className="flex flex-1 items-center gap-2">
               <Meter value={d.busy} tone={toneOf(d.busy)} label={`${d.name} busy`} className="max-w-32" />
@@ -272,7 +262,7 @@ export default function System() {
   if (sub && sub !== "processes" && sub !== "events") return <Navigate to="/system" replace />;
   const tab = sub || "activity";
   return (
-    <div className="mx-auto max-w-[1600px]">
+    <div className="min-w-0">
       <PageHeader
         title="System"
         description={

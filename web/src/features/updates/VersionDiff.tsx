@@ -21,7 +21,7 @@ export function VersionDiff({ current, next, className }: { current: string; nex
   const [, oldChanged] = splitVersion(next, current);
   const oldSame = current.slice(0, current.length - oldChanged.length);
   return (
-    <span className={cn("num inline-flex min-w-0 flex-wrap items-center gap-x-1.5 text-[0.8125rem]", className)}>
+    <span className={cn("num inline-flex min-w-0 flex-wrap items-center gap-x-1.5 text-ui", className)}>
       {current ? (
         <span className="min-w-0 break-all text-muted">
           {oldSame}

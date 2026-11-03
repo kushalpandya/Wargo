@@ -60,7 +60,7 @@ function JobRow({ job, onDismiss }: { job: JobSnapshot; onDismiss: () => void })
         <span className={cn("text-subtle [&_svg]:size-3.5", job.state === "failed" && "text-crit", job.state === "succeeded" && "text-ok")}>
           {job.state === "succeeded" ? <Check /> : job.state === "failed" ? <AlertTriangle /> : jobIcon[job.kind]}
         </span>
-        <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium">{job.title}</span>
+        <span className="min-w-0 flex-1 truncate text-ui font-medium">{job.title}</span>
         {running ? (
           <IconButton label="Cancel job" size="xs" onClick={() => api.post(`/api/jobs/${job.id}/cancel`).catch((e) => toast.error("Cancel failed", e))}>
             <X />
@@ -95,7 +95,7 @@ function UploadRow({ it }: { it: UploadItem }) {
         <span className={cn("text-subtle [&_svg]:size-3.5", it.state === "done" && "text-ok", (it.state === "error" || it.state === "conflict") && "text-crit")}>
           {it.state === "done" ? <Check /> : it.state === "error" || it.state === "conflict" ? <AlertTriangle /> : <ArrowUpFromLine />}
         </span>
-        <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium" title={it.name}>
+        <span className="min-w-0 flex-1 truncate text-ui font-medium" title={it.name}>
           {it.name}
         </span>
         {it.state === "uploading" && (
@@ -185,7 +185,7 @@ export function TransfersPanel({ jobs, onDismissJob, onClearJobs, raised }: { jo
       )}
     >
       <header className="flex h-10 items-center gap-2 border-b border-border px-3">
-        <h2 className="text-[0.8125rem] font-semibold">Transfers</h2>
+        <h2 className="text-ui font-semibold">Transfers</h2>
         <span className="num text-xs text-muted" aria-live="polite">
           {active ? `${active} active${speed ? ` · ${rate(speed)}` : ""}` : waiting ? `${waiting} paused` : "all done"}
         </span>

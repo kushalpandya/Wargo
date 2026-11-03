@@ -701,7 +701,7 @@ export function Pane(props: PaneProps) {
               <IconButton label="Clear selection" size="sm" onClick={() => setSelected(new Set())}>
                 <X />
               </IconButton>
-              <span className="num mr-2 truncate whitespace-nowrap text-[0.8125rem] font-medium" aria-live="polite">
+              <span className="num mr-2 truncate whitespace-nowrap text-ui font-medium" aria-live="polite">
                 {selected.size} selected{selSize ? <span className="text-muted @max-lg/pane:hidden"> · {bytes(selSize)}</span> : null}
               </span>
               <Button size="sm" variant="ghost" icon={<Download />} onClick={() => selGroups[0].find((a) => a.key === "download")?.run()} className="@max-xl/pane:hidden">

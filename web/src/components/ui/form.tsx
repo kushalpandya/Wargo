@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { forwardRef, useId, type InputHTMLAttributes, type KeyboardEvent, type ReactNode, type SelectHTMLAttributes } from "react";
 import { Switch as S, Checkbox as C } from "radix-ui";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 const inputBase =
-  "h-8 w-full min-w-0 rounded-md border border-border bg-surface-2 px-2.5 text-sm text-fg placeholder:text-subtle " +
+  "h-9 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-ui text-fg placeholder:text-subtle " +
   "transition-colors hover:border-border-strong focus:border-focus focus:outline-none focus-visible:outline-none focus:ring-2 focus:ring-focus/25 " +
   "disabled:opacity-50";
 
@@ -48,7 +48,7 @@ export function FormField({
 }) {
   return (
     <div className={cn("flex flex-col gap-1", className)}>
-      <label htmlFor={htmlFor} className="text-[0.8125rem] font-medium text-fg">
+      <label htmlFor={htmlFor} className="text-ui font-medium text-fg">
         {label}
       </label>
       {children}
@@ -104,17 +104,20 @@ export function Switch({
   label,
   description,
   disabled,
+  "aria-label": ariaLabel,
 }: {
   checked: boolean;
   onCheckedChange: (v: boolean) => void;
   label?: ReactNode;
   description?: ReactNode;
   disabled?: boolean;
+  "aria-label"?: string;
 }) {
   const id = useId();
   const control = (
     <S.Root
       id={id}
+      aria-label={ariaLabel}
       checked={checked}
       onCheckedChange={onCheckedChange}
       disabled={disabled}
@@ -171,6 +174,30 @@ export function Checkbox({
   );
 }
 
+/**
+ * Radio group keyboard behaviour: only the checked option (or the first when
+ * none is) is in the tab order; arrows, Home and End move focus and select.
+ * Spread `group` on the container and `item(value)` on each option.
+ */
+export function useRadioGroup<T>(values: readonly T[], value: T | undefined, onChange: (v: T) => void) {
+  const tabbable = Math.max(0, values.indexOf(value as T));
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    const radios = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]'));
+    const n = radios.length;
+    const at = Math.max(0, radios.indexOf(e.target as HTMLElement));
+    const to = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: n - 1 }[e.key];
+    if (to === undefined || !n) return;
+    e.preventDefault();
+    const i = (to + n) % n;
+    radios[i].focus();
+    onChange(values[i]);
+  };
+  return {
+    group: { role: "radiogroup", onKeyDown } as const,
+    item: (v: T) => ({ role: "radio", "aria-checked": v === value, tabIndex: values.indexOf(v) === tabbable ? 0 : -1 }) as const,
+  };
+}
+
 /** Segmented control (radio group semantics). */
 export function Segmented<T extends string>({
   value,
@@ -185,19 +212,23 @@ export function Segmented<T extends string>({
   label: string;
   size?: "sm" | "md";
 }) {
+  const radio = useRadioGroup(
+    options.map((o) => o.value),
+    value,
+    onChange,
+  );
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex rounded-md border border-border bg-surface-2 p-0.5">
+    <div {...radio.group} aria-label={label} className="inline-flex rounded-lg bg-surface-3 p-0.5">
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
-          role="radio"
-          aria-checked={value === o.value}
+          {...radio.item(o.value)}
           title={o.title}
           onClick={() => onChange(o.value)}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-[5px] px-2.5 font-medium transition-colors [&_svg]:size-3.5",
-            size === "sm" ? "h-6 text-xs" : "h-7 text-[0.8125rem]",
+            "inline-flex items-center gap-1.5 rounded-md px-3 font-medium transition-colors [&_svg]:size-3.5",
+            size === "sm" ? "h-7 text-xs" : "h-8 text-ui",
             value === o.value ? "bg-surface text-fg shadow-sm ring-1 ring-border" : "text-muted hover:text-fg",
           )}
         >

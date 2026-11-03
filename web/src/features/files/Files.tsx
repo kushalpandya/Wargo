@@ -12,7 +12,7 @@ import { cn } from "@/lib/cn";
 import { useMedia } from "@/lib/hooks";
 import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/misc";
+import { EmptyState, PageHeader } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
 import { decodePane, encodePane, fileApi, parseRoute, routeFor, segments, useLocations, useRefreshFiles, type JobSnapshot, type Loc, type Root } from "./api";
 import { LocationsProvider, useLocationsApi } from "./bookmarks";
@@ -368,7 +368,8 @@ function FilesView({ rootList, loading }: { rootList: Root[]; loading: boolean }
   const ids = metaList.map((m) => `files-${m.key}`);
 
   return (
-    <div className="flex h-[calc(100dvh-5rem)] gap-4 sm:h-[calc(100dvh-5.5rem)]">
+    <div className="flex h-[calc(100dvh-6.25rem)] gap-4">
+      <PageHeader title="Files" />
       <RootsSidebar current={locs[active]} onPick={(l) => navigatePane(active, l)} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         {switcher && (
@@ -386,7 +387,7 @@ function FilesView({ rootList, loading }: { rootList: Root[]; loading: boolean }
                   title={locLabel(rootList, l)}
                   onClick={() => activate(i)}
                   className={cn(
-                    "flex h-8 min-w-0 max-w-[12rem] flex-1 items-center gap-1.5 rounded-md px-2 text-[0.8125rem] transition-colors",
+                    "flex h-8 min-w-0 max-w-[12rem] flex-1 items-center gap-1.5 rounded-md px-2 text-ui transition-colors",
                     i === active ? "bg-accent-soft font-medium text-fg ring-1 ring-accent/40" : visible(i) ? "bg-surface-3 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
                   )}
                 >

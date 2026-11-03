@@ -208,7 +208,7 @@ export function PasteDialog({
         onChange={(e) => setV(e.target.value)}
         rows={6}
         spellCheck={false}
-        className="num w-full resize-y rounded-md border border-border bg-surface-2 p-2.5 text-[0.8125rem] text-fg focus:border-focus focus:outline-none focus:ring-2 focus:ring-focus/25"
+        className="num w-full resize-y rounded-md border border-border bg-surface-2 p-2.5 text-ui text-fg focus:border-focus focus:outline-none focus:ring-2 focus:ring-focus/25"
       />
     </Dialog>
   );

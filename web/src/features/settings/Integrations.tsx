@@ -2,7 +2,6 @@
 import { Component, Suspense, lazy, type ComponentType, type ReactNode } from "react";
 import { Plug } from "lucide-react";
 import { EmptyState, Spinner } from "@/components/ui/misc";
-import { SettingsHeader } from "./shared";
 
 // The integrations panel is owned by the torrents feature. Resolve it with a
 // glob so this page still builds (and shows a fallback) if it is absent.
@@ -39,24 +38,19 @@ function Unavailable() {
 }
 
 export default function Integrations() {
-  return (
-    <>
-      <SettingsHeader title="Integrations" description="Connect Prowlarr and Transmission to search and download torrents from Wargo." />
-      {Panel ? (
-        <Boundary fallback={<Unavailable />}>
-          <Suspense
-            fallback={
-              <div className="flex h-32 items-center justify-center text-muted">
-                <Spinner />
-              </div>
-            }
-          >
-            <Panel />
-          </Suspense>
-        </Boundary>
-      ) : (
-        <Unavailable />
-      )}
-    </>
+  return Panel ? (
+    <Boundary fallback={<Unavailable />}>
+      <Suspense
+        fallback={
+          <div className="flex h-32 items-center justify-center text-muted">
+            <Spinner />
+          </div>
+        }
+      >
+        <Panel />
+      </Suspense>
+    </Boundary>
+  ) : (
+    <Unavailable />
   );
 }

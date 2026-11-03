@@ -25,9 +25,9 @@ const cols = "md:grid md:grid-cols-[minmax(10rem,1.1fr)_minmax(14rem,2fr)_7rem_5
 
 function Row({ u, showRepo, showSize = true }: { u: PkgUpdate; showRepo?: boolean; showSize?: boolean }) {
   return (
-    <li className={cn("border-b border-border px-3.5 py-2 last:border-0 hover:bg-surface-2", cols)}>
+    <li className={cn("border-b border-border px-4 py-2 last:border-0 hover:bg-surface-2", cols)}>
       <div className="flex min-w-0 items-baseline justify-between gap-3">
-        <span className="num truncate text-[0.8125rem] font-medium text-fg" title={u.name}>
+        <span className="num truncate text-ui font-medium text-fg" title={u.name}>
           {u.name}
         </span>
         <span className="num shrink-0 text-xs text-muted md:hidden">
@@ -47,7 +47,7 @@ function ListHeader({ sizeLabel = "Download" }: { sizeLabel?: string }) {
     <div
       aria-hidden="true"
       className={cn(
-        "hidden border-b border-border bg-surface-2 px-3.5 py-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle",
+        "hidden border-b border-border bg-surface-2 px-4 py-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle",
         cols,
       )}
     >
@@ -70,10 +70,10 @@ function Group({ repo, items, defaultOpen }: { repo: string; items: PkgUpdate[];
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen((o) => !o)}
-        className="flex min-h-9 w-full items-center gap-2 bg-surface-2/60 px-3.5 py-1.5 text-left hover:bg-surface-3"
+        className="flex min-h-9 w-full items-center gap-2 bg-surface-2/60 px-4 py-1.5 text-left hover:bg-surface-3"
       >
         <ChevronRight className={cn("size-3.5 shrink-0 text-subtle transition-transform", open && "rotate-90")} />
-        <span className="num text-[0.8125rem] font-semibold">{repo || "other"}</span>
+        <span className="num text-ui font-semibold">{repo || "other"}</span>
         <Badge>{items.length}</Badge>
         {size > 0 && <span className="num ml-auto text-xs text-muted">{bytes(size)}</span>}
       </button>
@@ -102,7 +102,7 @@ export function GroupedUpdates({ updates, query }: { updates: PkgUpdate[]; query
   }, [updates, query]);
 
   if (groups.length === 0) {
-    return <p className="px-3.5 py-6 text-center text-sm text-muted">No packages match “{query}”.</p>;
+    return <p className="px-4 py-6 text-center text-sm text-muted">No packages match “{query}”.</p>;
   }
   return (
     <div>
@@ -117,7 +117,7 @@ export function GroupedUpdates({ updates, query }: { updates: PkgUpdate[]; query
 /** Flat read-only list (AUR, Flatpak). */
 export function PlainList({ items, query, empty }: { items: PkgUpdate[]; query: string; empty?: ReactNode }) {
   const shown = items.filter((u) => matches(u, query));
-  if (shown.length === 0) return <p className="px-3.5 py-4 text-center text-sm text-muted">{empty ?? "Nothing matches."}</p>;
+  if (shown.length === 0) return <p className="px-4 py-4 text-center text-sm text-muted">{empty ?? "Nothing matches."}</p>;
   return (
     <div>
       <ListHeader sizeLabel="" />
