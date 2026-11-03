@@ -7,6 +7,7 @@ import { api, body, fail, json, notInDemo } from "../core/http";
 import { persisted } from "../core/store";
 import { DAY, HOUR, MIN } from "../core/rand";
 import { DEMO_USER, HOST } from "./host";
+import { prowlarrStatus, transmissionStatus } from "./integrations";
 
 const session = persisted("session", () => ({ authenticated: false, since: 0 }));
 const account = persisted("account", () => ({
@@ -143,8 +144,9 @@ export const authHandlers = [
       elevation: { sudo: true, passkey: false },
       container: false,
       docker: { available: true, version: "27.3.1", apiVersion: "1.47", compose: true, updateCheckIntervalMs: 6 * HOUR, icons: true },
-      prowlarr: { available: true, configured: true, hasTransmissionClient: true, version: "1.28.2.4885" },
-      transmission: { available: true, configured: true, version: "4.0.6" },
+      // Follows Settings -> Integrations (disconnecting hides Torrents parts).
+      prowlarr: (({ available, configured, hasTransmissionClient, version, error }) => ({ available, configured, hasTransmissionClient, version, error }))(prowlarrStatus()),
+      transmission: (({ available, configured, version, error }) => ({ available, configured, version, error }))(transmissionStatus()),
       launcher: launcherCapability(),
       pkg: { backend: "apt", available: true, distro: "debian" },
       files: {

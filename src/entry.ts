@@ -4,6 +4,7 @@
 import { setupWorker } from "msw/browser";
 import { handlers } from "./worker";
 import { mountBanner } from "./banner";
+import { installDownloads } from "./downloads";
 
 async function start() {
   const base = import.meta.env.BASE_URL;
@@ -13,6 +14,7 @@ async function start() {
     quiet: true,
   });
   mountBanner();
+  installDownloads();
   await import("../main");
 }
 
