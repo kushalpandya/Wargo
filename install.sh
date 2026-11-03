@@ -130,7 +130,7 @@ if [ -n "$ARCHIVE" ]; then
   [ -n "$VERSION" ] || VERSION="(local archive)"
   say "Using $ARCHIVE"
 elif [ -z "$VERSION" ]; then
-  # Newest release, including pre-releases while Wargo is in alpha/beta.
+  # Newest release, including pre-releases until 1.0.
   VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=1" \
     | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
   [ -n "$VERSION" ] || die "could not find the latest release; pass --version vX.Y.Z"

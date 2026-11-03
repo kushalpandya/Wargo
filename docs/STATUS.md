@@ -1,6 +1,6 @@
-# Wargo beta: status notes
+# Wargo release candidate: status notes
 
-Where the first beta (`v1.0.0-beta.1`) stands: what was tested and how, and
+Where the release candidate (`v1.0.0-rc`) stands: what was tested and how, and
 the known gaps to pick up next.
 
 ## Try it from source
@@ -33,7 +33,7 @@ sign-in needs `/etc/pam.d/wargo` (from `deploy/pam/wargo`).
 | Plex (now playing, recently watched and added on Home; token import) | Done | Real Plex Media Server (read only) |
 | App launcher (square tiles, edit, drag to reorder) | Done | Real container suggestions; order saved on the server |
 | Settings (general, appearance with accent colours, integrations, security, about with the audit log) | Done | Dev instance and a virtual authenticator |
-| Sign-in: PAM plus two-factor code, passkeys, recovery codes, sessions | Done | Unit tests and a virtual authenticator; native PAM sign-in not tried yet (needs your password) |
+| Sign-in: PAM plus two-factor code, passkeys, recovery codes, sessions (remembered sign-ins, one per browser) | Done | Unit tests, a virtual authenticator and passkey sign-in on the main install; native PAM sign-in not tried yet (needs your password) |
 | Admin approval through sudo | Done | Prompt tested; sudo never actually run |
 | wargo-privd (passkey-approved root actions) | Done | Run as a normal user on a test socket; the root path not tried |
 | Container mode (Docker image, compose) | Done | Running privileged on the author's server as the daily install: sign-in against the host's shadow file, two-factor, terminal, files, metrics and events |
