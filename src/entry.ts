@@ -5,6 +5,7 @@ import { setupWorker } from "msw/browser";
 import { handlers } from "./worker";
 import { mountBanner } from "./banner";
 import { installDownloads } from "./downloads";
+import { installLoginHint } from "./login-hint";
 
 async function start() {
   const base = import.meta.env.BASE_URL;
@@ -15,6 +16,7 @@ async function start() {
   });
   mountBanner();
   installDownloads();
+  installLoginHint();
   await import("../main");
 }
 

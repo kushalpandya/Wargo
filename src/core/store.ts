@@ -5,6 +5,12 @@
 
 const PREFIX = "wargo-demo:";
 const all = new Map<string, Persisted<unknown>>();
+/** Saves waiting for their short delay; written at once when the page goes away. */
+const pending = new Map<string, () => void>();
+addEventListener("pagehide", () => {
+  for (const write of pending.values()) write();
+  pending.clear();
+});
 
 export interface Persisted<T> {
   /** Current value (loaded on first use). */
@@ -36,15 +42,19 @@ export function persisted<T>(key: string, init: () => T, version = 1): Persisted
     }
     return (cur = init());
   };
+  const write = () => {
+    clearTimeout(timer);
+    pending.delete(storageKey);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({ v: version, data: cur }));
+    } catch {
+      /* storage full or blocked: keep it in memory only */
+    }
+  };
   const save = () => {
     clearTimeout(timer);
-    timer = window.setTimeout(() => {
-      try {
-        localStorage.setItem(storageKey, JSON.stringify({ v: version, data: cur }));
-      } catch {
-        /* storage full or blocked: keep it in memory only */
-      }
-    }, 50);
+    pending.set(storageKey, write);
+    timer = window.setTimeout(write, 50);
   };
   const p: Persisted<T> = {
     get: load,
