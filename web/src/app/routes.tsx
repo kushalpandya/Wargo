@@ -109,4 +109,8 @@ export const router = createBrowserRouter([
       },
     ],
   },
-]);
+],
+  // "/" for Wargo itself; a sub-path when the UI is built for another base
+  // (e.g. the demo site under /Wargo/ on GitHub Pages).
+  { basename: import.meta.env.BASE_URL.replace(/\/+$/, "") || "/" },
+);
