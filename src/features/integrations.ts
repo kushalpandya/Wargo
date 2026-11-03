@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Settings → Integrations: the Prowlarr and Transmission connections.
+// Settings → Integrations: the Prowlarr, Transmission and Plex connections.
 // Secrets are never stored or returned, only "a key is saved" flags.
 import { delay, type RequestHandler, type WebSocketHandler } from "msw";
 import type {
   Discovery,
   IntegrationsStatus,
+  PlexStatus,
   ProwlarrStatus,
   TestResult,
   TransmissionClientHint,
@@ -13,13 +14,16 @@ import type {
 import { api, badRequest, body, fail, json, notFound } from "../core/http";
 import { persisted } from "../core/store";
 import { CONTAINERS, HOME } from "./host";
+import { setPlexConnected } from "./plex";
 
 export const PROWLARR_VERSION = "1.28.2.4885";
 export const TRANSMISSION_VERSION = "4.0.6 (38c164933e)";
+export const PLEX_VERSION = "1.41.3.9314-a0bfb8370";
 
 interface Saved {
   prowlarr: { url: string; hasKey: boolean };
   transmission: { url: string; username: string; hasPassword: boolean };
+  plex?: { url: string; hasToken: boolean };
 }
 
 const saved = persisted<Saved>("integrations", () => ({
@@ -43,7 +47,7 @@ const container = (name: string) => CONTAINERS.find((c) => c.name === name);
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "homelab", "homelab.local", "192.168.1.20", "100.84.12.31", "[::1]"]);
 
 /** Whether a URL points at a running container of that name on its port. */
-function reaches(raw: string, name: "prowlarr" | "transmission"): string | null {
+function reaches(raw: string, name: "prowlarr" | "transmission" | "plex"): string | null {
   const c = container(name);
   let u: URL;
   try {
@@ -103,14 +107,31 @@ export function transmissionStatus(): TransmissionStatus {
   return { ...out, available: true, version: TRANSMISSION_VERSION };
 }
 
-const status = (): IntegrationsStatus => ({ prowlarr: prowlarrStatus(), transmission: transmissionStatus() });
+const plexSaved = () => saved.get().plex ?? { url: "http://127.0.0.1:32400", hasToken: true };
+
+export function plexStatus(): PlexStatus {
+  const p = plexSaved();
+  const out: PlexStatus = { url: p.url, hasToken: p.hasToken, configured: !!p.url && p.hasToken, available: false };
+  if (!out.configured) return out;
+  const err = reaches(p.url, "plex");
+  if (err) return { ...out, error: err };
+  return { ...out, available: true, version: PLEX_VERSION };
+}
+setPlexConnected(() => plexStatus().available);
+
+const status = (): IntegrationsStatus => ({ prowlarr: prowlarrStatus(), transmission: transmissionStatus(), plex: plexStatus() });
+
+const PLEX_PREFS = `${HOME}/stacks/media/plex/config/Library/Application Support/Plex Media Server/Preferences.xml`;
 
 const CONFIG_PATH = `${HOME}/stacks/media/prowlarr/config.xml`;
 
 function discovery(): Discovery {
   const pw = container("prowlarr");
   const tr = container("transmission");
-  const d: Discovery = { docker: { available: true }, prowlarr: [], transmission: [] };
+  const px = container("plex");
+  const d: Discovery = { docker: { available: true }, prowlarr: [], transmission: [], plex: [] };
+  // Plex runs on the host network: no published ports, so 127.0.0.1.
+  if (px) d.plex.push({ container: px.name, image: px.image, state: px.state, url: `http://127.0.0.1:${px.port}`, configPath: PLEX_PREFS, configReadable: true });
   if (pw)
     d.prowlarr.push({
       container: pw.name,
@@ -135,6 +156,10 @@ function discovery(): Discovery {
 interface ProwlarrInput {
   url?: string;
   apiKey?: string | null;
+}
+interface PlexInput {
+  url?: string;
+  token?: string | null;
 }
 interface TransmissionInput {
   url?: string;
@@ -169,6 +194,27 @@ export const handlers: (RequestHandler | WebSocketHandler)[] = [
     return json(transmissionStatus());
   }),
 
+  api.put("/api/integrations/plex", async ({ request }) => {
+    const inp = await body<PlexInput>(request);
+    const u = normalizeURL(inp.url ?? "", "");
+    if (u === null) return badRequest("URL must be an http(s) address like http://127.0.0.1:32400");
+    saved.update((s) => {
+      s.plex = u ? { url: u, hasToken: plexSaved().hasToken || !!inp.token?.trim() } : { url: "", hasToken: false };
+    });
+    return json(plexStatus());
+  }),
+
+  api.post("/api/integrations/plex/import-token", async ({ request }) => {
+    const inp = await body<{ configPath?: string; url?: string }>(request);
+    if (inp.configPath !== PLEX_PREFS) return fail(403, "not_detected", "That path is not the Preferences.xml of a detected Plex container");
+    const u = normalizeURL(inp.url?.trim() || plexSaved().url || "http://127.0.0.1:32400", "");
+    if (u === null) return badURL();
+    saved.update((s) => {
+      s.plex = { url: u, hasToken: true };
+    });
+    return json(plexStatus());
+  }),
+
   api.post("/api/integrations/:name/test", async ({ request, params }) => {
     // A real round trip to the service takes a moment.
     await delay(400 + Math.random() * 500);
@@ -189,6 +235,15 @@ export const handlers: (RequestHandler | WebSocketHandler)[] = [
       if (!u) return badRequest("URL is required");
       const err = reaches(u, "transmission");
       const res: TestResult = err ? { ok: false, error: err, url: u } : { ok: true, version: TRANSMISSION_VERSION, url: u };
+      return json(res);
+    }
+    if (params.name === "plex") {
+      const inp = await body<PlexInput>(request);
+      const u = inp.url ? normalizeURL(inp.url, "") : plexSaved().url;
+      if (u === null) return badURL();
+      if (!u || !(inp.token || plexSaved().hasToken)) return badRequest("URL and token are required");
+      const err = reaches(u, "plex");
+      const res: TestResult = err ? { ok: false, error: err, url: u } : { ok: true, version: PLEX_VERSION, url: u };
       return json(res);
     }
     return notFound();

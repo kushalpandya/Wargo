@@ -48,6 +48,7 @@ export interface DemoContainer {
 
 export const CONTAINERS: DemoContainer[] = [
   { name: "jellyfin", image: "jellyfin/jellyfin:10.10.3", icon: "jellyfin", port: 8096, group: "media", state: "running", health: "unhealthy", update: "10.10.5" },
+  { name: "plex", image: "lscr.io/linuxserver/plex:1.41.3", icon: "plex", port: 32400, group: "media", state: "running" },
   { name: "sonarr", image: "lscr.io/linuxserver/sonarr:4.0.11", icon: "sonarr", port: 8989, group: "media", state: "running" },
   { name: "radarr", image: "lscr.io/linuxserver/radarr:5.15.1", icon: "radarr", port: 7878, group: "media", state: "running", update: "5.16.3" },
   { name: "prowlarr", image: "lscr.io/linuxserver/prowlarr:1.28.2", icon: "prowlarr", port: 9696, group: "media", state: "running" },

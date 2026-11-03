@@ -7,7 +7,7 @@ import { api, body, fail, json, notInDemo } from "../core/http";
 import { persisted } from "../core/store";
 import { DAY, HOUR, MIN } from "../core/rand";
 import { DEMO_USER, HOST } from "./host";
-import { prowlarrStatus, transmissionStatus } from "./integrations";
+import { plexStatus, prowlarrStatus, transmissionStatus } from "./integrations";
 
 const session = persisted("session", () => ({ authenticated: false, since: 0 }));
 const account = persisted("account", () => ({
@@ -33,6 +33,9 @@ const recoveryCodes = () =>
     Array.from({ length: 2 }, () => Math.random().toString(36).slice(2, 7)).join("-"),
   );
 
+
+/** Sessions signed out from Settings → Security (until the page reloads). */
+const revoked = new Set<string>();
 export const authHandlers = [
   api.get("/api/auth/state", () =>
     json<AuthState & { container: boolean }>({
@@ -124,8 +127,8 @@ export const authHandlers = [
     const ua = navigator.userAgent;
     const since = session.get().since || Date.now();
     return json([
-      { id: "a1b2c3d4e5f6", createdAt: new Date(since).toISOString(), lastSeen: new Date().toISOString(), ip: "192.168.1.42", ua, method: "password+totp", current: true },
-      {
+      { id: "a1b2c3d4e5f6", createdAt: new Date(since).toISOString(), lastSeen: new Date().toISOString(), ip: "192.168.1.42", ua, method: "password+totp", current: true, remember: false },
+      ...(revoked.has("9f8e7d6c5b4a") ? [] : [{
         id: "9f8e7d6c5b4a",
         createdAt: new Date(Date.now() - 2 * DAY).toISOString(),
         lastSeen: new Date(Date.now() - 35 * MIN).toISOString(),
@@ -133,10 +136,19 @@ export const authHandlers = [
         ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1",
         method: "passkey",
         current: false,
-      },
+        remember: true,
+      }]),
     ]);
   }),
-  api.post("/api/auth/sessions/revoke-others", () => json({ revoked: 1 })),
+  api.post("/api/auth/sessions/revoke-others", () => {
+    revoked.add("9f8e7d6c5b4a");
+    return json({ revoked: 1 });
+  }),
+  api.del("/api/auth/sessions/:id", ({ params }) => {
+    if (params.id !== "9f8e7d6c5b4a" || revoked.has(params.id)) return fail(404, "not_found", "Not found");
+    revoked.add(params.id);
+    return json({ ok: true });
+  }),
 
   api.get("/api/capabilities", () =>
     json<Capabilities>({
@@ -147,6 +159,7 @@ export const authHandlers = [
       // Follows Settings -> Integrations (disconnecting hides Torrents parts).
       prowlarr: (({ available, configured, hasTransmissionClient, version, error }) => ({ available, configured, hasTransmissionClient, version, error }))(prowlarrStatus()),
       transmission: (({ available, configured, version, error }) => ({ available, configured, version, error }))(transmissionStatus()),
+      plex: (({ available, configured, version, error }) => ({ available, configured, version, error }))(plexStatus()),
       launcher: launcherCapability(),
       pkg: { backend: "apt", available: true, distro: "debian" },
       files: {

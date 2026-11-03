@@ -14,6 +14,7 @@ import { handlers as torrents } from "./torrents";
 import { handlers as integrations } from "./integrations";
 import { handlers as launcher } from "./launcher";
 import { handlers as settings } from "./settings";
+import { handlers as plex } from "./plex";
 import { handlers as weather } from "./weather";
 
 export const extraHandlers: (RequestHandler | WebSocketHandler)[] = [
@@ -30,4 +31,5 @@ export const extraHandlers: (RequestHandler | WebSocketHandler)[] = [
   ...launcher,
   ...settings,
   ...weather,
+  ...plex,
 ];
