@@ -9,6 +9,8 @@ interface ToastItem {
   kind: Kind;
   title: string;
   body?: string;
+  /** Playing its exit animation; removed shortly after. */
+  leaving?: boolean;
 }
 
 let items: ToastItem[] = [];
@@ -23,9 +25,17 @@ function push(kind: Kind, title: string, body?: string) {
   window.setTimeout(() => dismiss(id), kind === "error" ? 8000 : 4000);
 }
 
+/** Matches the toast-out animation in index.css. */
+const EXIT_MS = 160;
+
 function dismiss(id: number) {
-  items = items.filter((t) => t.id !== id);
+  if (!items.some((t) => t.id === id && !t.leaving)) return;
+  items = items.map((t) => (t.id === id ? { ...t, leaving: true } : t));
   emit();
+  window.setTimeout(() => {
+    items = items.filter((t) => t.id !== id);
+    emit();
+  }, EXIT_MS);
 }
 
 export const toast = {
@@ -46,13 +56,17 @@ export function Toaster() {
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed bottom-3 right-3 z-[70] flex w-[min(24rem,calc(100vw-1.5rem))] flex-col gap-2 max-md:bottom-[calc(env(safe-area-inset-bottom)+0.75rem)]"
+      // Bottom right on wide screens, bottom centre on phones.
+      className="pointer-events-none fixed bottom-3 right-3 z-[70] flex w-[min(24rem,calc(100vw-1.5rem))] flex-col gap-2 max-md:right-auto max-md:left-1/2 max-md:bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] max-md:-translate-x-1/2"
     >
       {list.map((t) => (
         <div
           key={t.id}
           role={t.kind === "error" ? "alert" : "status"}
-          className="pointer-events-auto flex items-start gap-2.5 rounded-lg border border-border-strong bg-surface px-3 py-2.5 shadow-xl"
+          className={cn(
+            "pointer-events-auto flex items-start gap-2.5 rounded-lg border border-border-strong bg-surface px-3 py-2.5 shadow-xl",
+            t.leaving ? "toast-out" : "toast-in",
+          )}
         >
           {t.kind === "ok" ? (
             <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-ok" />
@@ -65,7 +79,7 @@ export function Toaster() {
             <p className="text-sm font-medium">{t.title}</p>
             {t.body && <p className={cn("mt-0.5 break-words text-xs text-muted")}>{t.body}</p>}
           </div>
-          <button aria-label="Dismiss" onClick={() => dismiss(t.id)} className="rounded p-0.5 text-subtle hover:text-fg">
+          <button aria-label="Dismiss" onClick={() => dismiss(t.id)} className="-m-1.5 rounded p-2 text-subtle hover:text-fg">
             <X className="size-3.5" />
           </button>
         </div>

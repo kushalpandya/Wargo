@@ -355,19 +355,35 @@ html.dark[data-accent="peach"] {
   }
 }
 
-/* Settings sections: balanced columns, see SettingsGrid. */
-.settings-grid {
-  columns: 30rem;
-  column-gap: 1rem;
-  max-width: calc(3 * 42rem + 2 * 1rem);
+/* Settings → About: with the two cards side by side and room to spare, the
+   page fills the screen below the top bar (4rem, plus main's 0.25rem top
+   and 2rem bottom padding) and the audit log takes what is left, scrolling
+   inside its card. It needs room for the top cards (~25rem), the log's
+   heading and filter (~5.5rem) and an 18rem log, so shorter or narrower
+   screens scroll the page to reach the log instead. */
+@media (min-width: 64rem) and (min-height: 52rem) {
+  .about-fit {
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh - 6.25rem);
+  }
+  .about-fit .audit-slot,
+  .about-fit .audit-log,
+  .about-fit .audit-card {
+    flex: 1;
+    min-height: 0;
+  }
+  .about-fit .audit-slot {
+    display: flex;
+    flex-direction: column;
+  }
+  .about-fit .audit-card {
+    height: auto;
+    max-height: none;
+    min-height: 18rem;
+  }
 }
-.settings-grid > * {
-  break-inside: avoid;
-  margin-bottom: 1rem;
-}
-.settings-grid > .settings-wide {
-  column-span: all;
-}
+
 /* One card per row, capped so lines stay readable on wide screens. */
 .settings-stack {
   display: flex;
@@ -408,4 +424,30 @@ html.dark[data-accent="peach"] {
 }
 .u-cursor-pt {
   border-radius: 50%;
+}
+
+/* Toasts slide up and fade in, then fade out downwards. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem) scale(0.98);
+  }
+}
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.98);
+  }
+}
+.toast-in {
+  animation: toast-in 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.toast-out {
+  animation: toast-out 160ms ease-in forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-in,
+  .toast-out {
+    animation: none;
+  }
 }

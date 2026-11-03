@@ -36,7 +36,7 @@ function useInvalidate() {
   };
 }
 
-/** Prowlarr + Transmission connection settings (used by Settings → Integrations). */
+/** Prowlarr, Transmission and Plex connection settings (used by Settings → Integrations). */
 export default function IntegrationSettings() {
   const status = useStatus();
   const discover = useDiscover();
@@ -44,6 +44,7 @@ export default function IntegrationSettings() {
     return (
       <div className="space-y-4">
         <Skeleton className="h-64" />
+        <Skeleton className="h-56" />
         <Skeleton className="h-56" />
       </div>
     );
@@ -53,6 +54,7 @@ export default function IntegrationSettings() {
     <div className="settings-stack">
       <ProwlarrCard status={status.data} discover={discover} />
       <TransmissionCard status={status.data} discover={discover} />
+      <PlexCard status={status.data} discover={discover} />
     </div>
   );
 }
@@ -142,6 +144,25 @@ function CandidateRow({ c, onUse, children }: { c: Candidate; onUse?: () => void
       </div>
       {children}
     </li>
+  );
+}
+
+/** Offers to read a secret from a detected container's config file. */
+function ConfigImport({ c, what, label, loading, onImport }: { c: Candidate; what: string; label: string; loading: boolean; onImport: () => void }) {
+  if (!c.configPath) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded border border-border bg-surface px-2.5 py-2">
+      <FileKey2 className="size-4 shrink-0 text-subtle" />
+      <div className="min-w-0 flex-1 text-xs">
+        <div className="text-muted">{c.configReadable ? `${what} can be read from` : "Not readable by Wargo:"}</div>
+        <div className="num break-all text-fg">{c.configPath}</div>
+      </div>
+      {c.configReadable && (
+        <Button size="sm" variant="primary" loading={loading} onClick={onImport}>
+          {label}
+        </Button>
+      )}
+    </div>
   );
 }
 
@@ -235,20 +256,7 @@ function ProwlarrCard({ status, discover }: { status: IntegrationsStatus; discov
         <DetectPanel discover={discover} empty={candidates.length === 0}>
           {candidates.map((c) => (
             <CandidateRow key={c.container} c={c} onUse={() => c.url && setUrl(c.url)}>
-              {c.configPath && (
-                <div className="flex flex-wrap items-center gap-2 rounded border border-border bg-surface px-2.5 py-2">
-                  <FileKey2 className="size-4 shrink-0 text-subtle" />
-                  <div className="min-w-0 flex-1 text-xs">
-                    <div className="text-muted">{c.configReadable ? "API key can be read from" : "Not readable by Wargo:"}</div>
-                    <div className="num break-all text-fg">{c.configPath}</div>
-                  </div>
-                  {c.configReadable && (
-                    <Button size="sm" variant="primary" loading={importKey.isPending} onClick={() => importKey.mutate(c)}>
-                      Import API key from config.xml
-                    </Button>
-                  )}
-                </div>
-              )}
+              <ConfigImport c={c} what="API key" label="Import API key from config.xml" loading={importKey.isPending} onImport={() => importKey.mutate(c)} />
             </CandidateRow>
           ))}
         </DetectPanel>
@@ -475,6 +483,126 @@ function TransmissionCard({ status, discover }: { status: IntegrationsStatus; di
         onOpenChange={setConfirmClear}
         title="Disconnect Transmission?"
         description="The saved URL and credentials are removed from Wargo. Transmission and its torrents are not changed."
+        confirmLabel="Disconnect"
+        danger
+        loading={save.isPending}
+        onConfirm={() => save.mutate({ url: "" }, { onSuccess: () => setConfirmClear(false) })}
+      />
+    </Card>
+  );
+}
+
+function PlexCard({ status, discover }: { status: IntegrationsStatus; discover: DiscoverMutation }) {
+  const p = status.plex;
+  const invalidate = useInvalidate();
+  const ids = { url: useId(), token: useId() };
+  const [url, setUrl] = useState(p.url);
+  const [token, setToken] = useState("");
+  const [test, setTest] = useState<TestResult | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  useEffect(() => setUrl(p.url), [p.url]);
+
+  // As above: the token is read from state, never kept as a mutation variable.
+  const save = useMutation({
+    mutationFn: (body: { url: string; withToken?: boolean }) => api.put("/api/integrations/plex", { url: body.url, token: body.withToken ? token || undefined : undefined }),
+    onSuccess: (_, body) => {
+      setToken("");
+      invalidate();
+      toast.ok(body.url ? "Plex settings saved" : "Plex disconnected");
+    },
+    onError: (e) => toast.error("Could not save", errorMessage(e)),
+  });
+  const runTest = useMutation({
+    mutationFn: () => api.post<TestResult>("/api/integrations/plex/test", { url, token: token || undefined }),
+    onSuccess: setTest,
+    onError: (e) => setTest({ ok: false, error: errorMessage(e) }),
+  });
+  const importToken = useMutation({
+    mutationFn: (c: Candidate) => api.post("/api/integrations/plex/import-token", { configPath: c.configPath, url: url || c.url }),
+    onSuccess: () => {
+      invalidate();
+      setTest(null);
+      toast.ok("Token imported", "Plex is now connected.");
+    },
+    onError: (e) => toast.error("Could not import the token", errorMessage(e)),
+  });
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    save.mutate({ url, withToken: true });
+  };
+  const candidates = discover.data?.plex ?? [];
+
+  return (
+    <Card>
+      <CardHeader
+        title="Plex"
+        meta="what is playing, read only"
+        actions={
+          <>
+            <StatusPill {...p} />
+            <Button size="sm" variant="ghost" icon={<Radar />} loading={discover.isPending} onClick={() => discover.mutate()}>
+              Detect
+            </Button>
+          </>
+        }
+      />
+      <form onSubmit={submit} className="space-y-3.5 p-4">
+        {p.configured && !p.available && p.error && <Notice tone="crit">{p.error}</Notice>}
+        <DetectPanel discover={discover} empty={candidates.length === 0}>
+          {candidates.map((c) => (
+            <CandidateRow key={c.container} c={c} onUse={() => c.url && setUrl(c.url)}>
+              <ConfigImport c={c} what="The token" label="Import token from Preferences.xml" loading={importToken.isPending} onImport={() => importToken.mutate(c)} />
+            </CandidateRow>
+          ))}
+        </DetectPanel>
+
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <FormField label="URL" htmlFor={ids.url} hint="Base address, e.g. http://127.0.0.1:32400">
+            <Input
+              id={ids.url}
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="http://127.0.0.1:32400"
+              className="num"
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </FormField>
+          <FormField
+            label="Token"
+            htmlFor={ids.token}
+            hint={p.hasToken ? "A token is saved (encrypted). Leave blank to keep it." : "Use Detect to import it, or paste your X-Plex-Token."}
+          >
+            <SecretInput id={ids.token} value={token} onChange={setToken} placeholder={p.hasToken ? "•••••••••••••••• (saved)" : "Paste token"} autoComplete="off" />
+          </FormField>
+        </div>
+
+        {p.available && <p className="text-xs text-muted">Home shows what is playing, recently watched and recently added. Wargo never changes anything in Plex.</p>}
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3.5">
+          <TestOutcome result={test} />
+          <div className="ml-auto flex flex-wrap gap-2">
+            {p.configured && (
+              <Button variant="ghost" icon={<Unplug />} onClick={() => setConfirmClear(true)}>
+                Disconnect
+              </Button>
+            )}
+            <Button onClick={() => runTest.mutate()} loading={runTest.isPending} disabled={!url}>
+              Test connection
+            </Button>
+            <Button type="submit" variant="primary" loading={save.isPending} disabled={!url || (!p.hasToken && !token)}>
+              Save
+            </Button>
+          </div>
+        </div>
+      </form>
+      <ConfirmDialog
+        open={confirmClear}
+        onOpenChange={setConfirmClear}
+        title="Disconnect Plex?"
+        description="The saved URL and token are removed from Wargo. Plex itself is not changed."
         confirmLabel="Disconnect"
         danger
         loading={save.isPending}

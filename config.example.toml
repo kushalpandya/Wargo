@@ -18,6 +18,8 @@ pam_service = "wargo"          # /etc/pam.d/wargo (see deploy/pam/wargo)
 require_totp = true            # force a second factor (TOTP or passkey)
 session_idle = "30m"
 session_max = "12h"
+session_remember = "720h"      # "Keep me signed in": 30 days since last use
+session_remember_max = "2160h" # ...and at most 90 days after sign-in
 
 # Public origins you reach Wargo from. Needed for WebSockets and passkeys
 # (passkeys are bound to the hostname and require HTTPS).
@@ -71,6 +73,10 @@ history = "10m"
 # url = "http://127.0.0.1:9091/transmission/rpc"
 # username = ""
 # password = ""
+#
+# [integrations.plex]
+# url = "http://127.0.0.1:32400"
+# token = ""
 
 # NEVER enable in production. Skips login; only honoured on loopback.
 # [dev]

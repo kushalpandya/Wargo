@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Package integrations connects Wargo to Prowlarr (search) and Transmission
-// (downloads). Settings live in the store with secrets sealed.
+// Package integrations connects Wargo to Prowlarr (search), Transmission
+// (downloads) and Plex (what is playing). Settings live in the store with
+// secrets sealed.
 package integrations
 
 import (
+	"cmp"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -21,8 +23,8 @@ import (
 	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/config"
 	"github.com/kushalpandya/wargo/internal/events"
-	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
+	"github.com/kushalpandya/wargo/internal/integrations/plex"
 	"github.com/kushalpandya/wargo/internal/integrations/prowlarr"
 	"github.com/kushalpandya/wargo/internal/integrations/transmission"
 	"github.com/kushalpandya/wargo/internal/store"
@@ -31,6 +33,7 @@ import (
 const (
 	keyProwlarr     = "integrations.prowlarr"
 	keyTransmission = "integrations.transmission"
+	keyPlex         = "integrations.plex"
 	healthTTL       = 30 * time.Second
 	// Topic carries the Transmission torrent list while subscribed.
 	Topic = "transmission"
@@ -68,11 +71,13 @@ type Service struct {
 	mu sync.Mutex
 	pw prowlarrSettings
 	tr transmissionSettings
+	px plexSettings
 	// trc is reused across calls so the session id survives.
 	trc    *transmission.Client
 	trcKey string
 
-	pwHealth, trHealth health
+	pwHealth, trHealth, pxHealth health
+	plexAct                      plexActivityCache
 
 	cache       *prowlarr.Cache
 	limiter     *limiter
@@ -123,6 +128,19 @@ func New(cfg config.Config, st *store.Store, hub *events.Hub, al *audit.Log) *Se
 			_ = st.Set(ctx, keyTransmission, s.tr)
 		}
 	}
+	if ok, err := st.Get(ctx, keyPlex, &s.px); err != nil {
+		slog.Warn("integrations: load plex settings", "err", err)
+	} else if !ok && cfg.Integrations.Plex.URL != "" {
+		if u, err := normalizeURL(cfg.Integrations.Plex.URL, ""); err == nil {
+			s.px.URL = u
+			if tok := strings.TrimSpace(cfg.Integrations.Plex.Token); plexTokenRe.MatchString(tok) {
+				s.px.TokenSealed, _ = st.Seal(tok)
+			} else if tok != "" {
+				slog.Warn("integrations: integrations.plex.token does not look like a Plex token; ignored")
+			}
+			_ = st.Set(ctx, keyPlex, s.px)
+		}
+	}
 	return s
 }
 
@@ -155,6 +173,49 @@ func normalizeURL(raw, rpcPath string) (string, error) {
 		u.Path = strings.TrimRight(u.Path, "/")
 	}
 	return u.String(), nil
+}
+
+// sameServer reports whether two normalized URLs name the same scheme,
+// host and port. A saved secret is only sent back to its own server.
+func sameServer(a, b string) bool {
+	ua, err1 := url.Parse(a)
+	ub, err2 := url.Parse(b)
+	if err1 != nil || err2 != nil || a == "" || b == "" {
+		return false
+	}
+	port := func(u *url.URL) string {
+		if p := u.Port(); p != "" {
+			return p
+		}
+		if u.Scheme == "https" {
+			return "443"
+		}
+		return "80"
+	}
+	return ua.Scheme == ub.Scheme && strings.EqualFold(ua.Hostname(), ub.Hostname()) && port(ua) == port(ub)
+}
+
+// keepSecret returns the sealed secret to keep when the URL changes from
+// old to u without a new secret: the saved one for the same server, none
+// for another.
+func keepSecret(old, u, sealed string) string {
+	if sameServer(old, u) {
+		return sealed
+	}
+	return ""
+}
+
+// savedSecret unseals the saved secret for use with u: only when u is the
+// saved server. ok is false when it exists but belongs to another server.
+func (s *Service) savedSecret(saved, u, sealed string) (secret string, ok bool) {
+	if sealed == "" {
+		return "", true
+	}
+	if !sameServer(saved, u) {
+		return "", false
+	}
+	secret, _ = s.st.Unseal(sealed)
+	return secret, true
 }
 
 func (s *Service) prowlarrSettings() prowlarrSettings {
@@ -201,7 +262,7 @@ func (s *Service) transmissionClient() *transmission.Client {
 	return s.trc
 }
 
-func errString(err error) string { return prowlarr.Redact(err.Error()) }
+func errString(err error) string { return prowlarr.Redact(plex.Redact(err.Error())) }
 
 // checkProwlarr probes a client: status + download clients.
 func checkProwlarr(ctx context.Context, c *prowlarr.Client) (version string, tc *prowlarr.TransmissionClient, err error) {
@@ -376,6 +437,7 @@ func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) error {
 	httpx.OK(w, map[string]any{
 		"prowlarr":     s.prowlarrStatus(r.Context(), force),
 		"transmission": s.transmissionStatus(r.Context(), force),
+		"plex":         s.plexStatus(r.Context(), force),
 	})
 	return nil
 }
@@ -400,24 +462,24 @@ func (s *Service) handlePutProwlarr(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
+	key := ""
+	if in.APIKey != nil {
+		key = strings.TrimSpace(*in.APIKey)
+	}
 	s.mu.Lock()
-	next := s.pw
-	next.URL = u
-	if in.APIKey != nil && strings.TrimSpace(*in.APIKey) != "" {
-		if next.APIKeySealed, err = s.st.Seal(strings.TrimSpace(*in.APIKey)); err != nil {
+	next := prowlarrSettings{URL: u, APIKeySealed: keepSecret(s.pw.URL, u, s.pw.APIKeySealed)}
+	if key != "" {
+		if next.APIKeySealed, err = s.st.Seal(key); err != nil {
 			s.mu.Unlock()
 			return err
 		}
 	}
-	if u == "" {
-		next = prowlarrSettings{}
-	}
-	err = s.save(r.Context(), keyProwlarr, next)
+	err = s.save(r.Context(), keyProwlarr, u, next)
 	if err == nil {
 		s.pw = next
 	}
 	s.mu.Unlock()
-	s.audit.Record(r, "integrations.prowlarr.update", u, err, map[string]any{"apiKeyChanged": in.APIKey != nil && *in.APIKey != ""})
+	s.audit.Record(r, "integrations.prowlarr.update", u, err, map[string]any{"apiKeyChanged": key != ""})
 	if err != nil {
 		return err
 	}
@@ -435,18 +497,14 @@ func (s *Service) handlePutTransmission(w http.ResponseWriter, r *http.Request) 
 		return err
 	}
 	s.mu.Lock()
-	next := s.tr
-	next.URL, next.Username = u, strings.TrimSpace(in.Username)
+	next := transmissionSettings{URL: u, Username: strings.TrimSpace(in.Username), PasswordSealed: keepSecret(s.tr.URL, u, s.tr.PasswordSealed)}
 	if in.Password != nil && *in.Password != "" {
 		if next.PasswordSealed, err = s.st.Seal(*in.Password); err != nil {
 			s.mu.Unlock()
 			return err
 		}
 	}
-	if u == "" {
-		next = transmissionSettings{}
-	}
-	err = s.save(r.Context(), keyTransmission, next)
+	err = s.save(r.Context(), keyTransmission, u, next)
 	if err == nil {
 		s.tr = next
 	}
@@ -459,16 +517,10 @@ func (s *Service) handlePutTransmission(w http.ResponseWriter, r *http.Request) 
 	return nil
 }
 
-func (s *Service) save(ctx context.Context, key string, v any) error {
-	switch x := v.(type) {
-	case prowlarrSettings:
-		if x.URL == "" {
-			return s.st.Delete(ctx, key)
-		}
-	case transmissionSettings:
-		if x.URL == "" {
-			return s.st.Delete(ctx, key)
-		}
+// save stores an integration's settings; no URL removes them.
+func (s *Service) save(ctx context.Context, key, u string, v any) error {
+	if u == "" {
+		return s.st.Delete(ctx, key)
 	}
 	return s.st.Set(ctx, key, v)
 }
@@ -503,10 +555,14 @@ func (s *Service) handleTest(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		key := ""
-		if in.APIKey != nil && *in.APIKey != "" {
+		if in.APIKey != nil {
 			key = strings.TrimSpace(*in.APIKey)
-		} else if saved.APIKeySealed != "" {
-			key, _ = s.st.Unseal(saved.APIKeySealed)
+		}
+		if key == "" {
+			var ok bool
+			if key, ok = s.savedSecret(saved.URL, u, saved.APIKeySealed); !ok {
+				return httpx.BadRequest("Enter the API key to test a different address")
+			}
 		}
 		if u == "" || key == "" {
 			return httpx.BadRequest("URL and API key are required")
@@ -533,11 +589,13 @@ func (s *Service) handleTest(w http.ResponseWriter, r *http.Request) error {
 			}
 			user = strings.TrimSpace(in.Username)
 		}
+		// The saved password only goes to its own server; another
+		// address is tested without one unless it is entered.
 		pass := ""
 		if in.Password != nil && *in.Password != "" {
 			pass = *in.Password
-		} else if saved.PasswordSealed != "" {
-			pass, _ = s.st.Unseal(saved.PasswordSealed)
+		} else {
+			pass, _ = s.savedSecret(saved.URL, u, saved.PasswordSealed)
 		}
 		if u == "" {
 			return httpx.BadRequest("URL is required")
@@ -550,6 +608,8 @@ func (s *Service) handleTest(w http.ResponseWriter, r *http.Request) error {
 			res.Version = sess.Version
 		}
 		httpx.OK(w, res)
+	case "plex":
+		return s.testPlex(ctx, w, r)
 	default:
 		return httpx.ErrNotFound
 	}
@@ -557,13 +617,13 @@ func (s *Service) handleTest(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Service) discover(ctx context.Context) *Discovery {
-	d := &Discovery{Prowlarr: []Candidate{}, Transmission: []Candidate{}}
+	d := &Discovery{Prowlarr: []Candidate{}, Transmission: []Candidate{}, Plex: []Candidate{}}
 	cs, err := listContainers(ctx, s.socket)
 	if err != nil {
 		d.Docker.Error = err.Error()
 	} else {
 		d.Docker.Available = true
-		d.Prowlarr, d.Transmission = discover(cs)
+		d.Prowlarr, d.Transmission, d.Plex = discover(cs)
 	}
 	return d
 }
@@ -580,28 +640,12 @@ func (s *Service) handleDiscover(w http.ResponseWriter, r *http.Request) error {
 
 var apiKeyRe = regexp.MustCompile(`^[A-Za-z0-9]{16,64}$`)
 
-// readAPIKey extracts <ApiKey> from a Prowlarr config.xml.
-func readAPIKey(path string) (key string, err error) {
-	// The path is a host path; read it as the admin user.
-	err = host.AsUser(func() error {
-		var e error
-		key, e = readAPIKeyFile(path)
-		return e
-	})
-	return key, err
-}
-
-// readAPIKeyFile reads the key from the host path of a config.xml.
-func readAPIKeyFile(path string) (string, error) {
-	f, err := openConfigFile(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
+// parseAPIKey extracts <ApiKey> from a Prowlarr config.xml.
+func parseAPIKey(r io.Reader) (string, error) {
 	var cfg struct {
 		APIKey string `xml:"ApiKey"`
 	}
-	if err := xml.NewDecoder(io.LimitReader(f, 256<<10)).Decode(&cfg); err != nil {
+	if err := xml.NewDecoder(r).Decode(&cfg); err != nil {
 		return "", errors.New("config.xml could not be parsed")
 	}
 	k := strings.TrimSpace(cfg.APIKey)
@@ -611,7 +655,24 @@ func readAPIKeyFile(path string) (string, error) {
 	return k, nil
 }
 
-func (s *Service) handleImportKey(w http.ResponseWriter, r *http.Request) error {
+// secretImport describes reading an integration's secret from the config
+// file of a detected container.
+type secretImport struct {
+	action      string // audit action
+	name        string // "Prowlarr"
+	what        string // "the API key"
+	notDetected string
+	candidates  func(*Discovery) []Candidate
+	parse       func(io.Reader) (string, error)
+	savedURL    func() string
+	// apply seals and saves secret with URL u.
+	apply func(ctx context.Context, u, secret string) error
+}
+
+// importSecret handles POST {configPath, url}: configPath must be a
+// detected candidate's config file. The URL is the one given, else the
+// saved one, else the detected one.
+func (s *Service) importSecret(r *http.Request, im secretImport) (err error) {
 	var in struct {
 		ConfigPath string `json:"configPath"`
 		URL        string `json:"url"`
@@ -620,46 +681,55 @@ func (s *Service) handleImportKey(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 	want := filepath.Clean(in.ConfigPath)
+	var details map[string]any
+	defer func() { s.audit.Record(r, im.action, want, err, details) }()
 	var match *Candidate
-	d := s.discover(r.Context())
-	for i := range d.Prowlarr {
-		if d.Prowlarr[i].ConfigPath != "" && d.Prowlarr[i].ConfigPath == want {
-			match = &d.Prowlarr[i]
+	cands := im.candidates(s.discover(r.Context()))
+	for i := range cands {
+		if cands[i].ConfigPath != "" && cands[i].ConfigPath == want {
+			match = &cands[i]
 		}
 	}
 	if match == nil {
-		err := httpx.Errorf(http.StatusForbidden, "not_detected", "That path is not the /config mount of a detected Prowlarr container")
-		s.audit.Record(r, "integrations.prowlarr.import_key", want, err, nil)
-		return err
+		return httpx.Errorf(http.StatusForbidden, "not_detected", im.notDetected)
 	}
-	key, err := readAPIKey(match.ConfigPath)
+	details = map[string]any{"container": match.Container}
+	secret, err := readConfigSecret(match.configRoot, match.configRel, im.parse)
 	if err != nil {
-		e := httpx.Errorf(http.StatusUnprocessableEntity, "unreadable", "Could not read the API key: "+err.Error())
-		s.audit.Record(r, "integrations.prowlarr.import_key", want, e, nil)
-		return e
+		return httpx.Errorf(http.StatusUnprocessableEntity, "unreadable", "Could not read "+im.what+": "+err.Error())
 	}
-	u := strings.TrimSpace(in.URL)
-	if u == "" {
-		u = s.prowlarrSettings().URL
-	}
-	if u == "" {
-		u = match.URL
-	}
+	u := cmp.Or(strings.TrimSpace(in.URL), im.savedURL(), match.URL)
 	if u, err = normalizeURL(u, ""); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	next := s.pw
-	next.URL = u
-	next.APIKeySealed, err = s.st.Seal(key)
-	if err == nil {
-		err = s.save(r.Context(), keyProwlarr, next)
+	if u == "" {
+		return httpx.BadRequest("Enter the " + im.name + " URL first")
 	}
-	if err == nil {
-		s.pw = next
-	}
-	s.mu.Unlock()
-	s.audit.Record(r, "integrations.prowlarr.import_key", want, err, map[string]any{"container": match.Container})
+	return im.apply(r.Context(), u, secret)
+}
+
+func (s *Service) handleImportKey(w http.ResponseWriter, r *http.Request) error {
+	err := s.importSecret(r, secretImport{
+		action: "integrations.prowlarr.import_key", name: "Prowlarr", what: "the API key",
+		notDetected: "That path is not the /config mount of a detected Prowlarr container",
+		candidates:  func(d *Discovery) []Candidate { return d.Prowlarr },
+		parse:       parseAPIKey,
+		savedURL:    func() string { return s.prowlarrSettings().URL },
+		apply: func(ctx context.Context, u, key string) error {
+			sealed, err := s.st.Seal(key)
+			if err != nil {
+				return err
+			}
+			next := prowlarrSettings{URL: u, APIKeySealed: sealed}
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if err := s.save(ctx, keyProwlarr, u, next); err != nil {
+				return err
+			}
+			s.pw = next
+			return nil
+		},
+	})
 	if err != nil {
 		return err
 	}

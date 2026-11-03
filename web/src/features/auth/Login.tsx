@@ -8,7 +8,8 @@ import { getAssertion, webauthnSupported } from "@/lib/webauthn";
 import { useAuthState } from "@/app/session";
 import { Logo } from "@/app/Logo";
 import { Button } from "@/components/ui/button";
-import { FormField, Input } from "@/components/ui/form";
+import { Checkbox, FormField, Input } from "@/components/ui/form";
+import { usePref } from "@/lib/prefs";
 import { ErrorNote, Notice } from "@/components/ui/misc";
 
 type Step = { kind: "password" } | { kind: "second"; token: string; recovery: boolean };
@@ -47,6 +48,9 @@ export function Login() {
   // The password was right but this account must finish with a passkey
   // (it has passkeys and no TOTP / recovery codes left).
   const [passkeyRequired, setPasskeyRequired] = useState(false);
+  // "Keep me signed in", remembered for the next sign-in on this browser.
+  const [rememberPref, setRememberPref] = usePref("wargo.login.remember", "no", ["no", "yes"] as const);
+  const remember = rememberPref === "yes";
 
   const done = async (next: string) => {
     // Nothing from a previous session should survive into this one.
@@ -72,7 +76,7 @@ export function Login() {
     run(async () => {
       let r: { next: string; token?: string };
       try {
-        r = await api.post<{ next: string; token?: string }>("/api/auth/login", { username, password });
+        r = await api.post<{ next: string; token?: string }>("/api/auth/login", { username, password, remember });
       } catch (e) {
         if (e instanceof ApiError && e.code === "passkey_required") {
           setPassword("");
@@ -101,7 +105,7 @@ export function Login() {
     run(async () => {
       const b = await api.post<{ ceremony: string; options: Record<string, unknown> }>("/api/auth/passkey/login/begin");
       const assertion = await getAssertion(b.options);
-      const r = await api.request<{ next: string }>(`/api/auth/passkey/login/finish?ceremony=${encodeURIComponent(b.ceremony)}`, {
+      const r = await api.request<{ next: string }>(`/api/auth/passkey/login/finish?ceremony=${encodeURIComponent(b.ceremony)}${remember ? "&remember=1" : ""}`, {
         method: "POST",
         body: assertion,
       });
@@ -109,6 +113,14 @@ export function Login() {
     });
 
   const canPasskey = (!!state?.passkeys || passkeyRequired) && webauthnSupported();
+  const rememberBox = (
+    <Checkbox
+      className="min-h-10"
+      checked={remember}
+      onCheckedChange={(v) => setRememberPref(v ? "yes" : "no")}
+      label="Keep me signed in on this device"
+    />
+  );
   const errMsg = error instanceof ApiError || error instanceof Error ? error : null;
 
   if (step.kind === "second") {
@@ -165,7 +177,8 @@ export function Login() {
           <Button variant="primary" className="w-full" icon={<Fingerprint />} loading={busy} onClick={passkey}>
             Sign in with passkey
           </Button>
-          <div className="my-4 flex items-center gap-3 text-2xs uppercase tracking-wider text-subtle">
+          <div className="mt-2">{rememberBox}</div>
+          <div className="my-3 flex items-center gap-3 text-2xs uppercase tracking-wider text-subtle">
             <span className="h-px flex-1 bg-border" /> or password <span className="h-px flex-1 bg-border" />
           </div>
         </>
@@ -178,6 +191,7 @@ export function Login() {
           <Input id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </FormField>
         {errMsg && <ErrorNote error={errMsg} />}
+        {!canPasskey && rememberBox}
         <Button type="submit" variant={canPasskey ? "secondary" : "primary"} icon={<KeyRound />} loading={busy} disabled={!username || !password}>
           Continue
         </Button>

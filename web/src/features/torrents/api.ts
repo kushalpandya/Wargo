@@ -120,9 +120,19 @@ export interface TransmissionStatus {
   error?: string;
 }
 
+export interface PlexStatus {
+  url: string;
+  hasToken: boolean;
+  configured: boolean;
+  available: boolean;
+  version?: string;
+  error?: string;
+}
+
 export interface IntegrationsStatus {
   prowlarr: ProwlarrStatus;
   transmission: TransmissionStatus;
+  plex: PlexStatus;
 }
 
 export interface Candidate {
@@ -140,6 +150,7 @@ export interface Discovery {
   docker: { available: boolean; error?: string };
   prowlarr: Candidate[];
   transmission: Candidate[];
+  plex: Candidate[];
   transmissionFromProwlarr?: {
     name: string;
     url: string;

@@ -260,7 +260,7 @@ func (s *Service) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 		return httpx.Errorf(http.StatusUnauthorized, "passkey_failed", "Passkey sign-in failed")
 	}
 	s.throttle.Success(ip)
-	if _, err := s.createSession(w, r, MethodPasskey); err != nil {
+	if _, err := s.createSession(w, r, MethodPasskey, r.URL.Query().Get("remember") == "1"); err != nil {
 		return err
 	}
 	httpx.OK(w, map[string]string{"next": "done", "credential": id})

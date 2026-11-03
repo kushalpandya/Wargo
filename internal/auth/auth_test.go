@@ -80,7 +80,7 @@ func TestRequireRejectsWithoutSession(t *testing.T) {
 func sessionCookies(t *testing.T, s *Service, method string) (*http.Cookie, *Session) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	sess, err := s.createSession(rec, httptest.NewRequest("POST", "/api/auth/login", nil), method)
+	sess, err := s.createSession(rec, httptest.NewRequest("POST", "/api/auth/login", nil), method, false)
 	if err != nil {
 		t.Fatal(err)
 	}

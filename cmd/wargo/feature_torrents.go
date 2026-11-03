@@ -7,8 +7,8 @@ import (
 	"github.com/kushalpandya/wargo/internal/server"
 )
 
-// One shared service backs two features so capabilities are reported under
-// both "prowlarr" and "transmission".
+// One shared service backs three features so capabilities are reported
+// under "prowlarr", "transmission" and "plex".
 var torrentsSvc *integrations.Service
 
 func torrentsService(d *server.Deps) *integrations.Service {
@@ -24,5 +24,8 @@ func init() {
 	})
 	server.RegisterFeature(func(d *server.Deps) (server.Registrar, error) {
 		return torrentsService(d).Transmission(), nil
+	})
+	server.RegisterFeature(func(d *server.Deps) (server.Registrar, error) {
+		return torrentsService(d).Plex(), nil
 	})
 }

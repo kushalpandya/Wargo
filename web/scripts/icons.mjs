@@ -2,10 +2,14 @@
 // Renders the app icons from public/favicon.svg (a full-bleed square) with
 // headless Chrome:
 //   node scripts/icons.mjs
-// - apple-touch-icon.png (180, square: iOS rounds it itself)
+// - apple-touch-icon.png (512, square: iOS rounds it itself and scales it
+//   down to each device; 180 looked soft on high-density screens)
 // - icon-192.png, icon-512.png (rounded corners, transparent outside)
 // - icon-maskable-512.png (square, art shrunk into the round safe zone)
-import { readFileSync } from "node:fs";
+// - favicon-32.png and favicon.ico (16, 32, 48): Safari ignores SVG
+//   favicons and falls back to these for tabs and bookmarks
+// - apple-touch-icon-precomposed.png: the older name some iOS versions ask for
+import { copyFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
@@ -19,9 +23,12 @@ if (noBg === svg) throw new Error("background rect not found in favicon.svg");
 
 const full = (radius) => `<div style="width:100%;height:100%;border-radius:${radius};overflow:hidden">${svg}</div>`;
 const targets = [
-  ["apple-touch-icon.png", 180, full("0")],
+  ["apple-touch-icon.png", 512, full("0")],
   ["icon-192.png", 192, full("22%")],
   ["icon-512.png", 512, full("22%")],
+  ["favicon-32.png", 32, full("22%")],
+  ["ico-16.png", 16, full("22%")],
+  ["ico-48.png", 48, full("22%")],
   ["icon-maskable-512.png", 512, `<div style="width:100%;height:100%;background:${bg};display:grid;place-items:center"><div style="width:88%;height:88%">${noBg}</div></div>`],
 ];
 
@@ -34,3 +41,25 @@ for (const [name, size, html] of targets) {
   console.log("wrote", name);
 }
 await browser.close();
+
+// favicon.ico: an icon directory holding the PNGs as they are.
+const pngs = [["ico-16.png", 16], ["favicon-32.png", 32], ["ico-48.png", 48]].map(([f, s]) => [readFileSync(pub + f), s]);
+const head = Buffer.alloc(6 + 16 * pngs.length);
+head.writeUInt16LE(1, 2); // type: icon
+head.writeUInt16LE(pngs.length, 4);
+let offset = head.length;
+pngs.forEach(([png, size], i) => {
+  const e = 6 + 16 * i;
+  head.writeUInt8(size, e);
+  head.writeUInt8(size, e + 1);
+  head.writeUInt16LE(1, e + 4); // planes
+  head.writeUInt16LE(32, e + 6); // bits per pixel
+  head.writeUInt32LE(png.length, e + 8);
+  head.writeUInt32LE(offset, e + 12);
+  offset += png.length;
+});
+writeFileSync(pub + "favicon.ico", Buffer.concat([head, ...pngs.map(([png]) => png)]));
+console.log("wrote favicon.ico");
+copyFileSync(pub + "apple-touch-icon.png", pub + "apple-touch-icon-precomposed.png");
+console.log("wrote apple-touch-icon-precomposed.png");
+for (const f of ["ico-16.png", "ico-48.png"]) rmSync(pub + f);

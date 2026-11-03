@@ -103,7 +103,7 @@ function HomeCard() {
           checked={feed === "on"}
           onCheckedChange={(on) => setFeed(on ? "on" : "off")}
           label="Show the feed"
-          description="Updates, containers needing attention, downloads, recent files and system errors, beside the rest of Home."
+          description="Updates, containers needing attention, downloads, what is playing on Plex, recent files and system errors, beside the rest of Home."
         />
       </CardBody>
     </Card>

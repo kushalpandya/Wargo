@@ -87,7 +87,7 @@ export function AuditLog() {
   }, [all, q]);
 
   return (
-    <>
+    <div className="audit-log flex min-h-0 flex-col">
       <div id="audit" className="mb-3 flex scroll-mt-20 flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-lg font-bold tracking-tight">Audit log</h3>
@@ -112,106 +112,111 @@ export function AuditLog() {
           <EmptyState icon={<ScrollText />} title={q ? "No matching entries" : "No audit entries yet"} />
         </Card>
       ) : (
-        <Card className="overflow-hidden">
-          {/* Desktop / tablet table */}
-          <div className="hidden md:block">
-            <Table>
-              <THead sticky={false}>
-                <tr>
-                  <Th className="w-8" aria-label="Expand" />
-                  <Th>Time</Th>
-                  <Th>Action</Th>
-                  <Th>Target</Th>
-                  <Th>Result</Th>
-                  <Th className="max-lg:hidden">Elevation</Th>
-                  <Th className="max-lg:hidden">IP</Th>
-                </tr>
-              </THead>
-              <tbody>
-                {rows.map((e) => {
-                  const expanded = open === e.id;
-                  return (
-                    <Fragment key={e.id}>
-                      <tr className={cn("transition-colors hover:bg-surface-2", expanded && "bg-surface-2")}>
-                        <Td className="w-8 pr-0">
-                          <IconButton
-                            label={expanded ? "Hide details" : "Show details"}
-                            size="xs"
-                            aria-expanded={expanded}
-                            onClick={() => setOpen(expanded ? null : e.id)}
-                          >
-                            <ChevronRight className={cn("transition-transform", expanded && "rotate-90")} />
-                          </IconButton>
-                        </Td>
-                        <Td className="num whitespace-nowrap text-muted" title={datetime(e.ts)}>
-                          {ago(e.ts)}
-                        </Td>
-                        <Td className="num whitespace-nowrap">{e.action}</Td>
-                        <Td className="max-w-[18rem] truncate" title={e.target}>
-                          {e.target || <span className="text-muted">—</span>}
-                        </Td>
-                        <Td>
-                          <Result r={e.result} />
-                        </Td>
-                        <Td className="max-lg:hidden">{e.elevation ? <Badge tone="accent">{e.elevation}</Badge> : <span className="text-muted">—</span>}</Td>
-                        <Td className="num text-muted max-lg:hidden">{e.ip}</Td>
-                      </tr>
-                      {expanded && (
-                        <tr className="bg-surface-2/50">
-                          <td colSpan={7} className="border-b border-border px-4 py-3">
-                            <Details e={e} />
-                          </td>
+        // At most a screen tall (filling what is left beside the About cards,
+        // see .about-fit), so a long log scrolls inside its card rather than
+        // making the page long, and a short one stays short.
+        <Card className="audit-card flex max-h-[calc(100dvh-11.5rem)] flex-col overflow-hidden">
+          <div className="scroll-area min-h-0 flex-1 overflow-auto">
+            {/* Desktop / tablet table */}
+            <div className="hidden md:block">
+              <Table>
+                <THead>
+                  <tr>
+                    <Th className="w-8" aria-label="Expand" />
+                    <Th>Time</Th>
+                    <Th>Action</Th>
+                    <Th>Target</Th>
+                    <Th>Result</Th>
+                    <Th className="max-lg:hidden">Elevation</Th>
+                    <Th className="max-lg:hidden">IP</Th>
+                  </tr>
+                </THead>
+                <tbody>
+                  {rows.map((e) => {
+                    const expanded = open === e.id;
+                    return (
+                      <Fragment key={e.id}>
+                        <tr className={cn("transition-colors hover:bg-surface-2", expanded && "bg-surface-2")}>
+                          <Td className="w-8 pr-0">
+                            <IconButton
+                              label={expanded ? "Hide details" : "Show details"}
+                              size="xs"
+                              aria-expanded={expanded}
+                              onClick={() => setOpen(expanded ? null : e.id)}
+                            >
+                              <ChevronRight className={cn("transition-transform", expanded && "rotate-90")} />
+                            </IconButton>
+                          </Td>
+                          <Td className="num whitespace-nowrap text-muted" title={datetime(e.ts)}>
+                            {ago(e.ts)}
+                          </Td>
+                          <Td className="num whitespace-nowrap">{e.action}</Td>
+                          <Td className="max-w-[18rem] truncate" title={e.target}>
+                            {e.target || <span className="text-muted">—</span>}
+                          </Td>
+                          <Td>
+                            <Result r={e.result} />
+                          </Td>
+                          <Td className="max-lg:hidden">{e.elevation ? <Badge tone="accent">{e.elevation}</Badge> : <span className="text-muted">—</span>}</Td>
+                          <Td className="num text-muted max-lg:hidden">{e.ip}</Td>
                         </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </Table>
+                        {expanded && (
+                          <tr className="bg-surface-2/50">
+                            <td colSpan={7} className="border-b border-border px-4 py-3">
+                              <Details e={e} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            </div>
+            {/* Phone list */}
+            <ul className="divide-y divide-border md:hidden">
+              {rows.map((e) => {
+                const expanded = open === e.id;
+                return (
+                  <li key={e.id}>
+                    <button
+                      type="button"
+                      className="flex w-full items-start gap-2 px-3 py-2.5 text-left"
+                      aria-expanded={expanded}
+                      onClick={() => setOpen(expanded ? null : e.id)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="num truncate text-ui font-medium">{e.action}</span>
+                          <Result r={e.result} />
+                          {e.elevation && <Badge tone="accent">{e.elevation}</Badge>}
+                        </div>
+                        {e.target && <div className="truncate text-xs">{e.target}</div>}
+                        <div className="num text-2xs text-muted">
+                          {ago(e.ts)} · {e.ip}
+                        </div>
+                      </div>
+                      <ChevronRight className={cn("mt-1 size-4 shrink-0 text-muted transition-transform", expanded && "rotate-90")} aria-hidden="true" />
+                    </button>
+                    {expanded && (
+                      <div className="px-3 pb-3">
+                        <Details e={e} />
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {query.hasNextPage && (
+              <div className="flex justify-center border-t border-border p-3">
+                <Button size="sm" loading={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>
+                  Load more
+                </Button>
+              </div>
+            )}
           </div>
-          {/* Phone list */}
-          <ul className="divide-y divide-border md:hidden">
-            {rows.map((e) => {
-              const expanded = open === e.id;
-              return (
-                <li key={e.id}>
-                  <button
-                    type="button"
-                    className="flex w-full items-start gap-2 px-3 py-2.5 text-left"
-                    aria-expanded={expanded}
-                    onClick={() => setOpen(expanded ? null : e.id)}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="num truncate text-ui font-medium">{e.action}</span>
-                        <Result r={e.result} />
-                        {e.elevation && <Badge tone="accent">{e.elevation}</Badge>}
-                      </div>
-                      {e.target && <div className="truncate text-xs">{e.target}</div>}
-                      <div className="num text-2xs text-muted">
-                        {ago(e.ts)} · {e.ip}
-                      </div>
-                    </div>
-                    <ChevronRight className={cn("mt-1 size-4 shrink-0 text-muted transition-transform", expanded && "rotate-90")} aria-hidden="true" />
-                  </button>
-                  {expanded && (
-                    <div className="px-3 pb-3">
-                      <Details e={e} />
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
         </Card>
       )}
-      {query.hasNextPage && (
-        <div className="mt-3 flex justify-center">
-          <Button size="sm" loading={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>
-            Load more
-          </Button>
-        </div>
-      )}
-    </>
+    </div>
   );
 }

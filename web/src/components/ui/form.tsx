@@ -159,11 +159,16 @@ export function Checkbox({
         checked={checked}
         aria-label={ariaLabel}
         onCheckedChange={(v) => onCheckedChange(v === true)}
-        className="flex size-4 shrink-0 items-center justify-center rounded border border-border-strong bg-surface-2 data-[state=checked]:border-accent data-[state=checked]:bg-accent data-[state=indeterminate]:border-accent data-[state=indeterminate]:bg-accent"
+        // A 24px tap target around the 16px box, taking the box's space only.
+        // The focus ring is drawn on the box, so it stays inside the target
+        // and tight containers do not clip it.
+        className="group -m-1 flex size-6 shrink-0 items-center justify-center rounded-md focus-visible:outline-none"
       >
-        <C.Indicator className="text-accent-fg">
-          {checked === "indeterminate" ? <span className="block h-0.5 w-2 bg-current" /> : <Check className="size-3" strokeWidth={3} />}
-        </C.Indicator>
+        <span className="flex size-4 items-center justify-center rounded border group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-focus border-border-strong bg-surface-2 group-data-[state=checked]:border-accent group-data-[state=checked]:bg-accent group-data-[state=indeterminate]:border-accent group-data-[state=indeterminate]:bg-accent">
+          <C.Indicator className="text-accent-fg">
+            {checked === "indeterminate" ? <span className="block h-0.5 w-2 bg-current" /> : <Check className="size-3" strokeWidth={3} />}
+          </C.Indicator>
+        </span>
       </C.Root>
       {label && (
         <label htmlFor={id} className="cursor-pointer text-sm">
