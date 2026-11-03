@@ -4,6 +4,7 @@
 import type { RequestHandler, WebSocketHandler } from "msw";
 import { jobHandlers } from "../core/jobs";
 import { elevationHandlers } from "../core/elevation";
+import { handlers as checks } from "./checks";
 import { handlers as containers } from "./containers";
 import { handlers as processes } from "./processes";
 import { handlers as terminal } from "./terminal";
@@ -13,10 +14,12 @@ import { handlers as torrents } from "./torrents";
 import { handlers as integrations } from "./integrations";
 import { handlers as launcher } from "./launcher";
 import { handlers as settings } from "./settings";
+import { handlers as weather } from "./weather";
 
 export const extraHandlers: (RequestHandler | WebSocketHandler)[] = [
   ...jobHandlers,
   ...elevationHandlers,
+  ...checks,
   ...containers,
   ...processes,
   ...terminal,
@@ -26,4 +29,5 @@ export const extraHandlers: (RequestHandler | WebSocketHandler)[] = [
   ...integrations,
   ...launcher,
   ...settings,
+  ...weather,
 ];

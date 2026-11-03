@@ -220,10 +220,12 @@ export const handlers: (RequestHandler | WebSocketHandler)[] = [
     const q = query(request);
     const limit = Math.min(Math.max(Number(q.get("limit")) || 100, 1), 500);
     const before = Number(q.get("before")) || 0;
+    const prefix = q.get("prefix") ?? "";
     const rows: AuditEntry[] = [];
     const all = log.get();
     for (let i = all.length - 1; i >= 0 && rows.length < limit; i--) {
       if (before > 0 && all[i].id >= before) continue;
+      if (prefix && !all[i].action.startsWith(prefix)) continue;
       rows.push(all[i]);
     }
     return json(rows);

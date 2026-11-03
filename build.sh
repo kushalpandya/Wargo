@@ -42,7 +42,8 @@ echo "==> Building for $BASE"
 # GitHub Pages serves 404.html for unknown paths: the same page lets deep
 # links such as /Wargo/system/events open the app at that route.
 cp "$OUT/index.html" "$OUT/404.html"
-# The app manifest assumes it lives at /.
-sed -i "s#\"start_url\": \"/\"#\"start_url\": \"$BASE\"#; s#\"src\": \"/favicon.svg\"#\"src\": \"${BASE}favicon.svg\"#" "$OUT/manifest.webmanifest"
+# The app manifest assumes it lives at /: point its start page and every
+# icon at the demo's base path.
+sed -i "s#\"start_url\": \"/\"#\"start_url\": \"$BASE\"#; s#\"src\": \"/#\"src\": \"${BASE}#g" "$OUT/manifest.webmanifest"
 touch "$OUT/.nojekyll"
 echo "==> Demo site in $OUT"
