@@ -60,7 +60,13 @@ type Auth struct {
 	TrustedProxies []string `toml:"trusted_proxies"`
 	SessionIdle    Duration `toml:"session_idle"`
 	SessionMax     Duration `toml:"session_max"`
-	RequireTOTP    bool     `toml:"require_totp"`
+	// SessionRemember is how long a "Keep me signed in" session lasts
+	// since it was last used.
+	SessionRemember Duration `toml:"session_remember"`
+	// SessionRememberMax ends a remembered session this long after sign-in,
+	// however often it is used.
+	SessionRememberMax Duration `toml:"session_remember_max"`
+	RequireTOTP        bool     `toml:"require_totp"`
 }
 
 type Dev struct {
@@ -94,6 +100,7 @@ type Docker struct {
 type Integrations struct {
 	Prowlarr     Prowlarr     `toml:"prowlarr"`
 	Transmission Transmission `toml:"transmission"`
+	Plex         Plex         `toml:"plex"`
 }
 
 type Prowlarr struct {
@@ -105,6 +112,11 @@ type Transmission struct {
 	URL      string `toml:"url"`
 	Username string `toml:"username"`
 	Password string `toml:"password"`
+}
+
+type Plex struct {
+	URL   string `toml:"url"`
+	Token string `toml:"token"`
 }
 
 type Metrics struct {
@@ -128,10 +140,12 @@ func Default() Config {
 	c := Config{
 		Listen: DefaultListen(),
 		Auth: Auth{
-			PAMService:  "wargo",
-			SessionIdle: Duration{30 * time.Minute},
-			SessionMax:  Duration{12 * time.Hour},
-			RequireTOTP: true,
+			PAMService:         "wargo",
+			SessionIdle:        Duration{30 * time.Minute},
+			SessionMax:         Duration{12 * time.Hour},
+			SessionRemember:    Duration{30 * 24 * time.Hour},
+			SessionRememberMax: Duration{90 * 24 * time.Hour},
+			RequireTOTP:        true,
 		},
 		Docker:  Docker{Socket: "/var/run/docker.sock", UpdateCheckInterval: Duration{6 * time.Hour}},
 		Metrics: Metrics{Interval: Duration{time.Second}, History: Duration{10 * time.Minute}},
@@ -331,8 +345,11 @@ func (c Config) Validate() error {
 			}
 		}
 	}
-	if c.Auth.SessionIdle.Duration <= 0 || c.Auth.SessionMax.Duration <= 0 {
-		return errors.New("auth.session_idle and auth.session_max must be positive")
+	if c.Auth.SessionIdle.Duration <= 0 || c.Auth.SessionMax.Duration <= 0 || c.Auth.SessionRemember.Duration <= 0 {
+		return errors.New("auth.session_idle, auth.session_max and auth.session_remember must be positive")
+	}
+	if c.Auth.SessionRememberMax.Duration < c.Auth.SessionRemember.Duration {
+		return errors.New("auth.session_remember_max must be at least auth.session_remember")
 	}
 	return nil
 }

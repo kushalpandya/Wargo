@@ -102,6 +102,7 @@ func newHarness(t *testing.T, cfg config.Config) *harness {
 	mux := http.NewServeMux()
 	s.Prowlarr().Register(mux)
 	s.Transmission().Register(mux)
+	s.Plex().Register(mux)
 	return &harness{s: s, mux: mux, st: st}
 }
 

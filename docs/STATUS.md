@@ -30,6 +30,7 @@ sign-in needs `/etc/pam.d/wargo` (from `deploy/pam/wargo`).
 | OS updates (check, background check, upgrade through systemd-run, restart detection) | Done | Real `pamac checkupdates`; upgrades only with a simulated script |
 | Prowlarr search, magnet, .torrent, queue | Done | Real Prowlarr (search and magnet read only); queue with fakes |
 | Transmission downloads (pause, resume, remove) | Done | Fake Transmission (the real one needs your password) |
+| Plex (now playing, recently watched and added on Home; token import) | Done | Real Plex Media Server (read only) |
 | App launcher (square tiles, edit, drag to reorder) | Done | Real container suggestions; order saved on the server |
 | Settings (general, appearance with accent colours, integrations, security, about with the audit log) | Done | Dev instance and a virtual authenticator |
 | Sign-in: PAM plus two-factor code, passkeys, recovery codes, sessions | Done | Unit tests and a virtual authenticator; native PAM sign-in not tried yet (needs your password) |
@@ -56,7 +57,8 @@ load only when needed.
    example your Cloudflare Tunnel hostname, so WebSockets and passkeys work
    behind the proxy.
 3. In Settings → Integrations, connect Prowlarr ("Detect", then "Import API
-   key") and enter the Transmission password.
+   key"), enter the Transmission password, and connect Plex ("Detect", then
+   "Import token").
 4. Consider putting Cloudflare Access in front of the hostname.
 
 ## Known gaps and next steps

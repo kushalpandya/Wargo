@@ -119,9 +119,15 @@ func (s *Service) handleTOTPEnable(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	// Upgrade the current session: it has now proven a second factor.
-	if sess := FromContext(r.Context()); sess != nil && sess.Method == MethodPassword {
-		s.st.DB.ExecContext(r.Context(), `UPDATE sessions SET method = ? WHERE id_hash = ?`, MethodPasswordTOTP, sess.IDHash)
+	// Other password-only sessions haven't, and go.
+	cur := ""
+	if sess := FromContext(r.Context()); sess != nil {
+		cur = sess.IDHash
+		if sess.Method == MethodPassword {
+			s.st.DB.ExecContext(r.Context(), `UPDATE sessions SET method = ? WHERE id_hash = ?`, MethodPasswordTOTP, sess.IDHash)
+		}
 	}
+	s.deleteSessions(r.Context(), `method = ? AND id_hash != ?`, MethodPassword, cur)
 	s.audit.Record(r, "auth.totp_enable", "", nil, nil)
 	httpx.OK(w, map[string]any{"recoveryCodes": codes})
 	return nil

@@ -9,18 +9,6 @@ import { toast } from "@/components/ui/toast";
 import { useMe } from "@/app/session";
 import { copyText } from "@/lib/clipboard";
 
-/**
- * Cards of a settings section in balanced columns (like masonry): each card
- * keeps its own height and the next one starts right below it, so cards of
- * different heights never leave gaps. Columns are at least 30rem and the
- * whole grid is capped so a card never grows past ~42rem: one column on
- * laptops, two or three on wide screens. Give a child "settings-wide" to
- * span every column.
- */
-export function SettingsGrid({ children }: { children: ReactNode }) {
-  return <div className="settings-grid">{children}</div>;
-}
-
 /** Cards of a settings section, one per row, at a comfortable reading width. */
 export function SettingsStack({ children }: { children: ReactNode }) {
   return <div className="settings-stack">{children}</div>;

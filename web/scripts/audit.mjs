@@ -61,7 +61,9 @@ for (const size of sizes) {
         }
         if (!clipped && (r.right > W + 1 || r.left < -1)) out.escaping.push(`${describe(el)} [${Math.round(r.left)}..${Math.round(r.right)}]`);
         if (isPhone && el.matches("button, a[href], input, select, [role=button], [role=tab], [role=radio]")) {
-          if ((r.height < 24 || r.width < 24) && cs.visibility !== "hidden") out.smallTargets.push(`${describe(el)} ${Math.round(r.width)}x${Math.round(r.height)}`);
+          // Invisible helpers (e.g. a form control's hidden mirror input) can't be tapped.
+          const untouchable = cs.pointerEvents === "none" || cs.opacity === "0" || el.closest("[aria-hidden=true]");
+          if ((r.height < 24 || r.width < 24) && cs.visibility !== "hidden" && !untouchable) out.smallTargets.push(`${describe(el)} ${Math.round(r.width)}x${Math.round(r.height)}`);
         }
       }
       out.escaping = out.escaping.slice(0, 15);

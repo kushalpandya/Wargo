@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/httpx"
+	"github.com/kushalpandya/wargo/internal/integrations/plex"
 	"github.com/kushalpandya/wargo/internal/integrations/prowlarr"
 	"github.com/kushalpandya/wargo/internal/integrations/torrent"
 	"github.com/kushalpandya/wargo/internal/integrations/transmission"
@@ -42,7 +43,7 @@ func upstream(err error) error {
 		return httpx.Errorf(http.StatusGatewayTimeout, "upstream_timeout", "The service did not respond in time")
 	}
 	code := "upstream"
-	if errors.Is(err, prowlarr.ErrUnauthorized) || errors.Is(err, transmission.ErrUnauthorized) {
+	if errors.Is(err, prowlarr.ErrUnauthorized) || errors.Is(err, transmission.ErrUnauthorized) || errors.Is(err, plex.ErrUnauthorized) {
 		code = "upstream_unauthorized"
 	}
 	return httpx.Errorf(http.StatusBadGateway, code, errString(err))

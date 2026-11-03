@@ -47,6 +47,11 @@ var migrations = []string{
 		id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, icon TEXT,
 		group_name TEXT, sort INTEGER NOT NULL DEFAULT 0, new_tab INTEGER NOT NULL DEFAULT 1,
 		health_url TEXT, enabled INTEGER NOT NULL DEFAULT 1);`,
+	// "Keep me signed in" sessions, and the browser each session belongs to
+	// (a new sign-in replaces that browser's older session).
+	`ALTER TABLE sessions ADD COLUMN remember INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE sessions ADD COLUMN device TEXT;
+	CREATE INDEX sessions_device ON sessions(device);`,
 }
 
 // Open opens (and migrates) the database in dataDir.

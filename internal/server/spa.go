@@ -14,6 +14,7 @@ import (
 func init() {
 	// Go doesn't know the web app manifest type; browsers expect it.
 	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+	_ = mime.AddExtensionType(".ico", "image/x-icon")
 }
 
 // spaHandler serves static files and falls back to index.html for

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fingerprint, KeyRound, LifeBuoy, Lock, MonitorSmartphone, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { Fingerprint, KeyRound, LifeBuoy, Lock, LogOut, MonitorSmartphone, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { ago, datetime } from "@/lib/format";
 import { createCredential, webauthnSupported } from "@/lib/webauthn";
@@ -25,6 +25,8 @@ interface SessionRow {
   ua: string;
   method: string;
   current: boolean;
+  /** "Keep me signed in" was ticked. */
+  remember: boolean;
 }
 
 const methodLabels: Record<string, string> = {
@@ -343,6 +345,14 @@ function SessionsCard() {
       qc.invalidateQueries({ queryKey: ["auth", "sessions"] });
     },
   });
+  const revokeOne = useMutation({
+    mutationFn: (id: string) => api.del(`/api/auth/sessions/${encodeURIComponent(id)}`),
+    onSuccess: () => {
+      toast.ok("Signed out");
+      qc.invalidateQueries({ queryKey: ["auth", "sessions"] });
+    },
+    onError: (e) => toast.error("Could not sign out", e),
+  });
   const others = (data ?? []).filter((s) => !s.current).length;
 
   return (
@@ -380,12 +390,24 @@ function SessionsCard() {
                   </span>
                   {s.current && <Badge tone="ok">This device</Badge>}
                   <Badge>{methodLabels[s.method] ?? s.method}</Badge>
+                  {s.remember && <Badge title="Keep me signed in was ticked">Remembered</Badge>}
                 </div>
                 <div className="text-xs text-muted">
                   <span className="num">{s.ip || "unknown IP"}</span> · signed in <span title={datetime(s.createdAt)}>{ago(s.createdAt)}</span> · active{" "}
                   <span title={datetime(s.lastSeen)}>{ago(s.lastSeen)}</span>
                 </div>
               </div>
+              {!s.current && (
+                <IconButton
+                  label={`Sign out ${describeUA(s.ua)}`}
+                  size="sm"
+                  variant="ghost"
+                  disabled={revokeOne.isPending && revokeOne.variables === s.id}
+                  onClick={() => revokeOne.mutate(s.id)}
+                >
+                  <LogOut />
+                </IconButton>
+              )}
             </li>
           ))}
         </ul>

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -90,9 +91,19 @@ type Candidate struct {
 	// (network_mode: container:<id>).
 	NetworkVia string `json:"networkVia,omitempty"`
 	Note       string `json:"note,omitempty"`
-	// Prowlarr only.
+	// Prowlarr (config.xml) and Plex (Preferences.xml) only.
 	ConfigPath     string `json:"configPath,omitempty"`
 	ConfigReadable bool   `json:"configReadable,omitempty"`
+	// configRoot is the /config bind source; configRel is ConfigPath
+	// below it, the part the container controls.
+	configRoot, configRel string
+}
+
+// setConfig points c at rel below the bind source root.
+func (c *Candidate) setConfig(root, rel string) {
+	c.configRoot, c.configRel = root, rel
+	c.ConfigPath = filepath.Join(root, rel)
+	c.ConfigReadable = readable(root, rel)
 }
 
 // Discovery is the result of GET /api/integrations/discover.
@@ -103,6 +114,7 @@ type Discovery struct {
 	} `json:"docker"`
 	Prowlarr     []Candidate `json:"prowlarr"`
 	Transmission []Candidate `json:"transmission"`
+	Plex         []Candidate `json:"plex"`
 	// TransmissionFromProwlarr is the Transmission client configured in
 	// Prowlarr (when Prowlarr is configured and reachable).
 	TransmissionFromProwlarr *TransmissionHint `json:"transmissionFromProwlarr,omitempty"`
@@ -117,8 +129,28 @@ type TransmissionHint struct {
 	Username string `json:"username"`
 }
 
-func discover(cs []dockerContainer) (prowlarr, transmission []Candidate) {
-	prowlarr, transmission = []Candidate{}, []Candidate{}
+// plexOthers are Plex companion tools whose images contain "plex" but are
+// not a server.
+var plexOthers = []string{"meta-manager", "kometa", "tautulli", "overseerr", "jellyseerr", "exporter", "plextraktsync", "autoscan", "ombi"}
+
+func isPlexServer(img string) bool {
+	if !strings.Contains(img, "plex") {
+		return false
+	}
+	for _, o := range plexOthers {
+		if strings.Contains(img, o) {
+			return false
+		}
+	}
+	return true
+}
+
+// plexPrefs are where images keep Preferences.xml inside /config
+// (linuxserver, plexinc and hotio use the first).
+var plexPrefs = []string{filepath.Join("Library", "Application Support", "Plex Media Server", "Preferences.xml"), "Preferences.xml"}
+
+func discover(cs []dockerContainer) (prowlarr, transmission, plex []Candidate) {
+	prowlarr, transmission, plex = []Candidate{}, []Candidate{}, []Candidate{}
 	for _, c := range cs {
 		img := strings.ToLower(c.Image)
 		switch {
@@ -126,13 +158,24 @@ func discover(cs []dockerContainer) (prowlarr, transmission []Candidate) {
 			cand := candidate(c, cs, 9696, "")
 			for _, m := range c.Mounts {
 				if m.Destination == "/config" && m.Type == "bind" && m.Source != "" {
-					cand.ConfigPath = filepath.Join(filepath.Clean(m.Source), "config.xml")
-					cand.ConfigReadable = readable(cand.ConfigPath)
+					cand.setConfig(filepath.Clean(m.Source), "config.xml")
 				}
 			}
 			prowlarr = append(prowlarr, cand)
 		case strings.Contains(img, "transmission") && !strings.Contains(img, "exporter"):
 			transmission = append(transmission, candidate(c, cs, 9091, "/transmission/rpc"))
+		case isPlexServer(img):
+			cand := candidate(c, cs, 32400, "")
+			for _, m := range c.Mounts {
+				if m.Destination != "/config" || m.Type != "bind" || m.Source == "" {
+					continue
+				}
+				// first readable wins; otherwise report the usual location
+				root := filepath.Clean(m.Source)
+				i := slices.IndexFunc(plexPrefs, func(rel string) bool { return readable(root, rel) })
+				cand.setConfig(root, plexPrefs[max(i, 0)])
+			}
+			plex = append(plex, cand)
 		}
 	}
 	return
@@ -155,6 +198,12 @@ func candidate(c dockerContainer, all []dockerContainer, port int, path string) 
 		}
 		cand.NetworkVia = netc.name()
 	}
+	// With host networking the service listens on the host directly.
+	if netc.HostConfig.NetworkMode == "host" {
+		cand.URL = "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) + path
+		cand.Note = fmt.Sprintf("Assumes the default port %d", port)
+		return cand
+	}
 	host, pub := "", 0
 	for _, p := range netc.Ports {
 		if p.PrivatePort == port && p.PublicPort > 0 && p.Type == "tcp" {
@@ -176,11 +225,12 @@ func candidate(c dockerContainer, all []dockerContainer, port int, path string) 
 	return cand
 }
 
-// readable reports whether the admin user can read the host file path
-// (checked with the admin's identity in container mode).
-func readable(path string) bool {
+// readable reports whether the admin user can read the config file rel
+// below the bind source root (checked with the admin's identity in
+// container mode).
+func readable(root, rel string) bool {
 	return host.AsUser(func() error {
-		f, err := openConfigFile(path)
+		f, err := openConfigFile(root, rel)
 		if err != nil {
 			return err
 		}
@@ -188,25 +238,71 @@ func readable(path string) bool {
 	}) == nil
 }
 
-// openConfigFile opens a container's config file given as a host path.
-// The file lives in a folder the container itself can write to, so it is
-// treated as hostile: the folder's symlinks are resolved inside the host
-// root (container mode), the file itself must not be a symlink (O_NOFOLLOW,
-// checked atomically on open rather than with a racy Lstat), O_NONBLOCK
-// keeps a FIFO from hanging the request, and the descriptor must be a
-// regular file. Callers run this with the admin's identity.
-func openConfigFile(path string) (*os.File, error) {
-	dir, err := host.Resolve(filepath.Dir(path))
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(filepath.Join(dir, filepath.Base(path)), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
-	if err != nil {
-		if errors.Is(err, syscall.ELOOP) {
-			return nil, errors.New("config.xml is a symbolic link")
+func isSymlink(p string) bool {
+	st, err := os.Lstat(p)
+	return err == nil && st.Mode()&os.ModeSymlink != 0
+}
+
+// readConfigSecret reads a secret from the config file rel below the bind
+// source root, as the admin user.
+func readConfigSecret(root, rel string, parse func(io.Reader) (string, error)) (secret string, err error) {
+	err = host.AsUser(func() error {
+		f, err := openConfigFile(root, rel)
+		if err != nil {
+			return err
 		}
+		defer f.Close()
+		secret, err = parse(io.LimitReader(f, 256<<10))
+		return err
+	})
+	return secret, err
+}
+
+// openConfigFile opens a container's config file: rel below root, the host
+// path of the container's /config bind mount. Everything below root is
+// writable by the container itself, so it is treated as hostile: root is
+// resolved inside the host root (container mode), then each component of
+// rel is opened relative to its parent with O_NOFOLLOW, so no symlink below
+// root is followed. Doing this with descriptors (openat) instead of Lstat
+// checks leaves no window to swap a folder for a link between check and
+// use. Only root itself, which the container can't replace, is resolved by
+// path. O_NONBLOCK keeps a FIFO from hanging the request, and the file must
+// be a regular file. Callers run this with the admin's identity.
+func openConfigFile(root, rel string) (*os.File, error) {
+	parts := strings.Split(filepath.Clean(rel), string(filepath.Separator))
+	if filepath.IsAbs(rel) || slices.Contains(parts, "..") || slices.Contains(parts, ".") {
+		return nil, errors.New("invalid config path")
+	}
+	dir, err := host.Resolve(root)
+	if err != nil {
 		return nil, err
 	}
+	fd, err := syscall.Open(dir, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: root, Err: err}
+	}
+	last := len(parts) - 1
+	for i, name := range parts {
+		flags := syscall.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_CLOEXEC
+		if i < last {
+			flags |= syscall.O_DIRECTORY
+		} else {
+			flags |= syscall.O_NONBLOCK | syscall.O_NOCTTY
+		}
+		next, err := syscall.Openat(fd, name, flags, 0)
+		syscall.Close(fd)
+		if err != nil {
+			sub := filepath.Join(parts[:i+1]...)
+			// Linux reports a symlinked folder as ENOTDIR; Lstat only
+			// picks the message.
+			if errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENOTDIR) && isSymlink(filepath.Join(dir, sub)) {
+				return nil, errors.New(name + " is a symbolic link")
+			}
+			return nil, &os.PathError{Op: "open", Path: filepath.Join(root, sub), Err: err}
+		}
+		fd = next
+	}
+	f := os.NewFile(uintptr(fd), filepath.Join(root, rel))
 	st, err := f.Stat()
 	if err != nil {
 		f.Close()
@@ -214,7 +310,7 @@ func openConfigFile(path string) (*os.File, error) {
 	}
 	if !st.Mode().IsRegular() {
 		f.Close()
-		return nil, errors.New("config.xml is not a regular file")
+		return nil, errors.New(parts[last] + " is not a regular file")
 	}
 	return f, nil
 }

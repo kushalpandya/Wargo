@@ -318,7 +318,11 @@ export function Layout() {
             </>
           )}
           <div className={cn(!collapsed && "ml-auto")}>
-            <ThemeMenu align="start" />
+            <Tooltip content={`${toggleLabel} (Ctrl+B)`} side="right">
+              <IconButton label={toggleLabel} size="sm" onClick={toggleCollapsed} aria-expanded={!collapsed}>
+                {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+              </IconButton>
+            </Tooltip>
           </div>
         </div>
         <div className="scroll-area flex-1 px-3 py-2">
@@ -327,14 +331,12 @@ export function Layout() {
         <div className="flex flex-col gap-0.5 border-t border-border p-3">
           <SideLink item={settingsItem} compact={collapsed} />
           <SignOut compact={collapsed} />
-          <div className={cn("mt-1 flex items-center", collapsed ? "justify-center" : "justify-between pl-3")}>
-            {!collapsed && <span className="num text-2xs text-subtle">v{caps?.version ?? ""}</span>}
-            <Tooltip content={`${toggleLabel} (Ctrl+B)`} side="right">
-              <IconButton label={toggleLabel} size="sm" onClick={toggleCollapsed} aria-expanded={!collapsed}>
-                {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
-              </IconButton>
-            </Tooltip>
-          </div>
+          {!collapsed && (
+            <div className="mt-1 flex items-center justify-between pl-3">
+              <span className="num text-2xs text-subtle">v{caps?.version ?? ""}</span>
+              <ThemeMenu align="start" />
+            </div>
+          )}
         </div>
       </aside>
 

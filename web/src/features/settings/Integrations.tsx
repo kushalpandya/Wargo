@@ -31,7 +31,7 @@ function Unavailable() {
   return (
     <div className="rounded-lg border border-dashed border-border-strong">
       <EmptyState icon={<Plug />} title="Integrations are not available in this build">
-        Prowlarr and Transmission settings will appear here.
+        Prowlarr, Transmission and Plex settings will appear here.
       </EmptyState>
     </div>
   );

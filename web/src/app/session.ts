@@ -50,6 +50,7 @@ export interface Capabilities {
   };
   prowlarr?: { available: boolean; configured: boolean; hasTransmissionClient: boolean; version?: string; error?: string };
   transmission?: { available: boolean; configured: boolean; version?: string; error?: string };
+  plex?: { available: boolean; configured: boolean; version?: string; error?: string };
   launcher?: { enabled: boolean; placement: "overview" | "page" };
   pkg?: { backend: string; available: boolean; distro: string };
   files?: {

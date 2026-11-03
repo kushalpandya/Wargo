@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -32,7 +33,10 @@ import (
 const (
 	SessionCookie = "wargo_session"
 	CSRFCookie    = "wargo_csrf"
-	CSRFHeader    = "X-Wargo-CSRF"
+	// DeviceCookie is a random id for this browser, kept across sign-ins
+	// so a new sign-in replaces the browser's earlier session.
+	DeviceCookie = "wargo_device"
+	CSRFHeader   = "X-Wargo-CSRF"
 )
 
 // Session methods.
@@ -53,6 +57,8 @@ type Session struct {
 	IP        string
 	UA        string
 	Method    string
+	// Remember: "Keep me signed in"; lasts SessionRemember since last use.
+	Remember bool
 }
 
 type ctxKey struct{}
@@ -64,9 +70,10 @@ func FromContext(ctx context.Context) *Session {
 }
 
 type pendingLogin struct {
-	ip      string
-	expires time.Time
-	fails   int
+	ip       string
+	expires  time.Time
+	fails    int
+	remember bool
 }
 
 // maxSecondFactorFails bounds TOTP/recovery guesses per password entry.
@@ -233,25 +240,128 @@ func (s *Service) OriginPatterns() []string {
 
 // ---- sessions ----
 
-func (s *Service) createSession(w http.ResponseWriter, r *http.Request, method string) (*Session, error) {
+// cookieLife is how long the browser keeps the cookies of a remembered
+// session: the browsers' upper limit. The server enforces the real expiry,
+// which moves forward while the session is used.
+const cookieLife = 400 * 24 * time.Hour
+
+// setCookie sets one of our cookies; an empty value clears it.
+func (s *Service) setCookie(w http.ResponseWriter, r *http.Request, name, value string, httpOnly bool, exp time.Time) {
+	c := &http.Cookie{Name: name, Value: value, Path: "/", HttpOnly: httpOnly, Secure: s.proxy.IsSecure(r),
+		SameSite: http.SameSiteStrictMode, Expires: exp}
+	if value == "" {
+		c.Expires, c.MaxAge = time.Time{}, -1
+	}
+	http.SetCookie(w, c)
+}
+
+// secureContext reports whether r can't be read on the network: HTTPS, or
+// a browser on this machine. "Keep me signed in" is only honoured there.
+func (s *Service) secureContext(r *http.Request) bool {
+	if s.proxy.IsSecure(r) || isLocalhost(r) {
+		return true
+	}
+	ip := net.ParseIP(s.proxy.ClientIP(r))
+	return ip != nil && ip.IsLoopback()
+}
+
+func (s *Service) createSession(w http.ResponseWriter, r *http.Request, method string, remember bool) (*Session, error) {
+	// A password-only session waiting for TOTP setup is never remembered,
+	// nor is one whose cookie travels over plain HTTP.
+	if method == MethodPassword && s.cfg.Auth.RequireTOTP || !s.secureContext(r) {
+		remember = false
+	}
 	tok := randToken(32)
 	now := time.Now()
+	exp := now.Add(s.cfg.Auth.SessionMax.Duration)
+	if remember {
+		exp = now.Add(s.cfg.Auth.SessionRemember.Duration)
+	}
 	sess := &Session{
 		IDHash: hashToken(tok), CSRF: randToken(24), CreatedAt: now, LastSeen: now,
-		ExpiresAt: now.Add(s.cfg.Auth.SessionMax.Duration), IP: s.proxy.ClientIP(r), UA: r.UserAgent(), Method: method,
+		ExpiresAt: exp, IP: s.proxy.ClientIP(r), UA: r.UserAgent(), Method: method, Remember: remember,
 	}
-	_, err := s.st.DB.ExecContext(r.Context(),
-		`INSERT INTO sessions(id_hash, csrf, created_at, last_seen, expires_at, ip, ua, method) VALUES(?,?,?,?,?,?,?,?)`,
-		sess.IDHash, sess.CSRF, now.Unix(), now.Unix(), sess.ExpiresAt.Unix(), sess.IP, sess.UA, method)
+	device := ""
+	if c, err := r.Cookie(DeviceCookie); err == nil && validDeviceID(c.Value) {
+		device = c.Value
+	} else {
+		device = randToken(16)
+	}
+	ctx := r.Context()
+	// This browser's earlier sessions go away; so do sessions from before
+	// devices were tracked from the same browser and address (a one-time
+	// cleanup), and every expired one.
+	replaced, _ := s.deleteSessions(ctx, `device = ? OR (device IS NULL AND ua = ? AND ip = ?)`, device, sess.UA, sess.IP)
+	s.pruneSessions(ctx)
+	_, err := s.st.DB.ExecContext(ctx,
+		`INSERT INTO sessions(id_hash, csrf, created_at, last_seen, expires_at, ip, ua, method, remember, device) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		sess.IDHash, sess.CSRF, now.Unix(), now.Unix(), sess.ExpiresAt.Unix(), sess.IP, sess.UA, method, remember, device)
 	if err != nil {
 		return nil, err
 	}
-	secure := s.proxy.IsSecure(r)
-	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Value: tok, Path: "/", HttpOnly: true, Secure: secure,
-		SameSite: http.SameSiteStrictMode, Expires: sess.ExpiresAt})
-	http.SetCookie(w, &http.Cookie{Name: CSRFCookie, Value: sess.CSRF, Path: "/", Secure: secure,
-		SameSite: http.SameSiteStrictMode, Expires: sess.ExpiresAt})
+	details := map[string]any{"remember": remember}
+	if replaced > 0 {
+		details["replaced"] = replaced
+	}
+	s.audit.Record(r, "auth.session", method, nil, details)
+	cookieExp := sess.ExpiresAt
+	if remember {
+		cookieExp = now.Add(cookieLife)
+	}
+	s.setCookie(w, r, SessionCookie, tok, true, cookieExp)
+	s.setCookie(w, r, CSRFCookie, sess.CSRF, false, cookieExp)
+	s.setCookie(w, r, DeviceCookie, device, true, now.Add(cookieLife))
 	return sess, nil
+}
+
+// validDeviceID accepts ids made by randToken(16) only.
+func validDeviceID(v string) bool {
+	if len(v) < 16 || len(v) > 64 {
+		return false
+	}
+	for _, c := range v {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// deleteSessions deletes the sessions matching cond, forgets their
+// in-memory last use and returns how many went.
+func (s *Service) deleteSessions(ctx context.Context, cond string, args ...any) (int, error) {
+	rows, err := s.st.DB.QueryContext(ctx, `DELETE FROM sessions WHERE `+cond+` RETURNING id_hash`, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var gone []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return len(gone), err
+		}
+		gone = append(gone, h)
+	}
+	s.mu.Lock()
+	for _, h := range gone {
+		delete(s.lastSeen, h)
+	}
+	s.mu.Unlock()
+	return len(gone), rows.Err()
+}
+
+func (s *Service) deleteSession(ctx context.Context, h string) {
+	s.deleteSessions(ctx, `id_hash = ?`, h)
+}
+
+// pruneSessions deletes sessions that expired or sat idle too long. The
+// idle limit gets a minute's margin: last_seen in the database lags the
+// in-memory value by up to that much.
+func (s *Service) pruneSessions(ctx context.Context) {
+	now := time.Now()
+	s.deleteSessions(ctx, `expires_at < ? OR (remember = 0 AND last_seen < ?)`,
+		now.Unix(), now.Add(-s.cfg.Auth.SessionIdle.Duration-time.Minute).Unix())
 }
 
 func (s *Service) lookup(r *http.Request) (*Session, error) {
@@ -263,8 +373,8 @@ func (s *Service) lookup(r *http.Request) (*Session, error) {
 	var sess Session
 	var created, last, exp int64
 	err = s.st.DB.QueryRowContext(r.Context(),
-		`SELECT id_hash, csrf, created_at, last_seen, expires_at, COALESCE(ip,''), COALESCE(ua,''), method FROM sessions WHERE id_hash = ?`, h).
-		Scan(&sess.IDHash, &sess.CSRF, &created, &last, &exp, &sess.IP, &sess.UA, &sess.Method)
+		`SELECT id_hash, csrf, created_at, last_seen, expires_at, COALESCE(ip,''), COALESCE(ua,''), method, remember FROM sessions WHERE id_hash = ?`, h).
+		Scan(&sess.IDHash, &sess.CSRF, &created, &last, &exp, &sess.IP, &sess.UA, &sess.Method, &sess.Remember)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, httpx.ErrUnauthorized
 	}
@@ -278,8 +388,13 @@ func (s *Service) lookup(r *http.Request) (*Session, error) {
 		sess.LastSeen = t
 	}
 	s.mu.Unlock()
-	if now.After(sess.ExpiresAt) || now.Sub(sess.LastSeen) > s.cfg.Auth.SessionIdle.Duration {
-		s.st.DB.Exec(`DELETE FROM sessions WHERE id_hash = ?`, h)
+	idle, hardEnd := s.cfg.Auth.SessionIdle.Duration, sess.ExpiresAt
+	if sess.Remember {
+		idle = s.cfg.Auth.SessionRemember.Duration
+		hardEnd = sess.CreatedAt.Add(s.cfg.Auth.SessionRememberMax.Duration)
+	}
+	if now.After(sess.ExpiresAt) || now.After(hardEnd) || now.Sub(sess.LastSeen) > idle {
+		s.deleteSession(r.Context(), h)
 		return nil, httpx.Errorf(http.StatusUnauthorized, "session_expired", "Session expired")
 	}
 	// Persist last_seen at most once a minute; keep finer value in memory.
@@ -287,7 +402,15 @@ func (s *Service) lookup(r *http.Request) (*Session, error) {
 	s.lastSeen[h] = now
 	s.mu.Unlock()
 	if now.Sub(sess.LastSeen) > time.Minute || now.Sub(time.Unix(last, 0)) > time.Minute {
-		s.st.DB.Exec(`UPDATE sessions SET last_seen = ? WHERE id_hash = ?`, now.Unix(), h)
+		if sess.Remember {
+			// A remembered session lasts SessionRemember from its last
+			// use, up to SessionRememberMax after sign-in.
+			sess.ExpiresAt = now.Add(s.cfg.Auth.SessionRemember.Duration)
+			if sess.ExpiresAt.After(hardEnd) {
+				sess.ExpiresAt = hardEnd
+			}
+		}
+		s.st.DB.Exec(`UPDATE sessions SET last_seen = ?, expires_at = ? WHERE id_hash = ?`, now.Unix(), sess.ExpiresAt.Unix(), h)
 	}
 	return &sess, nil
 }
@@ -297,11 +420,10 @@ func (s *Service) devSession() *Session {
 }
 
 // limited reports whether the session must finish TOTP enrolment first.
-func (s *Service) limited(ctx context.Context, sess *Session) bool {
-	if sess.Method != MethodPassword || !s.cfg.Auth.RequireTOTP {
-		return false
-	}
-	return !s.totpEnabled(ctx)
+// Enabling TOTP upgrades the session that did it and deletes every other
+// password-only one, so this doesn't depend on whether TOTP is on now.
+func (s *Service) limited(sess *Session) bool {
+	return sess.Method == MethodPassword && s.cfg.Auth.RequireTOTP
 }
 
 // limitedRoutes are the only endpoints a password-only session may use
@@ -344,7 +466,7 @@ func (s *Service) Require(next http.Handler) http.Handler {
 				httpx.Fail(w, r, httpx.Errorf(http.StatusForbidden, "csrf", "Missing or invalid CSRF token"))
 				return
 			}
-			if s.limited(r.Context(), sess) && !limitedRoutes[r.Method+" "+r.URL.Path] {
+			if s.limited(sess) && !limitedRoutes[r.Method+" "+r.URL.Path] {
 				httpx.Fail(w, r, httpx.Errorf(http.StatusForbidden, "totp_setup_required", "Set up two-factor authentication to continue"))
 				return
 			}
@@ -404,6 +526,7 @@ func (s *Service) checkPassword(r *http.Request, username, password string) erro
 type loginReq struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Remember bool   `json:"remember"`
 }
 
 // RegisterPublic mounts endpoints reachable without a session.
@@ -429,6 +552,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/auth/passkeys/{id}", httpx.Handler(s.handlePasskeyDelete))
 	mux.HandleFunc("GET /api/auth/sessions", httpx.Handler(s.handleSessions))
 	mux.HandleFunc("POST /api/auth/sessions/revoke-others", httpx.Handler(s.handleRevokeOthers))
+	mux.HandleFunc("DELETE /api/auth/sessions/{id}", httpx.Handler(s.handleRevoke))
 }
 
 func (s *Service) handleState(w http.ResponseWriter, r *http.Request) error {
@@ -446,17 +570,18 @@ func (s *Service) handleState(w http.ResponseWriter, r *http.Request) error {
 		"pam":           passwordAvailable(),
 		"container":     host.Container(),
 		"passkeys":      n > 0,
-		"secure":        s.proxy.IsSecure(r) || isLocalhost(r),
+		"secure":        s.secureContext(r),
 	})
 	return nil
 }
 
+// isLocalhost reports whether the browser addressed this machine itself.
 func isLocalhost(r *http.Request) bool {
-	h := r.Host
-	if i := strings.LastIndex(h, ":"); i > 0 {
-		h = h[:i]
+	h := requestHostname(r)
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
 	}
-	return h == "localhost" || h == "127.0.0.1" || h == "[::1]"
+	return h == "localhost"
 }
 
 var errBadOrigin = httpx.Errorf(http.StatusForbidden, "bad_origin", "Cross-origin request rejected")
@@ -500,12 +625,12 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) error {
 		tok := randToken(24)
 		s.mu.Lock()
 		s.gcPending()
-		s.pending[tok] = pendingLogin{ip: s.proxy.ClientIP(r), expires: time.Now().Add(5 * time.Minute)}
+		s.pending[tok] = pendingLogin{ip: s.proxy.ClientIP(r), expires: time.Now().Add(5 * time.Minute), remember: req.Remember}
 		s.mu.Unlock()
 		httpx.OK(w, map[string]any{"next": "second-factor", "token": tok})
 		return nil
 	}
-	if _, err := s.createSession(w, r, MethodPassword); err != nil {
+	if _, err := s.createSession(w, r, MethodPassword, req.Remember); err != nil {
 		return err
 	}
 	s.throttle.Success(s.proxy.ClientIP(r))
@@ -572,7 +697,7 @@ func (s *Service) handleSecondFactor(w http.ResponseWriter, r *http.Request) err
 	s.mu.Lock()
 	delete(s.pending, req.Token)
 	s.mu.Unlock()
-	if _, err := s.createSession(w, r, method); err != nil {
+	if _, err := s.createSession(w, r, method, p.remember); err != nil {
 		return err
 	}
 	httpx.OK(w, map[string]any{"next": "done"})
@@ -584,11 +709,10 @@ func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) error {
 		return errBadOrigin
 	}
 	if c, err := r.Cookie(SessionCookie); err == nil {
-		s.st.DB.ExecContext(r.Context(), `DELETE FROM sessions WHERE id_hash = ?`, hashToken(c.Value))
+		s.deleteSession(r.Context(), hashToken(c.Value))
 	}
-	for _, n := range []string{SessionCookie, CSRFCookie} {
-		http.SetCookie(w, &http.Cookie{Name: n, Value: "", Path: "/", MaxAge: -1})
-	}
+	s.setCookie(w, r, SessionCookie, "", true, time.Time{})
+	s.setCookie(w, r, CSRFCookie, "", false, time.Time{})
 	httpx.OK(w, map[string]bool{"ok": true})
 	return nil
 }
@@ -606,7 +730,7 @@ func (s *Service) handleMe(w http.ResponseWriter, r *http.Request) error {
 		"dev":               sess.Method == MethodDev,
 		"csrf":              sess.CSRF,
 		"totpEnabled":       s.totpEnabled(r.Context()),
-		"totpSetupRequired": s.limited(r.Context(), sess),
+		"totpSetupRequired": s.limited(sess),
 		"passkeys":          n,
 		"recoveryCodesLeft": codes,
 		"expiresAt":         sess.ExpiresAt,
@@ -616,8 +740,9 @@ func (s *Service) handleMe(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Service) handleSessions(w http.ResponseWriter, r *http.Request) error {
 	cur := FromContext(r.Context())
+	s.pruneSessions(r.Context())
 	rows, err := s.st.DB.QueryContext(r.Context(),
-		`SELECT id_hash, created_at, last_seen, COALESCE(ip,''), COALESCE(ua,''), method FROM sessions ORDER BY last_seen DESC`)
+		`SELECT id_hash, created_at, last_seen, COALESCE(ip,''), COALESCE(ua,''), method, remember FROM sessions ORDER BY last_seen DESC`)
 	if err != nil {
 		return err
 	}
@@ -630,12 +755,13 @@ func (s *Service) handleSessions(w http.ResponseWriter, r *http.Request) error {
 		UA       string    `json:"ua"`
 		Method   string    `json:"method"`
 		Current  bool      `json:"current"`
+		Remember bool      `json:"remember"`
 	}
 	res := []out{}
 	for rows.Next() {
 		var o out
 		var c, l int64
-		if err := rows.Scan(&o.ID, &c, &l, &o.IP, &o.UA, &o.Method); err != nil {
+		if err := rows.Scan(&o.ID, &c, &l, &o.IP, &o.UA, &o.Method, &o.Remember); err != nil {
 			return err
 		}
 		o.Created, o.LastSeen = time.Unix(c, 0), time.Unix(l, 0)
@@ -647,15 +773,51 @@ func (s *Service) handleSessions(w http.ResponseWriter, r *http.Request) error {
 	return rows.Err()
 }
 
-func (s *Service) handleRevokeOthers(w http.ResponseWriter, r *http.Request) error {
+// handleRevoke signs out one other session, by the short id from the list.
+func (s *Service) handleRevoke(w http.ResponseWriter, r *http.Request) error {
+	id := r.PathValue("id")
+	if !shortSessionID(id) {
+		return httpx.BadRequest("invalid session id")
+	}
 	cur := FromContext(r.Context())
-	res, err := s.st.DB.ExecContext(r.Context(), `DELETE FROM sessions WHERE id_hash != ?`, cur.IDHash)
+	if strings.HasPrefix(cur.IDHash, id) {
+		return httpx.BadRequest("use Sign out to end this session")
+	}
+	// Hashes are lowercase hex, so prefix+"g" sorts after every hash
+	// starting with prefix: a range the primary key index can serve.
+	n, err := s.deleteSessions(r.Context(), `id_hash >= ? AND id_hash < ?`, id, id+"g")
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	if n == 0 {
+		return httpx.ErrNotFound
+	}
+	s.audit.Record(r, "auth.revoke_session", id, nil, nil)
+	httpx.OK(w, map[string]bool{"ok": true})
+	return nil
+}
+
+// shortSessionID accepts the 12 lowercase hex characters the list shows.
+func shortSessionID(id string) bool {
+	if len(id) != 12 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) handleRevokeOthers(w http.ResponseWriter, r *http.Request) error {
+	cur := FromContext(r.Context())
+	n, err := s.deleteSessions(r.Context(), `id_hash != ?`, cur.IDHash)
+	if err != nil {
+		return err
+	}
 	s.audit.Record(r, "auth.revoke_sessions", fmt.Sprint(n), nil, nil)
-	httpx.OK(w, map[string]int64{"revoked": n})
+	httpx.OK(w, map[string]int{"revoked": n})
 	return nil
 }
 

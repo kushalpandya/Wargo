@@ -50,7 +50,12 @@ This section describes the native install. See
   - OS update checks, which contact your distro's package mirrors in the
     background, daily by default. Change or turn them off in
     Settings → General;
-  - launcher health checks and the integrations you set up.
+  - launcher health checks and the integrations you set up (Prowlarr,
+    Transmission and Plex). Plex is only contacted at the address you
+    configure, read only: a health check about every 30 seconds while
+    Wargo is open in a browser, activity while Home's feed is open (at most
+    every 10 seconds, failures included), and posters (cached in the
+    browser for a day).
 - **System → Events** reads the systemd journal on the server (as your
   account natively, as root in container mode), Docker's recent event
   history, and Wargo's own audit log. Nothing is sent anywhere.
@@ -89,8 +94,22 @@ This section describes the native install. See
 - Once you have a second factor, a password alone never signs you in.
 - Sessions use 256-bit random tokens, stored only as SHA-256 hashes, in
   `HttpOnly; Secure; SameSite=Strict` cookies. They end after 30 minutes of
-  inactivity or 12 hours in total (both adjustable). You can review and end
-  sessions in Settings → Security.
+  inactivity or 12 hours in total (both adjustable). With **Keep me signed
+  in** ticked at sign-in, a session instead ends after 30 days unused
+  (`auth.session_remember`) or 90 days after sign-in
+  (`auth.session_remember_max`), whichever comes first; admin actions still
+  ask for approval every time. Its cookies are kept by the browser for up to
+  400 days (the browsers' limit), but the server enforces the real expiry.
+  **Keep me signed in** only applies over HTTPS or from the machine itself
+  (`localhost`); on plain HTTP across a network the session ends as usual.
+  A password-only session that still has to set up two-factor
+  authentication is never remembered, and enabling two-factor
+  authentication ends every other such session.
+- Signing in again from the same browser replaces its earlier session,
+  through a random device id in an `HttpOnly` cookie. Sessions from before
+  device ids existed are cleaned up once, by matching browser and address.
+  You can review and end sessions, one by one or all others, in Settings →
+  Security.
 - Cross-site request protection: every request that changes something must
   carry the session's token in `X-Wargo-CSRF` and, if present, an allowed
   `Origin`. WebSocket connections check `Origin` against the request's host
@@ -193,11 +212,22 @@ differently from a native install:
 
 ## Integrations
 
-API keys and passwords (Prowlarr, Transmission) are stored encrypted with
-AES-256-GCM, using a key unique to each install in `<data_dir>/secret.key`
-(readable only by Wargo), and are never sent to the browser. Prowlarr
-download links contain the API key, so Wargo keeps them on the server and
-gives the browser only anonymous result IDs.
+API keys, passwords and tokens (Prowlarr, Transmission, Plex) are stored
+encrypted with AES-256-GCM, using a key unique to each install in
+`<data_dir>/secret.key` (readable only by Wargo), and are never sent to the
+browser or written to the audit log. Prowlarr download links contain the API
+key, so Wargo keeps them on the server and gives the browser only anonymous
+result IDs. A saved secret is only sent to the server it was saved for
+(same scheme, host and port): testing another address needs the secret
+entered again, and saving another address without one clears it.
+
+"Import" reads a secret from a container's config folder only for a
+container Wargo detected itself (Prowlarr's `config.xml`, Plex's
+`Preferences.xml` from its `/config` mount), as your account. Nothing below
+the mount's folder is followed if it is a symbolic link, neither the file
+nor any folder on the way (each is opened relative to the previous one, so
+it can't be swapped for a link in between). Plex posters are fetched by Wargo and only for Plex
+library image paths, so the browser never needs the Plex token.
 
 ## Audit log
 
@@ -243,8 +273,8 @@ Highlights of what was fixed:
   sent along a redirect to another host; compose labels inherited from an
   image are ignored for updates.
 - Files: hangs on pipes and devices, rename races, trash loops with long
-  names, upload and zip limits; config imports open files without following
-  symlinks.
+  names, upload and zip limits; config imports don't follow symlinks anywhere
+  below the container's config folder.
 - Limited growth: the audit log keeps 180 days or 50,000 entries at most, and
   fields, event and job buffers have size limits.
 - Builds: release binaries need only glibc 2.28 and libpam; CI actions are
