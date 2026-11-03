@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Suspense, useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { Dialog as D } from "radix-ui";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
   FolderTree,
@@ -12,7 +12,7 @@ import {
   LayoutGrid,
   LogOut,
   Menu as MenuIcon,
-  Monitor,
+  Contrast,
   Moon,
   PackageCheck,
   PanelLeftClose,
@@ -28,8 +28,9 @@ import { setTheme, useThemeMode, type ThemeMode } from "@/lib/theme";
 import { useSocketStatus } from "@/lib/ws";
 import { useCapabilities, useMe } from "./session";
 import { Logo } from "./Logo";
+import { PageSlotsContext } from "./pageSlots";
 import { UpdatesBadge } from "@/features/updates/UpdatesBadge";
-import { Menu, MenuItem, MenuLabel, MenuSeparator, Tooltip } from "@/components/ui/menu";
+import { Menu, MenuItem, MenuLabel, Tooltip } from "@/components/ui/menu";
 import { IconButton } from "@/components/ui/button";
 import { Badge, Spinner, StatusDot } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
@@ -72,15 +73,14 @@ function SideLink({ item, compact, onNavigate }: { item: NavItem; compact?: bool
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          "group relative flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[0.8125rem] font-medium transition-colors [&_svg]:size-4 [&_svg]:shrink-0",
+          "group relative flex h-9 items-center gap-3 rounded-md px-3 text-ui font-medium transition-colors [&_svg]:size-[1.125rem] [&_svg]:shrink-0",
           compact && "justify-center px-0",
-          isActive ? "bg-surface-3 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
+          isActive ? "bg-accent-soft font-semibold text-fg" : "text-muted hover:bg-surface-3 hover:text-fg",
         )
       }
     >
       {({ isActive }) => (
         <>
-          {isActive && <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent" aria-hidden="true" />}
           <span className={cn(isActive ? "text-accent" : "text-subtle group-hover:text-muted")}>{item.icon}</span>
           <span className={cn(compact && "sr-only")}>{item.label}</span>
           {item.badge && <span className={cn(compact ? "absolute right-1 top-0.5 scale-90" : "ml-auto")}>{item.badge}</span>}
@@ -109,14 +109,16 @@ function NavLinks({ compact, onNavigate }: { compact?: boolean; onNavigate?: () 
 
 const settingsItem: NavItem = { to: "/settings", label: "Settings", icon: <Settings2 /> };
 
-const themeIcon: Record<ThemeMode, ReactNode> = { auto: <Monitor />, light: <Sun />, dark: <Moon /> };
+// Auto uses a half-filled circle, like the appearance control on Apple devices.
+const themeIcon: Record<ThemeMode, ReactNode> = { auto: <Contrast />, light: <Sun />, dark: <Moon /> };
 
-function ThemeMenu() {
+function ThemeMenu({ align = "end" }: { align?: "start" | "end" }) {
   const mode = useThemeMode();
   return (
     <Menu
+      align={align}
       trigger={
-        <IconButton label={`Theme: ${mode}`} size="sm">
+        <IconButton label={`Theme: ${mode === "auto" ? "match system" : mode}`} size="sm">
           {themeIcon[mode]}
         </IconButton>
       }
@@ -131,7 +133,8 @@ function ThemeMenu() {
   );
 }
 
-function UserMenu() {
+/** Sign out, styled like a sidebar link. */
+function SignOut({ compact }: { compact?: boolean }) {
   const { data: me } = useMe();
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -148,46 +151,105 @@ function UserMenu() {
     qc.clear();
     nav("/login", { replace: true });
   };
-  const initial = (me?.user ?? "?").slice(0, 1).toUpperCase();
-  return (
-    <Menu
-      trigger={
-        <button
-          aria-label="Account menu"
-          className="flex size-7 items-center justify-center rounded-full border border-border-strong bg-surface-3 text-xs font-semibold text-fg hover:border-accent"
-        >
-          {initial}
-        </button>
-      }
+  const btn = (
+    <button
+      type="button"
+      onClick={logout}
+      disabled={me?.dev}
+      className={cn(
+        "flex h-9 w-full items-center gap-3 rounded-md px-3 text-ui font-medium text-muted transition-colors hover:bg-surface-3 hover:text-fg disabled:opacity-50 [&_svg]:size-[1.125rem] [&_svg]:shrink-0 [&_svg]:text-subtle",
+        compact && "justify-center px-0",
+      )}
+      title={me?.user ? `Signed in as ${me.user}` : undefined}
     >
-      <MenuLabel>
-        Signed in as <span className="normal-case text-fg">{me?.user}</span>
-      </MenuLabel>
-      <MenuItem icon={<Settings2 />} onSelect={() => nav("/settings")}>
-        Settings
-      </MenuItem>
-      <MenuSeparator />
-      <MenuItem icon={<LogOut />} onSelect={logout} disabled={me?.dev}>
-        Sign out
-      </MenuItem>
-    </Menu>
+      <LogOut />
+      <span className={cn(compact && "sr-only")}>Sign out</span>
+    </button>
+  );
+  if (!compact) return btn;
+  return (
+    <Tooltip content="Sign out" side="right">
+      <div>{btn}</div>
+    </Tooltip>
   );
 }
 
-function ConnectionStatus() {
-  const s = useSocketStatus();
-  const { data: info } = useQuery({
-    queryKey: ["system", "info"],
-    queryFn: () => api.get<{ hostname: string; os: string }>("/api/system/info"),
-    staleTime: Infinity,
-  });
-  const tone = s === "open" ? "ok" : s === "connecting" ? "warn" : "crit";
-  const label = s === "open" ? "Live" : s === "connecting" ? "Connecting" : "Offline";
+const subscribeOnline = (l: () => void) => {
+  window.addEventListener("online", l);
+  window.addEventListener("offline", l);
+  return () => {
+    window.removeEventListener("online", l);
+    window.removeEventListener("offline", l);
+  };
+};
+const isOnline = () => navigator.onLine;
+
+/**
+ * Shown only while the live connection (/ws/events) is down, so a healthy
+ * session has no indicator at all. A short grace period keeps the first
+ * connect and quick reconnects from flashing it.
+ */
+function ConnectionPill() {
+  const status = useSocketStatus();
+  const online = useSyncExternalStore(subscribeOnline, isOnline);
+  const down = status !== "open";
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (!down) {
+      setShow(false);
+      return;
+    }
+    const t = window.setTimeout(() => setShow(true), 2000);
+    return () => window.clearTimeout(t);
+  }, [down]);
+  // The live region stays mounted so screen readers announce the change.
   return (
-    <div className="flex min-w-0 items-center gap-2 text-xs text-muted" title={`${label} · ${info?.os ?? ""}`}>
-      <StatusDot tone={tone} label={label} pulse={s === "connecting"} />
-      <span className="num truncate">{info?.hostname ?? "…"}</span>
+    <div role="status" className="contents">
+      {show && down && (
+        <Badge tone={online ? "warn" : "crit"} title="Live updates are paused until the connection is back">
+          <StatusDot tone={online ? "warn" : "crit"} pulse={online} />
+          {online ? "Reconnecting…" : "Offline"}
+        </Badge>
+      )}
     </div>
+  );
+}
+
+/**
+ * Sticky top bar: transparent over the page background until the page
+ * scrolls. It owns the scroll state so scrolling re-renders only the bar.
+ */
+function TopBar({
+  onOpenNav,
+  titleRef,
+  actionsRef,
+}: {
+  onOpenNav: () => void;
+  titleRef: (el: HTMLDivElement | null) => void;
+  actionsRef: (el: HTMLDivElement | null) => void;
+}) {
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 2);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  return (
+    <header
+      className={cn(
+        "sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b px-3 transition-[background-color,border-color] duration-200 sm:px-5 lg:px-7",
+        scrolled ? "border-border bg-bg/75 backdrop-blur-md" : "border-transparent",
+      )}
+    >
+      <IconButton label="Open navigation" className="md:hidden" onClick={onOpenNav}>
+        <MenuIcon />
+      </IconButton>
+      {/* The current page's title and actions (PageHeader) land here. */}
+      <div ref={titleRef} className="min-w-0 flex-1" />
+      <ConnectionPill />
+      <div ref={actionsRef} className="flex shrink-0 items-center gap-2 max-md:hidden" />
+    </header>
   );
 }
 
@@ -212,6 +274,9 @@ function useSidebarCollapsed(): [boolean, () => void] {
 
 export function Layout() {
   const [drawer, setDrawer] = useState(false);
+  const [titleSlot, setTitleSlot] = useState<HTMLDivElement | null>(null);
+  const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
+  const slots = useMemo(() => ({ title: titleSlot, actions: actionsSlot }), [titleSlot, actionsSlot]);
   const [collapsed, toggleCollapsed] = useSidebarCollapsed();
   const loc = useLocation();
   const { data: me } = useMe();
@@ -235,33 +300,34 @@ export function Layout() {
   const toggleLabel = collapsed ? "Expand sidebar" : "Collapse sidebar";
 
   return (
-    <div className="flex min-h-dvh">
+    <PageSlotsContext.Provider value={slots}>
+    <div className="wargo-canvas flex min-h-dvh">
       <aside
         className={cn(
           "sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200 md:flex",
-          collapsed ? "w-14" : "w-52",
+          collapsed ? "w-[4.25rem]" : "w-60",
         )}
         aria-label="Sidebar"
       >
-        <div className={cn("flex h-12 items-center gap-2 border-b border-border", collapsed ? "justify-center px-0" : "px-3.5")}>
-          <Logo className="size-6 shrink-0" />
+        <div className={cn("flex items-center gap-2.5", collapsed ? "flex-col justify-center gap-1 py-3" : "h-16 px-4")}>
+          <Logo className="size-8 shrink-0" />
           {!collapsed && (
             <>
-              <span className="text-[0.9375rem] font-semibold tracking-tight">Wargo</span>
-              {me?.dev && (
-                <Badge tone="warn" className="ml-auto">
-                  Dev
-                </Badge>
-              )}
+              <span className="text-lg font-bold tracking-tight">Wargo</span>
+              {me?.dev && <Badge tone="warn">Dev</Badge>}
             </>
           )}
+          <div className={cn(!collapsed && "ml-auto")}>
+            <ThemeMenu align="start" />
+          </div>
         </div>
-        <div className="scroll-area flex-1 p-2">
+        <div className="scroll-area flex-1 px-3 py-2">
           <NavLinks compact={collapsed} />
         </div>
-        <div className="flex flex-col gap-0.5 border-t border-border p-2">
+        <div className="flex flex-col gap-0.5 border-t border-border p-3">
           <SideLink item={settingsItem} compact={collapsed} />
-          <div className={cn("mt-1 flex items-center", collapsed ? "justify-center" : "justify-between pl-2.5")}>
+          <SignOut compact={collapsed} />
+          <div className={cn("mt-1 flex items-center", collapsed ? "justify-center" : "justify-between pl-3")}>
             {!collapsed && <span className="num text-2xs text-subtle">v{caps?.version ?? ""}</span>}
             <Tooltip content={`${toggleLabel} (Ctrl+B)`} side="right">
               <IconButton label={toggleLabel} size="sm" onClick={toggleCollapsed} aria-expanded={!collapsed}>
@@ -276,20 +342,24 @@ export function Layout() {
       <D.Root open={drawer} onOpenChange={setDrawer}>
         <D.Portal>
           <D.Overlay className="fixed inset-0 z-50 bg-overlay md:hidden" />
-          <D.Content className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-surface pb-[env(safe-area-inset-bottom)] focus:outline-none md:hidden">
+          <D.Content className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-border bg-surface pb-[env(safe-area-inset-bottom)] shadow-pop focus:outline-none md:hidden">
             <D.Title className="sr-only">Navigation</D.Title>
             <D.Description className="sr-only">Main navigation</D.Description>
-            <div className="flex h-12 items-center gap-2 border-b border-border px-3.5">
-              <Logo className="size-6" />
-              <span className="text-[0.9375rem] font-semibold">Wargo</span>
-              <D.Close className="ml-auto rounded p-1 text-subtle hover:text-fg" aria-label="Close navigation">
+            <div className="flex h-16 items-center gap-2.5 px-4">
+              <Logo className="size-8" />
+              <span className="text-lg font-bold tracking-tight">Wargo</span>
+              <div className="ml-auto">
+                <ThemeMenu align="start" />
+              </div>
+              <D.Close className="rounded p-1 text-subtle hover:text-fg" aria-label="Close navigation">
                 <X className="size-4" />
               </D.Close>
             </div>
-            <div className="scroll-area flex-1 p-2">
+            <div className="scroll-area flex-1 px-3 py-2">
               <NavLinks onNavigate={() => setDrawer(false)} />
-              <div className="mt-4 border-t border-border pt-2">
+              <div className="mt-4 border-t border-border pt-3">
                 <SideLink item={settingsItem} onNavigate={() => setDrawer(false)} />
+                <SignOut />
               </div>
             </div>
           </D.Content>
@@ -297,22 +367,8 @@ export function Layout() {
       </D.Root>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-2 border-b border-border bg-bg/85 px-3 backdrop-blur-md sm:px-4">
-          <IconButton label="Open navigation" className="md:hidden" onClick={() => setDrawer(true)}>
-            <MenuIcon />
-          </IconButton>
-          <div className="flex items-center gap-2 md:hidden">
-            <Logo className="size-5" />
-            <span className="font-semibold">Wargo</span>
-          </div>
-          <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
-            <ConnectionStatus />
-            <div className="h-4 w-px bg-border" />
-            <ThemeMenu />
-            <UserMenu />
-          </div>
-        </header>
-        <main id="main" className="min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-5 lg:px-6">
+        <TopBar onOpenNav={() => setDrawer(true)} titleRef={setTitleSlot} actionsRef={setActionsSlot} />
+        <main id="main" className="@container/main min-w-0 flex-1 px-3 pb-8 pt-1 sm:px-5 lg:px-7">
           {/* Per-route boundary: a crashing page keeps the shell usable. */}
           <ErrorBoundary resetKey={loc.pathname}>
             <Suspense
@@ -328,5 +384,6 @@ export function Layout() {
         </main>
       </div>
     </div>
+    </PageSlotsContext.Provider>
   );
 }

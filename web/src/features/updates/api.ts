@@ -91,10 +91,10 @@ export interface Precheck {
 export const statusKey = ["pkg", "backend"] as const;
 
 /** Backend status, kept live through the sticky "pkg" topic. */
-export function usePkgStatus() {
+export function usePkgStatus({ enabled = true }: { enabled?: boolean } = {}) {
   const qc = useQueryClient();
-  useTopic<PkgStatus>("pkg", (s) => qc.setQueryData(statusKey, s));
-  return useQuery({ queryKey: statusKey, queryFn: () => api.get<PkgStatus>("/api/pkg/backend"), staleTime: 60_000 });
+  useTopic<PkgStatus>(enabled ? "pkg" : null, (s) => qc.setQueryData(statusKey, s));
+  return useQuery({ queryKey: statusKey, queryFn: () => api.get<PkgStatus>("/api/pkg/backend"), enabled, staleTime: 60_000 });
 }
 
 /** Number of pending repo updates from the last manual check (0 if stale/unknown). */

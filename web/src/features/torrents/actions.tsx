@@ -173,7 +173,7 @@ export function IndexerPicker({ indexers, value, onChange }: { indexers: Indexer
         <button
           type="button"
           aria-label={`Indexers: ${label}`}
-          className="inline-flex h-9 min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 text-[0.8125rem] text-fg hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/25"
+          className="inline-flex h-9 min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 text-ui text-fg hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/25"
         >
           <span className="truncate">{label}</span>
           <ChevronDown className="size-3.5 shrink-0 text-subtle" />
@@ -184,7 +184,7 @@ export function IndexerPicker({ indexers, value, onChange }: { indexers: Indexer
           <button
             type="button"
             onClick={() => onChange([])}
-            className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-[0.8125rem] hover:bg-surface-3"
+            className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-ui hover:bg-surface-3"
           >
             <Check className={cn("size-3.5", all ? "text-accent" : "invisible")} />
             All enabled indexers

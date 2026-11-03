@@ -24,6 +24,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
+	"github.com/kushalpandya/wargo/internal/schedule"
 	"github.com/kushalpandya/wargo/internal/server"
 )
 
@@ -120,6 +121,9 @@ type Service struct {
 	lastRun  *RunRecord
 	reboot   Reboot
 	rebootAt time.Time
+
+	// sched is the background check interval (Settings → General).
+	sched *schedule.Hours
 }
 
 // New builds the service. Set WARGO_PKG_FAKE=1 (development only) to
@@ -128,7 +132,9 @@ func New(d *server.Deps) *Service {
 	s := &Service{
 		d: d, osr: readOSRelease(), run: ExecRunner(5 * time.Minute),
 		dataDir: filepath.Join(d.Cfg.DataDir, "pkg"), ctx: context.Background(),
+		sched: newSchedule(),
 	}
+	s.sched.Store, s.sched.Audit = d.Store, d.Audit
 	if host.Container() {
 		// The upgrade unit runs on the host and appends to its log there;
 		// Wargo reads it through the host mount.
@@ -257,6 +263,7 @@ func (s *Service) Run(ctx context.Context) {
 		}
 	}
 	s.publish()
+	go s.autoCheck(ctx)
 	<-ctx.Done()
 }
 
@@ -271,6 +278,8 @@ func (s *Service) Register(mux *http.ServeMux) {
 		httpx.OK(w, last)
 	})
 	mux.HandleFunc("POST /api/pkg/check", httpx.Handler(s.handleCheck))
+	mux.HandleFunc("GET /api/pkg/settings", httpx.Handler(s.sched.HandleGet))
+	mux.HandleFunc("PUT /api/pkg/settings", httpx.Handler(s.sched.HandlePut))
 	mux.HandleFunc("GET /api/pkg/precheck", httpx.Handler(s.handlePrecheck))
 	mux.HandleFunc("POST /api/pkg/upgrade", httpx.Handler(s.handleUpgrade))
 	mux.HandleFunc("GET /api/pkg/log", httpx.Handler(s.handleLog))
@@ -321,7 +330,19 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 		s.publish()
 	}
 
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
+	res, err := s.list(context.WithoutCancel(r.Context()), false)
+	if err != nil {
+		return httpx.Errorf(http.StatusBadGateway, "check_failed", err.Error())
+	}
+	httpx.OK(w, res)
+	return nil
+}
+
+// list asks the package manager for pending updates (without refreshing
+// its database) and saves the result as the last check. A failed
+// background run keeps the previous list and only attaches the error.
+func (s *Service) list(parent context.Context, background bool) (*CheckResult, error) {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
 	start := time.Now()
 	ups, extras, err := s.be.Check(ctx, s.run)
@@ -338,22 +359,27 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 	for _, u := range res.Updates {
 		res.DownloadSize += u.Size
 	}
+	if background && parent.Err() != nil {
+		return nil, parent.Err() // shutting down: keep what we had
+	}
 	if err != nil {
 		res.Error = err.Error()
 		slog.Warn("pkg: check failed", "err", err)
 	}
 	s.mu.Lock()
+	if err != nil && background && s.last != nil {
+		c := *s.last
+		c.Error = res.Error
+		res = &c
+	} else {
+		s.rebootAt = time.Time{}
+	}
 	s.last = res
-	s.rebootAt = time.Time{}
 	s.mu.Unlock()
-	if e := s.d.Store.Set(context.WithoutCancel(r.Context()), keyLastCheck, res); e != nil {
+	if e := s.d.Store.Set(parent, keyLastCheck, res); e != nil {
 		slog.Warn("pkg: save check", "err", e)
 	}
-	if err != nil {
-		return httpx.Errorf(http.StatusBadGateway, "check_failed", err.Error())
-	}
-	httpx.OK(w, res)
-	return nil
+	return res, err
 }
 
 func sortUpdates(u []Update) {

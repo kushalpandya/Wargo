@@ -129,7 +129,7 @@ export function TileDialog({
         </FormField>
 
         <fieldset className="rounded-md border border-border p-3">
-          <legend className="px-1 text-[0.8125rem] font-medium">Icon</legend>
+          <legend className="px-1 text-ui font-medium">Icon</legend>
           <div className="flex flex-wrap items-start gap-3">
             <div className="flex size-14 shrink-0 items-center justify-center rounded-md border border-border bg-surface-2">
               <TileIcon tile={{ name: v.name || "?", icon: v.icon }} className="size-10" />
@@ -333,7 +333,7 @@ export function SuggestDialog({ open, onOpenChange }: { open: boolean; onOpenCha
                   <TileIcon tile={{ name: s.name }} />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                      <span className="truncate text-[0.8125rem] font-medium">{s.name}</span>
+                      <span className="truncate text-ui font-medium">{s.name}</span>
                       {s.exists && <Badge>Already added</Badge>}
                     </div>
                     <div className="num truncate text-2xs text-muted">
@@ -473,7 +473,7 @@ export function TileEditor({ className }: { className?: string }) {
               <TileIcon tile={t} />
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-[0.8125rem] font-medium">{t.name}</span>
+                  <span className="truncate text-ui font-medium">{t.name}</span>
                   {t.status && <StatusDot tone={t.status === "up" ? "ok" : "crit"} label={t.status === "up" ? "Online" : "Offline"} />}
                   {t.group && <Badge className="hidden sm:inline-flex">{t.group}</Badge>}
                   {!t.enabled && <Badge tone="warn">Hidden</Badge>}

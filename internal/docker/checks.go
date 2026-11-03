@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/httpx"
+	"github.com/kushalpandya/wargo/internal/schedule"
 )
 
 // Image update checks. Results are keyed by image ref + "|" + image id,
@@ -221,6 +222,7 @@ func (s *Service) runCheck(ctx context.Context) error {
 	// Images no longer used by any container are dropped.
 	s.updates = next
 	s.checkedAt = time.Now().UnixMilli()
+	s.retryAt = time.Time{}
 	if s.checkInterval > 0 {
 		s.nextCheckAt = s.checkedAt + s.checkInterval.Milliseconds()
 	}
@@ -286,57 +288,91 @@ func (s *Service) recheckContainer(ctx context.Context, name string) {
 
 // autoCheck runs CheckUpdates in the background: first ~checkDelay after
 // start (or when the persisted result is due, whichever is later), then
-// every checkInterval.
+// every checkInterval. The interval can change at runtime (Settings →
+// General): a change wakes the loop, and 0 pauses it.
 func (s *Service) autoCheck(ctx context.Context) {
-	if s.checkInterval <= 0 {
-		return
-	}
-	s.mu.Lock()
-	delay := s.checkDelay
-	if s.checkedAt > 0 {
-		if rem := time.Until(time.UnixMilli(s.checkedAt).Add(s.checkInterval)); rem > delay {
-			delay = rem
-		}
-	}
-	s.mu.Unlock()
+	first := true
 	for {
 		s.mu.Lock()
-		s.nextCheckAt = time.Now().Add(delay).UnixMilli()
+		interval := s.checkInterval
+		var delay time.Duration
+		if interval > 0 {
+			delay = time.Minute
+			if first {
+				delay = s.checkDelay
+			}
+			if rem := time.Until(s.dueLocked()); rem > delay {
+				delay = rem
+			}
+			s.nextCheckAt = time.Now().Add(delay).UnixMilli()
+		} else {
+			s.nextCheckAt = 0
+		}
 		s.mu.Unlock()
+
+		if interval <= 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.sched.Wake():
+				continue
+			}
+		}
 		t := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			t.Stop()
 			return
+		case <-s.sched.Wake():
+			t.Stop()
+			continue
 		case <-t.C:
 		}
+		first = false
 		// A manual check since scheduling postpones the background one.
 		s.mu.Lock()
-		rem := time.Duration(-1)
-		if s.checkedAt > 0 {
-			rem = time.Until(time.UnixMilli(s.checkedAt).Add(s.checkInterval))
-		}
+		due := time.Until(s.dueLocked()) <= time.Minute
 		s.mu.Unlock()
-		if rem > time.Minute {
-			delay = rem
+		if !due {
 			continue
 		}
-		delay = s.checkInterval
 		if err := s.CheckUpdates(ctx); err != nil {
 			slog.Debug("docker: background update check failed", "err", err)
 			if ctx.Err() != nil {
 				return
 			}
-			delay = min(s.checkInterval, 30*time.Minute)
-		} else {
-			// A manual check in between resets the schedule.
+			// Retry sooner than the full interval, at most every 30 minutes.
 			s.mu.Lock()
-			if s.checkedAt > 0 {
-				if rem := time.Until(time.UnixMilli(s.checkedAt).Add(s.checkInterval)); rem > 0 {
-					delay = rem
-				}
-			}
+			s.retryAt = time.Now().Add(min(s.checkInterval, 30*time.Minute))
 			s.mu.Unlock()
 		}
 	}
+}
+
+// dueLocked is when the next background check should run: after a failed
+// one at retryAt, otherwise one interval after the last check.
+func (s *Service) dueLocked() time.Time {
+	if !s.retryAt.IsZero() {
+		return s.retryAt
+	}
+	if s.checkedAt == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(s.checkedAt).Add(s.checkInterval)
+}
+
+// newSchedule builds the interval setting edited in Settings → General.
+func (s *Service) newSchedule() *schedule.Hours {
+	h := schedule.New("docker.settings", "containers.settings", 0, 0, 1, 3, 6, 12, 24, 72, 168)
+	h.Current = func() int {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return h.Ceil(s.checkInterval)
+	}
+	h.Apply = func(hours int) {
+		s.mu.Lock()
+		s.checkInterval = time.Duration(hours) * time.Hour
+		s.mu.Unlock()
+	}
+	return h
 }

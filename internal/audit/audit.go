@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -139,9 +140,22 @@ func (l *Log) Register(mux *http.ServeMux) {
 		q := `SELECT id, ts, COALESCE(ip,''), COALESCE(ua,''), action, COALESCE(target,''), result,
 			COALESCE(elevation,''), COALESCE(details,'') FROM audit_log`
 		args := []any{}
+		var where []string
 		if before > 0 {
-			q += ` WHERE id < ?`
+			where = append(where, `id < ?`)
 			args = append(args, before)
+		}
+		// prefix narrows to one area, e.g. "files." for Home's feed.
+		if p := r.URL.Query().Get("prefix"); p != "" {
+			if len(p) > 40 || !validPrefix(p) {
+				return httpx.BadRequest("invalid prefix")
+			}
+			// A range is exact and case-sensitive, unlike LIKE.
+			where = append(where, `action >= ? AND action < ?`)
+			args = append(args, p, p+"\xff")
+		}
+		if len(where) > 0 {
+			q += ` WHERE ` + strings.Join(where, " AND ")
 		}
 		q += ` ORDER BY id DESC LIMIT ?`
 		args = append(args, limit)
@@ -167,4 +181,14 @@ func (l *Log) Register(mux *http.ServeMux) {
 		httpx.OK(w, out)
 		return rows.Err()
 	}))
+}
+
+// validPrefix allows the characters action names use (e.g. "files.").
+func validPrefix(p string) bool {
+	for _, c := range p {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }

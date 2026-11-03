@@ -105,7 +105,7 @@ function LogView({ lines, open, onToggle, live }: { lines: string[]; open: boole
         onClick={onToggle}
         aria-expanded={open}
         aria-controls="pkg-log"
-        className="flex min-h-10 w-full items-center gap-2 px-3.5 py-2 text-left text-[0.8125rem] font-medium hover:bg-surface-2"
+        className="flex min-h-10 w-full items-center gap-2 px-4 py-2 text-left text-ui font-medium hover:bg-surface-2"
       >
         <ChevronRight className={cn("size-3.5 text-subtle transition-transform", open && "rotate-90")} />
         <ScrollText className="size-4 text-subtle" />
@@ -123,7 +123,7 @@ function LogView({ lines, open, onToggle, live }: { lines: string[]; open: boole
             const el = e.currentTarget;
             stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
           }}
-          className="num scroll-area max-h-[22rem] min-h-32 overflow-auto whitespace-pre-wrap break-all border-t border-border bg-bg px-3.5 py-2.5 text-xs leading-relaxed text-muted"
+          className="num scroll-area max-h-[22rem] min-h-32 overflow-auto whitespace-pre-wrap break-all border-t border-border bg-bg px-4 py-2.5 text-xs leading-relaxed text-muted"
         >
           {lines.length ? lines.join("\n") : "Waiting for output…"}
         </pre>
@@ -211,7 +211,7 @@ export function RunPanel({ status, onDismiss }: { status: PkgStatus; onDismiss?:
           </>
         }
       />
-      <div className="flex flex-col gap-4 p-3.5">
+      <div className="flex flex-col gap-4 p-4">
         {live && (
           <Notice tone="warn">
             Don't reboot or power off the server until this finishes. The upgrade runs as a system service, so closing this page
@@ -273,12 +273,12 @@ function ResultDetails({ run, elapsed }: { run: RunRecord; elapsed: number }) {
       )}
       {files.length > 0 && (
         <div className="rounded-md border border-border">
-          <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-[0.8125rem] font-medium">
+          <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-ui font-medium">
             <FileWarning className="size-4 text-warn" />
             Config files to review
             {fresh.length > 0 && <Badge tone="warn">{fresh.length} new</Badge>}
           </div>
-          <ul className="text-[0.8125rem]">
+          <ul className="text-ui">
             {fresh.map((f) => (
               <li key={f.path} className="num flex items-center gap-2 border-b border-border px-3 py-1.5 last:border-0">
                 <span className="min-w-0 flex-1 break-all">{f.path}</span>

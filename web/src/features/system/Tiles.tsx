@@ -4,15 +4,16 @@ import { Link } from "react-router";
 import { Cpu, HardDrive, MemoryStick, Network, Thermometer } from "lucide-react";
 import { bytes, level, pct, rate } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import { Card } from "@/components/ui/card";
 import { Ring, Sparkline } from "@/components/charts/Sparkline";
 import type { Point, Snapshot } from "@/features/system/useMetrics";
 import { useStorage, type Filesystem } from "@/features/system/Storage";
 import { LinkIcon, linkDetails, linkName } from "./LinkLabel";
 
-type Tone = "ok" | "warn" | "crit" | "accent" | "frost";
+type Pastel = "iris" | "mint" | "sky" | "peach";
+type Tone = "ok" | "warn" | "crit" | Pastel;
 
-const ringTone = (p: number, base: Tone, warn = 75, crit = 90): Tone => {
+/** Ring colour: the tile's pastel until usage reaches warn/crit levels. */
+const ringTone = (p: number, base: Pastel, warn = 75, crit = 90): Tone => {
   const l = level(p, warn, crit);
   return l === "ok" ? base : l;
 };
@@ -27,6 +28,9 @@ function split(s: string): [string, string] {
   return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 1)];
 }
 
+const tileBg: Record<Pastel, string> = { iris: "bg-iris-tint", mint: "bg-mint-tint", sky: "bg-sky-tint", peach: "bg-peach-tint" };
+const tileInk: Record<Pastel, string> = { iris: "text-iris", mint: "text-mint", sky: "text-sky", peach: "text-peach" };
+
 function Tile({
   icon,
   title,
@@ -34,11 +38,11 @@ function Tile({
   unit,
   sub,
   ring,
-  tone = "accent",
+  tone,
+  tint,
   corner,
   spark,
   sparkMax,
-  sparkColor,
   to,
 }: {
   icon: ReactNode;
@@ -48,36 +52,49 @@ function Tile({
   sub?: ReactNode;
   ring?: number;
   tone?: Tone;
+  /** The tile's pastel colour (background tint, icon, sparkline). */
+  tint: Pastel;
   corner?: ReactNode;
   spark: number[];
   sparkMax?: number;
-  sparkColor: string;
   to?: string;
 }) {
   const body = (
-    <Card className={cn("flex h-full flex-col", to && "transition-colors hover:border-border-strong")}>
-      <div className="flex items-start gap-3 p-3.5 pb-2">
+    <section
+      className={cn(
+        "relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-border/60 shadow-card",
+        tileBg[tint],
+        to && "transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-pop",
+      )}
+    >
+      <div className="flex items-start gap-3 p-3 pb-1 sm:p-4 sm:pb-1">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle [&_svg]:size-3.5">
-            {icon}
-            {title}
-            {corner && <span className="ml-auto normal-case tracking-normal">{corner}</span>}
+          <div className="flex items-center gap-2 text-ui font-semibold">
+            <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface/80 shadow-sm [&_svg]:size-4", tileInk[tint])} aria-hidden="true">
+              {icon}
+            </span>
+            <h2>{title}</h2>
+            {corner && <span className="ml-auto min-w-0 font-medium max-sm:hidden">{corner}</span>}
           </div>
-          <div className="mt-1.5 flex items-baseline gap-1">
-            <span className="num text-2xl font-medium leading-none">{value}</span>
-            {unit && <span className="num text-xs text-muted">{unit}</span>}
+          <div className="mt-3 flex min-w-0 items-baseline gap-1.5">
+            <span className="num text-3xl font-bold leading-none tracking-tight sm:text-4xl">{value}</span>
+            {unit && <span className="num truncate text-xs font-medium text-muted sm:text-ui">{unit}</span>}
           </div>
-          {sub && <div className="mt-1.5 truncate text-xs text-muted">{sub}</div>}
+          {sub && <div className="mt-2 truncate text-xs text-muted">{sub}</div>}
         </div>
-        {ring !== undefined && <Ring value={ring} size={44} stroke={4} tone={tone} label={`${title} ${Math.round(ring)}%`} />}
+        {ring !== undefined && (
+          <div className="max-sm:hidden">
+            <Ring value={ring} size={54} stroke={6} tone={tone ?? tint} label={`${title} ${Math.round(ring)}%`} />
+          </div>
+        )}
       </div>
-      <div className="mt-auto px-0.5 pb-0.5">
-        <Sparkline values={spark} max={sparkMax} stroke={sparkColor} height={32} />
+      <div className="mt-auto pt-2">
+        <Sparkline values={spark} max={sparkMax} stroke={`var(--${tint})`} height={44} />
       </div>
-    </Card>
+    </section>
   );
   return to ? (
-    <Link to={to} className="block rounded-lg focus-visible:outline-offset-2" title="Open System">
+    <Link to={to} className="block h-full rounded-xl focus-visible:outline-offset-2" title="Open System">
       {body}
     </Link>
   ) : (
@@ -114,7 +131,7 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
   const [memV, memU] = split(bytes(s?.memory.used ?? 0));
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <Tile
         to={to}
         icon={<Cpu />}
@@ -122,7 +139,8 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
         value={s ? cpu.toFixed(0) : "–"}
         unit="%"
         ring={cpu}
-        tone={ringTone(cpu, "accent")}
+        tint="iris"
+        tone={ringTone(cpu, "iris")}
         corner={
           hasTemp ? (
             <span
@@ -137,7 +155,6 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
         sub={s ? `Load ${s.cpu.load.map((l) => l.toFixed(2)).join(" · ")} · ${(s.cpu.freqMHz / 1000).toFixed(2)} GHz` : undefined}
         spark={recent.map((p) => p.cpu)}
         sparkMax={100}
-        sparkColor="var(--accent)"
       />
       <Tile
         to={to}
@@ -146,11 +163,11 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
         value={s ? memV : "–"}
         unit={s ? `${memU} / ${bytes(s.memory.total)}` : undefined}
         ring={mem}
-        tone={ringTone(mem, "frost")}
+        tint="mint"
+        tone={ringTone(mem, "mint")}
         sub={s ? `${bytes(s.memory.cached)} cached · ${s.memory.swapTotal ? `swap ${pct((s.memory.swapUsed / s.memory.swapTotal) * 100)}` : "no swap"}` : undefined}
         spark={recent.map((p) => p.mem)}
         sparkMax={100}
-        sparkColor="var(--frost)"
       />
       <Tile
         to={to}
@@ -167,8 +184,8 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
         value={s ? rxV : "–"}
         unit={s ? `${rxU} down` : undefined}
         sub={s ? `↑ ${rate(s.netTx)} up` : undefined}
+        tint="sky"
         spark={recent.map((p) => p.rx + p.tx)}
-        sparkColor="var(--frost)"
       />
       <Tile
         to={to}
@@ -177,10 +194,10 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
         value={storage.data ? disk.pct.toFixed(0) : "–"}
         unit={storage.data ? `% · ${bytes(disk.used)} / ${bytes(disk.total)}` : undefined}
         ring={storage.data ? disk.pct : undefined}
-        tone={ringTone(disk.pct, "ok", 85, 95)}
+        tint="peach"
+        tone={ringTone(disk.pct, "peach", 85, 95)}
         sub={s ? `R ${rate(s.diskRead)} · W ${rate(s.diskWrite)}` : undefined}
         spark={recent.map((p) => p.dr + p.dw)}
-        sparkColor="var(--ok)"
       />
     </div>
   );

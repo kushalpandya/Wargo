@@ -75,7 +75,7 @@ export function RecoveryCodes({ codes, onContinue }: { codes: string[]; onContin
   return (
     <div className="flex flex-col gap-3">
       <Notice tone="warn">Save these recovery codes somewhere safe. Each works once if you lose your authenticator. They won't be shown again.</Notice>
-      <div className="num grid grid-cols-2 gap-1.5 rounded-md border border-border bg-surface-2 p-3 text-[0.8125rem]">
+      <div className="num grid grid-cols-2 gap-1.5 rounded-md border border-border bg-surface-2 p-3 text-ui">
         {codes.map((c) => (
           <span key={c}>{c}</span>
         ))}

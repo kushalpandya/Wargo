@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { cn } from "@/lib/cn";
 
-/** Wargo mark: a wolf's ears and muzzle folded into a "W". */
+/**
+ * Wargo mark: the raven on watch at night. Same file as the favicon and the
+ * app icons (scripts/icons.mjs renders those from it), cached once by the
+ * browser.
+ */
 export function Logo({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
-      <rect width="32" height="32" rx="7" fill="var(--surface-3)" />
-      <path d="M6 9l4.5 14 3.2-8.2L16 20l2.3-5.2 3.2 8.2L26 9l-4.6 4.4L16 7l-5.4 6.4z" fill="var(--accent)" />
-    </svg>
+    <img
+      src={`${import.meta.env.BASE_URL}favicon.svg`}
+      alt=""
+      draggable={false}
+      decoding="async"
+      className={cn("rounded-[22%]", className)}
+    />
   );
 }

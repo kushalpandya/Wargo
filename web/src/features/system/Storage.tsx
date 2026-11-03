@@ -64,7 +64,7 @@ const usageTone = (p: number, base: "accent" | "frost") => (level(p, 80, 92) ===
 
 function ColumnTitle({ id, children }: { id: string; children: React.ReactNode }) {
   return (
-    <h3 id={id} className="flex h-9 items-center border-b border-border px-3.5 text-2xs font-semibold uppercase tracking-wider text-subtle">
+    <h3 id={id} className="flex h-9 items-center border-b border-border px-4 text-2xs font-semibold uppercase tracking-wider text-subtle">
       {children}
     </h3>
   );
@@ -74,7 +74,7 @@ function PartitionRow({ p }: { p: PartRow }) {
   const f = p.fs[0];
   const label = p.label || p.fs.find((x) => x.label)?.label;
   return (
-    <li className="px-3.5 py-2 text-xs">
+    <li className="px-4 py-2 text-xs">
       <div className="flex min-w-0 items-baseline gap-2">
         {/* The filesystem label when there is one, else the device name. */}
         <span className={cn("shrink-0 font-medium text-fg", !label && "num")} title={label ? `/dev/${p.name}` : undefined}>
@@ -139,10 +139,11 @@ export const StorageCard = memo(function StorageCard() {
       <CardHeader
         title="Storage"
         icon={<HardDrive />}
+        tint="butter"
         meta={data ? `${data.drives.length} drive${data.drives.length === 1 ? "" : "s"} · ${data.filesystems.length} mounted` : undefined}
       />
       {isLoading ? (
-        <div className="grid gap-3 p-3.5 lg:grid-cols-2">
+        <div className="grid gap-3 p-4 lg:grid-cols-2">
           <Skeleton className="h-24" />
           <Skeleton className="h-24" />
         </div>
@@ -156,7 +157,7 @@ export const StorageCard = memo(function StorageCard() {
                 return (
                   <li
                     key={d.name}
-                    className={cn("px-3.5 py-2.5 transition-colors", hover === d.name && "bg-surface-2")}
+                    className={cn("px-4 py-2.5 transition-colors", hover === d.name && "bg-surface-2")}
                     onMouseEnter={() => setHover(d.name)}
                     onMouseLeave={() => setHover(null)}
                   >
@@ -195,7 +196,7 @@ export const StorageCard = memo(function StorageCard() {
               .filter((g) => g.parts.length > 0)
               .map((g) => (
                 <div key={g.key} className={cn("border-t border-border transition-colors first-of-type:border-t-0", hover === g.key && "bg-surface-2")}>
-                  <div className="num truncate border-b border-border bg-surface-2/50 px-3.5 py-1 text-2xs text-subtle">{g.title}</div>
+                  <div className="num truncate border-b border-border bg-surface-2/50 px-4 py-1 text-2xs text-subtle">{g.title}</div>
                   <ul className="divide-y divide-border">
                     {g.parts.map((p) => (
                       <PartitionRow key={p.name} p={p} />

@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useCapabilities } from "@/app/session";
-import { containerUpdatesKey } from "@/features/containers/api";
-import type { UpdatesStatus } from "@/features/containers/types";
+import { countAvailable, useContainerUpdatesStatus } from "@/features/containers/api";
 import { pendingCount, usePkgStatus } from "./api";
 
 /**
@@ -16,16 +13,10 @@ export function UpdatesBadge({ className }: { className?: string }) {
   const { data } = usePkgStatus();
   const dockerOn = !!useCapabilities().data?.docker?.available;
   // Shares the Updates page's cache; light polling, no topic subscription.
-  const ctr = useQuery({
-    queryKey: containerUpdatesKey,
-    queryFn: () => api.get<UpdatesStatus>("/api/containers/updates"),
-    enabled: dockerOn,
-    staleTime: 60_000,
-    refetchInterval: (q) => (q.state.data?.checking ? 5_000 : 5 * 60_000),
-  });
+  const ctr = useContainerUpdatesStatus({ enabled: dockerOn });
   const running = !!data?.running;
   const pkgN = pendingCount(data);
-  const ctrN = dockerOn ? Object.values(ctr.data?.results ?? {}).filter((u) => u.updateAvailable).length : 0;
+  const ctrN = dockerOn ? countAvailable(ctr.data) : 0;
   const n = pkgN + ctrN;
   if (!running && n === 0) return null;
   const label = running

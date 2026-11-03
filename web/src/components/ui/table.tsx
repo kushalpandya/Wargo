@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 
 export function Table({ className, children, ...rest }: HTMLAttributes<HTMLTableElement>) {
   return (
-    <table className={cn("w-full border-collapse text-[0.8125rem]", className)} {...rest}>
+    <table className={cn("w-full border-collapse text-ui", className)} {...rest}>
       {children}
     </table>
   );

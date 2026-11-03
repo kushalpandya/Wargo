@@ -55,7 +55,7 @@ export function ExtraKeys({ session }: { session: TermSession | undefined }) {
               session.focus();
             }}
             className={cn(
-              "num flex h-9 min-w-0 items-center justify-center rounded-md border text-[0.8125rem] font-medium [&_svg]:size-4",
+              "num flex h-9 min-w-0 items-center justify-center rounded-md border text-ui font-medium [&_svg]:size-4",
               "touch-manipulation select-none disabled:opacity-40",
               active ? "border-accent bg-accent-soft text-accent" : "border-border bg-surface text-fg active:bg-surface-3",
             )}

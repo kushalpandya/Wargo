@@ -21,6 +21,8 @@ if (!url || !out) {
 
 const SIZES = {
   desktop: { width: 1440, height: 900 },
+  wide: { width: 1920, height: 1080 },
+  ultrawide: { width: 2560, height: 1440 },
   laptop: { width: 1280, height: 800 },
   tablet: { width: 820, height: 1180 },
   phone: { width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 },

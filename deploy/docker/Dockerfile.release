@@ -17,6 +17,8 @@ LABEL org.opencontainers.image.title="Wargo" \
       org.opencontainers.image.url="https://github.com/kushalpandya/wargo" \
       org.opencontainers.image.documentation="https://github.com/kushalpandya/wargo/blob/main/docs/DOCKER.md" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
+      io.artifacthub.package.logo-url="https://raw.githubusercontent.com/kushalpandya/wargo/main/web/public/icon-512.png" \
+      net.unraid.docker.icon="https://raw.githubusercontent.com/kushalpandya/wargo/main/web/public/icon-512.png" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"
 # util-linux: nsenter (host namespaces) and setpriv; tini reaps children.

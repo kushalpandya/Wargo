@@ -17,6 +17,8 @@ const url = args.find((a) => !a.startsWith("--"));
 const opt = Object.fromEntries(args.filter((a) => a.startsWith("--")).map((a) => a.slice(2).split("=")));
 const SIZES = {
   desktop: { width: 1440, height: 900 },
+  wide: { width: 1920, height: 1080 },
+  ultrawide: { width: 2560, height: 1440 },
   tablet: { width: 820, height: 1180 },
   phone: { width: 390, height: 844, isMobile: true, hasTouch: true },
 };

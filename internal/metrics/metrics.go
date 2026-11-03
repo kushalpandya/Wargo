@@ -291,6 +291,19 @@ func (c *Collector) sample(ctx context.Context) {
 	c.hub.Publish(Topic, s)
 }
 
+// cpuMaxMHz is the highest cpuinfo_max_freq across cores: on hybrid CPUs
+// (performance and efficiency cores) cpu0 isn't always the fastest.
+func cpuMaxMHz() float64 {
+	files, _ := filepath.Glob(hostfs.Path("/sys/devices/system/cpu") + "/cpu[0-9]*/cpufreq/cpuinfo_max_freq")
+	var best int64
+	for _, f := range files {
+		if v, ok := readInt(f); ok && v > best {
+			best = v
+		}
+	}
+	return float64(best) / 1000
+}
+
 func cpuFreqFiles() []string {
 	files, _ := filepath.Glob(hostfs.Path("/sys/devices/system/cpu") + "/cpu[0-9]*/cpufreq/scaling_cur_freq")
 	return files
@@ -344,19 +357,21 @@ func (c *Collector) History() []Point {
 
 // Info is static-ish host information.
 type Info struct {
-	Hostname       string `json:"hostname"`
-	OS             string `json:"os"`
-	OSID           string `json:"osId"`
-	Kernel         string `json:"kernel"`
-	Arch           string `json:"arch"`
-	CPUModel       string `json:"cpuModel"`
-	Cores          int    `json:"cores"`
-	Threads        int    `json:"threads"`
-	MemTotal       uint64 `json:"memTotal"`
-	BootTime       uint64 `json:"bootTime"`
-	Virtualization string `json:"virtualization,omitempty"`
-	GoVersion      string `json:"goVersion"`
-	Specs          Specs  `json:"specs"`
+	Hostname string `json:"hostname"`
+	OS       string `json:"os"`
+	OSID     string `json:"osId"`
+	Kernel   string `json:"kernel"`
+	Arch     string `json:"arch"`
+	CPUModel string `json:"cpuModel"`
+	// CPUMaxMHz is the highest maximum clock of any core (0 if unknown).
+	CPUMaxMHz      float64 `json:"cpuMaxMHz,omitempty"`
+	Cores          int     `json:"cores"`
+	Threads        int     `json:"threads"`
+	MemTotal       uint64  `json:"memTotal"`
+	BootTime       uint64  `json:"bootTime"`
+	Virtualization string  `json:"virtualization,omitempty"`
+	GoVersion      string  `json:"goVersion"`
+	Specs          Specs   `json:"specs"`
 }
 
 func osRelease() (pretty, id string) {
@@ -392,6 +407,7 @@ func GetInfo(ctx context.Context) Info {
 	if ci, err := cpu.InfoWithContext(ctx); err == nil && len(ci) > 0 {
 		i.CPUModel = strings.TrimSpace(ci[0].ModelName)
 	}
+	i.CPUMaxMHz = cpuMaxMHz()
 	i.Threads, _ = cpu.CountsWithContext(ctx, true)
 	i.Cores, _ = cpu.CountsWithContext(ctx, false)
 	if vm, err := mem.VirtualMemoryWithContext(ctx); err == nil {

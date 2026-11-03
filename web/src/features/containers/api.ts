@@ -20,12 +20,11 @@ export function useContainers({ enabled = true, refetchInterval = 30_000 }: { en
 }
 
 /**
- * Image update-check status (GET /api/containers/updates). Polls quickly
- * while a check runs; refreshes when the "containers" topic changes.
+ * Image update-check status (GET /api/containers/updates), polled every few
+ * minutes and every few seconds while a check runs. No topic subscription:
+ * for summaries such as badges and Home.
  */
-export function useContainerUpdates({ enabled = true }: { enabled?: boolean } = {}) {
-  const qc = useQueryClient();
-  useTopic<Container[]>(enabled ? "containers" : null, () => qc.invalidateQueries({ queryKey: containerUpdatesKey, exact: true }));
+export function useContainerUpdatesStatus({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: containerUpdatesKey,
     queryFn: () => api.get<UpdatesStatus>("/api/containers/updates"),
@@ -34,6 +33,16 @@ export function useContainerUpdates({ enabled = true }: { enabled?: boolean } = 
     refetchInterval: (q) => (q.state.data?.checking ? 2_000 : 5 * 60_000),
   });
 }
+
+/** Like useContainerUpdatesStatus, also refreshed when the "containers" topic changes. */
+export function useContainerUpdates({ enabled = true }: { enabled?: boolean } = {}) {
+  const qc = useQueryClient();
+  useTopic<Container[]>(enabled ? "containers" : null, () => qc.invalidateQueries({ queryKey: containerUpdatesKey, exact: true }));
+  return useContainerUpdatesStatus({ enabled });
+}
+
+/** Containers whose image has a newer version, from an update-check status. */
+export const countAvailable = (s?: UpdatesStatus) => Object.values(s?.results ?? {}).filter((u) => u.updateAvailable).length;
 
 /** POST /api/containers/check-updates; resolves when the check finished. */
 export function useCheckContainerUpdates(opts: { onSuccess?: (s: UpdatesStatus) => void; onError?: (e: unknown) => void } = {}) {
@@ -51,9 +60,4 @@ export function useCheckContainerUpdates(opts: { onSuccess?: (s: UpdatesStatus) 
       opts.onError?.(e);
     },
   });
-}
-
-/** Containers whose image has a newer version in the registry. */
-export function staleContainers(list?: Container[]): Container[] {
-  return (list ?? []).filter((c) => c.updateAvailable);
 }

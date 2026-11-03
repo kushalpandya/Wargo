@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useId } from "react";
 import { cn } from "@/lib/cn";
+import type { Tint } from "@/components/ui/card";
+import type { Tone } from "@/components/ui/misc";
 
 /** Tiny SVG area sparkline. Values are plotted against [0, max]. */
 export function Sparkline({
@@ -29,12 +31,12 @@ export function Sparkline({
     <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className={cn("w-full", className)} style={{ height }} aria-hidden="true">
       <defs>
         <linearGradient id={id} x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stopColor={stroke} stopOpacity="0.25" />
+          <stop offset="0" stopColor={stroke} stopOpacity="0.32" />
           <stop offset="1" stopColor={stroke} stopOpacity="0" />
         </linearGradient>
       </defs>
       <path d={area} fill={`url(#${CSS.escape(id)})`} />
-      <path d={line} fill="none" stroke={stroke} strokeWidth="1.25" vectorEffect="non-scaling-stroke" />
+      <path d={line} fill="none" stroke={stroke} strokeWidth="1.75" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }
@@ -51,7 +53,8 @@ export function Ring({
   value: number;
   size?: number;
   stroke?: number;
-  tone?: "accent" | "ok" | "warn" | "crit" | "frost";
+  /** Colour token name: a status colour or a pastel (iris, mint, sky, peach…). */
+  tone?: Exclude<Tone, "neutral"> | Tint;
   children?: React.ReactNode;
   label: string;
 }) {
@@ -61,7 +64,7 @@ export function Ring({
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }} role="meter" aria-label={label} aria-valuenow={Math.round(v)} aria-valuemin={0} aria-valuemax={100}>
       <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--surface-3)" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={`color-mix(in oklab, var(--${tone}) 20%, transparent)`} strokeWidth={stroke} />
         <circle
           cx={size / 2}
           cy={size / 2}

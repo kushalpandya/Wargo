@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { ArrowDown, ArrowUp, Download, HardDrive, Pause, Play, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -15,7 +15,7 @@ import { SearchInput, Select } from "@/components/ui/form";
 import { Badge, EmptyState, ErrorNote, Meter, PageHeader, Skeleton, Spinner, type Tone } from "@/components/ui/misc";
 import { SortTh, Table, Td, Th, THead, Tr, useSort } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
-import { errorMessage, type Torrent, type TorrentStatus, type TransmissionPayload } from "./api";
+import { errorMessage, torrentsKey, useTorrents, type Torrent, type TorrentStatus, type TransmissionPayload } from "./api";
 
 type Filter = "all" | "downloading" | "seeding" | "paused" | "errors";
 type SortKey = "name" | "status" | "progress" | "down" | "up" | "eta" | "size" | "ratio" | "added";
@@ -99,13 +99,7 @@ const meterTone = (t: Torrent) => (t.error ? "crit" : t.percentDone >= 1 ? "ok" 
 export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
   const qc = useQueryClient();
   const caps = useCapabilities().data;
-  const initial = useQuery({
-    queryKey: ["transmission", "torrents"],
-    queryFn: () => api.get<TransmissionPayload>("/api/transmission/torrents"),
-    enabled: caps?.transmission?.configured !== false,
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  const initial = useTorrents({ enabled: caps?.transmission?.configured !== false });
   const [live, setLive] = useState<TransmissionPayload | null>(null);
   useTopic<TransmissionPayload>("transmission", setLive);
   const data = live && (!initial.data || live.at >= initial.data.at) ? live : initial.data;
@@ -160,7 +154,7 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
         toast.ok(kind === "remove-data" ? "Removed torrent and data" : "Removed torrent", t.name);
         setRemoving(null);
       }
-      if (!live) qc.invalidateQueries({ queryKey: ["transmission", "torrents"] });
+      if (!live) qc.invalidateQueries({ queryKey: torrentsKey });
     } catch (e) {
       toast.error("Action failed", errorMessage(e));
     } finally {
@@ -253,13 +247,13 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
             </div>
 
             {initial.isLoading && !live ? (
-              <div className="space-y-2 p-3.5">
+              <div className="space-y-2 p-4">
                 {Array.from({ length: 5 }, (_, i) => (
                   <Skeleton key={i} className="h-8" />
                 ))}
               </div>
             ) : initial.error && !live ? (
-              <div className="p-3.5">
+              <div className="p-4">
                 <ErrorNote error={initial.error} />
               </div>
             ) : sorted.length === 0 ? (
@@ -436,7 +430,7 @@ function TorrentRow(props: RowProps) {
 function TorrentCard(props: RowProps) {
   const { t } = props;
   return (
-    <li className="border-b border-border px-3.5 py-3">
+    <li className="border-b border-border px-4 py-3">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="break-words text-sm font-medium leading-snug [overflow-wrap:anywhere]">{t.name}</div>

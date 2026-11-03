@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ChevronRight, RefreshCw, ScrollText } from "lucide-react";
 import { api, qs } from "@/lib/api";
@@ -10,9 +11,8 @@ import { Card } from "@/components/ui/card";
 import { SearchInput } from "@/components/ui/form";
 import { Badge, EmptyState, ErrorNote, Skeleton } from "@/components/ui/misc";
 import { Table, Td, Th, THead } from "@/components/ui/table";
-import { SettingsHeader } from "./shared";
 
-interface Entry {
+export interface AuditEntry {
   id: number;
   ts: string;
   ip: string;
@@ -35,7 +35,7 @@ function Result({ r }: { r: string }) {
   );
 }
 
-function Details({ e }: { e: Entry }) {
+function Details({ e }: { e: AuditEntry }) {
   return (
     <dl className="grid gap-x-4 gap-y-1.5 text-xs sm:grid-cols-[7rem_1fr]">
       {e.result !== "ok" && (
@@ -60,16 +60,26 @@ function Details({ e }: { e: Entry }) {
   );
 }
 
-export default function Audit() {
+/** The audit log, shown under Settings → About. */
+export function AuditLog() {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<number | null>(null);
   const query = useInfiniteQuery({
     queryKey: ["audit"],
-    queryFn: ({ pageParam }) => api.get<Entry[]>(`/api/audit${qs({ limit: PAGE, before: pageParam || undefined })}`),
+    queryFn: ({ pageParam }) => api.get<AuditEntry[]>(`/api/audit${qs({ limit: PAGE, before: pageParam || undefined })}`),
     initialPageParam: 0,
     getNextPageParam: (last) => (last.length < PAGE ? undefined : last[last.length - 1].id),
   });
   const all = useMemo(() => query.data?.pages.flat() ?? [], [query.data]);
+  // Links to /settings/about#audit: scroll here once the first page is in.
+  const { hash } = useLocation();
+  const scrolled = useRef(false);
+  const loaded = !!query.data;
+  useEffect(() => {
+    if (!loaded || scrolled.current || hash !== "#audit") return;
+    scrolled.current = true;
+    document.getElementById("audit")?.scrollIntoView();
+  }, [loaded, hash]);
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return all;
@@ -78,15 +88,15 @@ export default function Audit() {
 
   return (
     <>
-      <SettingsHeader
-        title="Audit log"
-        description="Every sign-in, setting change and privileged action, newest first."
-        actions={
-          <IconButton label="Refresh" variant="secondary" size="sm" onClick={() => query.refetch()} disabled={query.isFetching}>
-            <RefreshCw className={cn(query.isFetching && "animate-spin")} />
-          </IconButton>
-        }
-      />
+      <div id="audit" className="mb-3 flex scroll-mt-20 flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-lg font-bold tracking-tight">Audit log</h3>
+          <p className="mt-0.5 text-sm text-muted">Every sign-in, setting change and privileged action, newest first.</p>
+        </div>
+        <IconButton label="Refresh" variant="secondary" size="sm" onClick={() => query.refetch()} disabled={query.isFetching}>
+          <RefreshCw className={cn(query.isFetching && "animate-spin")} />
+        </IconButton>
+      </div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <SearchInput value={q} onChange={setQ} placeholder="Filter by action, target, IP…" className="w-full sm:w-80" label="Filter audit log" />
         <span className="text-xs text-muted" aria-live="polite">
@@ -173,7 +183,7 @@ export default function Audit() {
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="num truncate text-[0.8125rem] font-medium">{e.action}</span>
+                        <span className="num truncate text-ui font-medium">{e.action}</span>
                         <Result r={e.result} />
                         {e.elevation && <Badge tone="accent">{e.elevation}</Badge>}
                       </div>

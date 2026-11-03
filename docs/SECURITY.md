@@ -35,12 +35,21 @@ This section describes the native install. See
 - Strict headers on every response: CSP (`default-src 'self'`, no inline
   scripts), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`,
   `Permissions-Policy`, COOP, and HSTS over HTTPS.
-- **Requests to the internet** happen only for features you use:
-  - the public IP on System → Network (`api.ipify.org`, falling back to
-    `ipv4.icanhazip.com`), looked up while the page is open and cached for
-    30 minutes;
+- **Requests to the internet** are limited to the following, each of which
+  can be turned off or simply not used:
+  - the public IP on Home and System → Network (`api.ipify.org`, falling
+    back to `ipv4.icanhazip.com`), looked up while one of them is open and
+    cached for 30 minutes;
+  - the weather on Home (`api.open-meteo.com`, plus Open-Meteo's geocoding
+    to find a place from the server's timezone or your search), looked up
+    while Home is open and cached for 15 minutes. Turn it off in
+    Settings → Appearance;
   - icon downloads from dashboard-icons;
-  - container update checks against image registries;
+  - container update checks against image registries, in the background
+    every 6 hours by default. Change or turn them off in Settings → General;
+  - OS update checks, which contact your distro's package mirrors in the
+    background, daily by default. Change or turn them off in
+    Settings → General;
   - launcher health checks and the integrations you set up.
 - **System → Events** reads the systemd journal on the server (as your
   account natively, as root in container mode), Docker's recent event

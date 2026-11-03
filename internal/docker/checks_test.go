@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -285,4 +286,55 @@ func TestAutoCheckRuns(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("background check did not run")
+}
+
+func TestUpdateCheckSettings(t *testing.T) {
+	s := startFake(t, &fakeDocker{})
+	s.checkInterval = 6 * time.Hour
+	mux := http.NewServeMux()
+	s.Register(mux)
+	put := func(body string) int {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("PUT", "/api/containers/settings", strings.NewReader(body)))
+		return w.Code
+	}
+	if c := put(`{"checkHours":5}`); c != 400 {
+		t.Fatalf("odd interval: %d", c)
+	}
+	if c := put(`{"checkHours":0}`); c != 200 || s.checkInterval != 0 {
+		t.Fatalf("off: %d %v", c, s.checkInterval)
+	}
+	select {
+	case <-s.sched.Wake():
+	default:
+		t.Fatal("background loop was not woken")
+	}
+	if c := put(`{"checkHours":24}`); c != 200 || s.checkInterval != 24*time.Hour {
+		t.Fatalf("daily: %d %v", c, s.checkInterval)
+	}
+	// A configured interval that isn't selectable reads as the next one up.
+	for d, want := range map[time.Duration]string{30 * time.Minute: "1", 2 * time.Hour: "3", 400 * time.Hour: "168", 0: "0"} {
+		s.mu.Lock()
+		s.checkInterval = d
+		s.mu.Unlock()
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/containers/settings", nil))
+		if got := strings.TrimSpace(w.Body.String()); got != `{"checkHours":`+want+`}` {
+			t.Errorf("%v reads as %s", d, got)
+		}
+	}
+}
+
+func TestDueAfterFailure(t *testing.T) {
+	s := startFake(t, &fakeDocker{})
+	s.checkInterval = 24 * time.Hour
+	if !s.dueLocked().IsZero() {
+		t.Fatal("never checked should be due now")
+	}
+	retry := time.Now().Add(30 * time.Minute)
+	s.retryAt = retry
+	s.checkedAt = time.Now().Add(-48 * time.Hour).UnixMilli()
+	if !s.dueLocked().Equal(retry) {
+		t.Fatal("overdue check after a failure should wait for retryAt")
+	}
 }

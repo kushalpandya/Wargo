@@ -13,7 +13,7 @@ import { FormField, Input } from "@/components/ui/form";
 import { Badge, EmptyState, ErrorNote, Notice, Skeleton } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
 import { RecoveryCodes, TotpEnroll } from "@/features/auth/TotpSetup";
-import { PasswordDialog, SettingRow, SettingsHeader } from "./shared";
+import { PasswordDialog, SettingRow } from "./shared";
 import { AdminApprovals } from "./AdminApprovals";
 import { usePasskeys, type Passkey } from "./hooks";
 
@@ -372,7 +372,7 @@ function SessionsCard() {
       ) : (
         <ul className="divide-y divide-border">
           {data.map((s) => (
-            <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 py-2.5">
+            <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium" title={s.ua}>
@@ -410,27 +410,33 @@ export default function Security() {
   const { data: me } = useMe();
   return (
     <>
-      <SettingsHeader
-        title="Security"
-        description={
-          me ? (
-            <>
-              Signed in as <span className="font-medium text-fg">{me.user}</span> (group <span className="num">{me.adminGroup}</span>) via{" "}
-              {methodLabels[me.method] ?? me.method}.
-            </>
-          ) : undefined
-        }
-      />
       {me?.dev && (
         <Notice tone="warn" className="mb-4">
           Dev mode: authentication is bypassed and password prompts are not checked.
         </Notice>
       )}
-      <div className="flex flex-col gap-4">
-        <TwoFactorCard />
-        <PasskeysCard />
-        <AdminApprovals />
-        <SessionsCard />
+      {/* Two labelled groups, one card per row. */}
+      <div className="flex max-w-[52rem] flex-col gap-8">
+        <section aria-labelledby="security-signin" className="flex min-w-0 flex-col gap-4">
+          <div>
+            <h3 id="security-signin" className="text-md font-bold tracking-tight">
+              Signing in
+            </h3>
+            <p className="text-xs text-muted">How you prove it's you: a second factor after your password, or a passkey.</p>
+          </div>
+          <TwoFactorCard />
+          <PasskeysCard />
+        </section>
+        <section aria-labelledby="security-access" className="flex min-w-0 flex-col gap-4">
+          <div>
+            <h3 id="security-access" className="text-md font-bold tracking-tight">
+              Access
+            </h3>
+            <p className="text-xs text-muted">How admin actions are approved, and where you're signed in.</p>
+          </div>
+          <AdminApprovals />
+          <SessionsCard />
+        </section>
       </div>
     </>
   );

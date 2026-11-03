@@ -75,7 +75,7 @@ export function JobDialog({ jobId, title, onClose }: { jobId: string | null; tit
           ref={pre}
           tabIndex={0}
           aria-label="Job log"
-          className="num max-h-72 min-h-32 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-2.5 text-[0.75rem] leading-relaxed text-muted"
+          className="num max-h-72 min-h-32 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-2.5 text-2xs leading-relaxed text-muted"
         >
           {log.length ? log.join("\n") : "Waiting for output…"}
         </pre>

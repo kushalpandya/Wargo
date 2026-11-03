@@ -32,7 +32,7 @@ import { useCapabilities } from "@/app/session";
 import { Button, IconButton } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/menu";
-import { EmptyState, Kbd, Spinner, StatusDot, type Tone } from "@/components/ui/misc";
+import { EmptyState, Kbd, PageHeader, Spinner, StatusDot, type Tone } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
 import { createSession, deleteSession, listSessions, TermSession, type ConnState, type TermInfo, type TermKind } from "./session";
 import { searchDecorations, terminalTheme } from "./theme";
@@ -385,7 +385,7 @@ export default function TerminalPage() {
     </>
   );
 
-  const height = phone ? (vh ? `${vh - 48}px` : "calc(100dvh - 3rem)") : undefined;
+  const height = phone ? (vh ? `${vh - 64}px` : "calc(100dvh - 4rem)") : undefined;
 
   return (
     <div
@@ -393,11 +393,11 @@ export default function TerminalPage() {
       style={{ height }}
       className={cn(
         "flex min-h-0 flex-col overflow-hidden border-border bg-surface",
-        "-mx-3 -my-4 border-y sm:mx-0 sm:my-0 sm:h-[calc(100dvh-3rem-2.5rem)] sm:rounded-lg sm:border",
+        "-mx-3 -mb-8 -mt-1 border-y sm:mx-0 sm:my-0 sm:h-[calc(100dvh-6.25rem)] sm:rounded-lg sm:border",
         fullscreen && "!m-0 !h-full rounded-none border-0",
       )}
     >
-      <h1 className="sr-only">Terminal</h1>
+      <PageHeader title="Terminal" />
       {/* Tabs + toolbar */}
       <div className="flex h-10 shrink-0 items-stretch border-b border-border bg-surface-2 max-md:h-11">
         <div role="tablist" aria-label="Terminal sessions" className="flex [scrollbar-width:none] min-w-0 items-stretch overflow-x-auto">
@@ -654,7 +654,7 @@ function TabButton({
         title={`${label} · ${st.label}`}
         aria-keyshortcuts="Delete F2"
         aria-description={`${st.label}. Press Delete to close, F2 to rename.`}
-        className="flex h-full min-w-0 items-center gap-2 pl-3 pr-1 text-[0.8125rem] font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus"
+        className="flex h-full min-w-0 items-center gap-2 pl-3 pr-1 text-ui font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus"
       >
         <span
           className={cn(
@@ -728,7 +728,7 @@ function SearchBar({ sess, onClose }: { sess: TermSession; onClose: () => void }
         placeholder="Find in scrollback"
         aria-label="Find in scrollback"
         spellCheck={false}
-        className="num h-8 min-w-0 flex-1 bg-transparent px-1.5 text-[0.8125rem] text-fg placeholder:text-subtle focus:outline-none"
+        className="num h-8 min-w-0 flex-1 bg-transparent px-1.5 text-ui text-fg placeholder:text-subtle focus:outline-none"
       />
       <span className="num shrink-0 text-xs text-muted" aria-live="polite">
         {q && r ? (r.count === 0 ? "No results" : r.index < 0 ? `${r.count}+` : `${r.index + 1}/${r.count}`) : ""}

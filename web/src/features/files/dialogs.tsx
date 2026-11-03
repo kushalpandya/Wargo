@@ -262,7 +262,7 @@ export function ChmodDialog({ open, onOpenChange, root, entries, dir, onDone }: 
       }
     >
       <div className="space-y-4">
-        <table className="w-full text-[0.8125rem]">
+        <table className="w-full text-ui">
           <thead>
             <tr>
               <th className="sr-only">Class</th>
@@ -456,7 +456,7 @@ export function CompressDialog({
         }}
       >
         <div className="flex flex-col gap-1">
-          <span className="text-[0.8125rem] font-medium">Format</span>
+          <span className="text-ui font-medium">Format</span>
           <Segmented
             label="Archive format"
             value={format}
@@ -610,7 +610,7 @@ export function FolderPicker({
         </>
       }
     >
-      <nav aria-label="Destination path" className="mb-2 flex flex-wrap items-center gap-0.5 text-[0.8125rem]">
+      <nav aria-label="Destination path" className="mb-2 flex flex-wrap items-center gap-0.5 text-ui">
         <button type="button" className="flex h-7 items-center gap-1 rounded px-1.5 font-medium hover:bg-surface-3" onClick={() => setCwd(".")}>
           <HardDrive className="size-3.5 text-subtle" />
           {rootInfo?.name ?? "Root"}
@@ -626,7 +626,7 @@ export function FolderPicker({
       </nav>
       <div className="min-h-48 rounded-md border border-border">
         {cwd !== "." && (
-          <button type="button" onClick={() => setCwd(parentPath(cwd))} className="flex h-9 w-full items-center gap-2 border-b border-border px-3 text-left text-[0.8125rem] text-muted hover:bg-surface-2">
+          <button type="button" onClick={() => setCwd(parentPath(cwd))} className="flex h-9 w-full items-center gap-2 border-b border-border px-3 text-left text-ui text-muted hover:bg-surface-2">
             <CornerLeftUp className="size-4" /> Up one level
           </button>
         )}
@@ -647,7 +647,7 @@ export function FolderPicker({
                   type="button"
                   disabled={dis}
                   onClick={() => setCwd(p)}
-                  className="flex h-9 w-full items-center gap-2 px-3 text-left text-[0.8125rem] hover:bg-surface-2 disabled:opacity-40"
+                  className="flex h-9 w-full items-center gap-2 px-3 text-left text-ui hover:bg-surface-2 disabled:opacity-40"
                 >
                   <Folder className="size-4 text-frost" fill="currentColor" fillOpacity={0.16} />
                   <span className="min-w-0 flex-1 truncate">{e.name}</span>
@@ -701,7 +701,7 @@ export function ConflictDialog({ state, onResolve }: { state: { count: number; n
 
 function Row({ label, children, mono = true }: { label: string; children: React.ReactNode; mono?: boolean }) {
   return (
-    <div className="grid grid-cols-[7rem_1fr] gap-3 border-b border-border px-4 py-2.5 text-[0.8125rem] last:border-0">
+    <div className="grid grid-cols-[7rem_1fr] gap-3 border-b border-border px-4 py-2.5 text-ui last:border-0">
       <dt className="text-muted">{label}</dt>
       <dd className={cn("min-w-0 break-all", mono && "num")}>{children}</dd>
     </div>

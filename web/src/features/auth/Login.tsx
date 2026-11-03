@@ -15,19 +15,19 @@ type Step = { kind: "password" } | { kind: "second"; token: string; recovery: bo
 
 export function AuthShell({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle?: string }) {
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-bg px-4 py-10">
-      <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center gap-2.5">
-          <Logo className="size-8" />
+    <div className="wargo-canvas wargo-auth flex min-h-dvh items-center justify-center px-4 py-10">
+      <div className="w-full max-w-[25rem]">
+        <div className="mb-7 flex flex-col items-center gap-3 text-center">
+          <Logo className="size-14 drop-shadow-[0_8px_18px_oklch(0.55_0.15_280/0.35)]" />
           <div>
-            <div className="text-base font-semibold leading-tight tracking-tight">Wargo</div>
-            <div className="text-xs text-muted">Homelab control</div>
+            <div className="text-2xl font-bold tracking-tight">Wargo</div>
+            <div className="text-sm text-muted">Your homelab, at a glance</div>
           </div>
         </div>
-        <div className="rounded-lg border border-border bg-surface p-5 shadow-[var(--shadow)]">
-          <h1 className="text-[0.9375rem] font-semibold">{title}</h1>
-          {subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
-          <div className="mt-4">{children}</div>
+        <div className="rounded-2xl border border-border bg-surface/90 p-6 shadow-pop backdrop-blur sm:p-7">
+          <h1 className="text-xl font-bold tracking-tight">{title}</h1>
+          {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
+          <div className="mt-5">{children}</div>
         </div>
       </div>
     </div>

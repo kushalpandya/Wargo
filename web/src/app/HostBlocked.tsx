@@ -15,8 +15,8 @@ export function HostBlocked() {
           <Logo className="size-8" />
           <div className="text-base font-semibold tracking-tight">Wargo</div>
         </div>
-        <div role="alert" className="rounded-lg border border-border bg-surface p-5 shadow-[var(--shadow)]">
-          <h1 className="flex items-center gap-2 text-[0.9375rem] font-semibold">
+        <div role="alert" className="rounded-lg border border-border bg-surface p-5 shadow-card">
+          <h1 className="flex items-center gap-2 text-md font-semibold">
             <ShieldAlert className="size-4 text-crit" aria-hidden="true" /> This address isn't allowed
           </h1>
           <p className="mt-2 text-sm text-muted">

@@ -143,7 +143,7 @@ export function TileGrid({ tiles, compact, edit }: { tiles: Tile[]; compact?: bo
                   )}
                   <TileIcon tile={t} large />
                   <div className="w-full min-w-0">
-                    <div className="truncate text-[0.8125rem] font-medium">{t.name}</div>
+                    <div className="truncate text-ui font-medium">{t.name}</div>
                     <div className="num truncate text-2xs text-muted">{t.url.replace(/^https?:\/\//, "")}</div>
                   </div>
                 </a>

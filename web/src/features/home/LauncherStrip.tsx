@@ -6,9 +6,5 @@ export function LauncherStrip() {
   const { data } = useTiles();
   const tiles = (data ?? []).filter((t) => t.enabled);
   if (!tiles.length) return null;
-  return (
-    <div className="mb-4">
-      <LauncherGrid tiles={tiles} compact />
-    </div>
-  );
+  return <LauncherGrid tiles={tiles} compact />;
 }

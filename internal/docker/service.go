@@ -21,6 +21,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
+	"github.com/kushalpandya/wargo/internal/schedule"
 	"github.com/kushalpandya/wargo/internal/store"
 )
 
@@ -68,6 +69,8 @@ type Service struct {
 	nextCheckAt   int64
 	checkDone     chan struct{} // non-nil while a check runs
 	checkErr      error
+	retryAt       time.Time       // set after a failed background check
+	sched         *schedule.Hours // interval chosen in Settings → General
 }
 
 // Options configures the optional parts of the service.
@@ -85,6 +88,10 @@ type Options struct {
 func (s *Service) Configure(o Options) *Service {
 	s.st = o.Store
 	s.checkInterval = o.UpdateInterval
+	s.sched.Store = o.Store
+	if h, ok := s.sched.Saved(context.Background()); ok {
+		s.checkInterval = time.Duration(h) * time.Hour
+	}
 	if o.DataDir != "" {
 		s.icons = newIconStore(o.DataDir)
 	}
@@ -108,6 +115,8 @@ func New(socket string, hub *events.Hub, jm *jobs.Manager, al *audit.Log, el *el
 		probes: newProber(),
 		images: map[string]imageMeta{}, checkDelay: 2 * time.Minute,
 	}
+	s.sched = s.newSchedule()
+	s.sched.Audit = al
 	s.composeAvailable = s.detectCompose
 	s.selfID = host.SelfContainerID()
 	return s
@@ -318,6 +327,8 @@ func (s *Service) Register(mux *http.ServeMux) {
 		return nil
 	}))
 	mux.HandleFunc("POST /api/containers/check-updates", httpx.Handler(s.handleCheckUpdates))
+	mux.HandleFunc("GET /api/containers/settings", httpx.Handler(s.sched.HandleGet))
+	mux.HandleFunc("PUT /api/containers/settings", httpx.Handler(s.sched.HandlePut))
 	mux.HandleFunc("GET /api/containers/{id}/icon", httpx.Handler(s.handleIcon))
 	mux.HandleFunc("GET /api/containers/{id}", httpx.Handler(s.handleDetails))
 	mux.HandleFunc("GET /api/containers/{id}/logs", httpx.Handler(s.handleLogs))

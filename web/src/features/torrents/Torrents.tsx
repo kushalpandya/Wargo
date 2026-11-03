@@ -56,7 +56,7 @@ export default function Torrents() {
   };
 
   return (
-    <div className="mx-auto max-w-[1600px]">
+    <div className="min-w-0">
       <PageHeader
         title="Torrents"
         description={

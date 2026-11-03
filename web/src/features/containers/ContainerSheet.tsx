@@ -102,7 +102,7 @@ function Overview({ d, stats }: { d: ContainerDetails; stats?: ContainerStats })
             {d.networks.map((n) => (
               <li key={n.name} className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 py-1.5">
                 <span className="font-medium">{n.name}</span>
-                {n.ip && <span className="num text-[0.8125rem] text-muted">{n.ip}{n.prefix ? `/${n.prefix}` : ""}</span>}
+                {n.ip && <span className="num text-ui text-muted">{n.ip}{n.prefix ? `/${n.prefix}` : ""}</span>}
                 {n.gateway && <span className="num text-xs text-subtle">gw {n.gateway}</span>}
                 {!!n.aliases?.length && <span className="truncate text-xs text-subtle">aliases: {n.aliases.join(", ")}</span>}
               </li>
@@ -119,7 +119,7 @@ function Overview({ d, stats }: { d: ContainerDetails; stats?: ContainerStats })
             {d.mounts.map((m) => (
               <li key={m.destination} className="py-1.5">
                 <div className="flex items-center gap-2">
-                  <span className="num min-w-0 flex-1 truncate text-[0.8125rem] font-medium" title={m.destination}>{m.destination}</span>
+                  <span className="num min-w-0 flex-1 truncate text-ui font-medium" title={m.destination}>{m.destination}</span>
                   <Badge tone={m.type === "volume" ? "frost" : "neutral"}>{m.type}</Badge>
                   {!m.rw && <Badge tone="warn">ro</Badge>}
                 </div>
@@ -149,7 +149,7 @@ function Overview({ d, stats }: { d: ContainerDetails; stats?: ContainerStats })
                     <span className="text-muted">{datetime(l.start)}</span>
                     <span className="num ml-auto text-subtle">exit {l.exitCode}</span>
                   </div>
-                  {l.output && <pre className="num mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all text-[0.6875rem] text-muted">{l.output}</pre>}
+                  {l.output && <pre className="num mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all text-2xs text-muted">{l.output}</pre>}
                 </li>
               ))}
           </ul>
@@ -218,7 +218,7 @@ function EnvTab({ d }: { d: ContainerDetails }) {
 }
 
 const tabCls =
-  "inline-flex h-9 items-center border-b-2 border-transparent px-3 text-[0.8125rem] font-medium text-muted hover:text-fg data-[state=active]:border-accent data-[state=active]:text-fg";
+  "inline-flex h-9 items-center border-b-2 border-transparent px-3 text-ui font-medium text-muted hover:text-fg data-[state=active]:border-accent data-[state=active]:text-fg";
 
 export function ContainerSheet({
   id,

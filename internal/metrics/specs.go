@@ -22,18 +22,20 @@ import (
 // Specs are fastfetch-style details about the machine. Static parts are
 // computed once; package counts are refreshed every few minutes.
 type Specs struct {
-	Model     string         `json:"model,omitempty"`
-	Board     string         `json:"board,omitempty"`
-	GPUs      []string       `json:"gpus,omitempty"`
-	Shell     string         `json:"shell,omitempty"`
-	Init      string         `json:"init,omitempty"`
-	Timezone  string         `json:"timezone,omitempty"`
-	Locale    string         `json:"locale,omitempty"`
-	LocalIP   string         `json:"localIp,omitempty"`
-	Packages  []PackageCount `json:"packages,omitempty"`
-	Desktop   *Desktop       `json:"desktop,omitempty"`
-	Logo      bool           `json:"logo"`
-	LogoColor string         `json:"logoColor,omitempty"`
+	Model string   `json:"model,omitempty"`
+	Board string   `json:"board,omitempty"`
+	GPUs  []string `json:"gpus,omitempty"`
+	// GPUDetails adds memory to each GPU (same order as GPUs).
+	GPUDetails []GPU          `json:"gpuDetails,omitempty"`
+	Shell      string         `json:"shell,omitempty"`
+	Init       string         `json:"init,omitempty"`
+	Timezone   string         `json:"timezone,omitempty"`
+	Locale     string         `json:"locale,omitempty"`
+	LocalIP    string         `json:"localIp,omitempty"`
+	Packages   []PackageCount `json:"packages,omitempty"`
+	Desktop    *Desktop       `json:"desktop,omitempty"`
+	Logo       bool           `json:"logo"`
+	LogoColor  string         `json:"logoColor,omitempty"`
 }
 
 type PackageCount struct {
@@ -72,10 +74,10 @@ func joinNonEmpty(parts ...string) string {
 
 func computeStatic() Specs {
 	s := Specs{
-		Model:    joinNonEmpty(dmi("sys_vendor"), dmi("product_name"), dmi("product_version")),
-		Board:    joinNonEmpty(dmi("board_vendor"), dmi("board_name")),
-		GPUs:     gpus(),
-		Timezone: timezone(),
+		Model:      joinNonEmpty(dmi("sys_vendor"), dmi("product_name"), dmi("product_version")),
+		Board:      joinNonEmpty(dmi("board_vendor"), dmi("board_name")),
+		GPUDetails: gpuDetails(),
+		Timezone:   timezone(),
 	}
 	if s.Model == "" {
 		// Raspberry Pi and other device-tree boards.
@@ -147,32 +149,93 @@ func timezone() string {
 	return time.Now().Location().String()
 }
 
-// gpus lists display controllers (PCI class 0x03) named via pci.ids.
-func gpus() []string {
+// GPU is a display controller and its memory.
+type GPU struct {
+	Name string `json:"name"`
+	// VRAM is dedicated memory in bytes (0 when unknown or shared).
+	VRAM uint64 `json:"vram,omitempty"`
+	// Shared: an integrated GPU using system memory.
+	Shared bool `json:"shared,omitempty"`
+}
+
+// gpuDetails lists display controllers (PCI class 0x03) named via pci.ids,
+// with dedicated memory where the kernel or driver reports it: amdgpu's
+// mem_info_vram_total, or nvidia-smi when installed. Intel GPUs without
+// reported VRAM are integrated and share system memory.
+func gpuDetails() []GPU {
 	devs, _ := filepath.Glob(hostfs.Path("/sys/bus/pci/devices") + "/*")
-	type id struct{ vendor, device string }
+	type id struct{ vendor, device, addr string }
 	var ids []id
 	for _, d := range devs {
 		if !strings.HasPrefix(readStr(d+"/class"), "0x03") {
 			continue
 		}
-		ids = append(ids, id{strings.TrimPrefix(readStr(d+"/vendor"), "0x"), strings.TrimPrefix(readStr(d+"/device"), "0x")})
+		ids = append(ids, id{strings.TrimPrefix(readStr(d+"/vendor"), "0x"), strings.TrimPrefix(readStr(d+"/device"), "0x"), d})
 	}
 	if len(ids) == 0 {
 		return nil
 	}
 	names := pciNames()
-	var out []string
+	var nv map[string]uint64
+	var out []GPU
 	for _, i := range ids {
 		v, d := names[i.vendor], names[i.vendor+":"+i.device]
+		g := GPU{}
 		switch {
 		case d != "":
-			out = append(out, shortVendor(v)+" "+d)
+			g.Name = shortVendor(v) + " " + d
 		case v != "":
-			out = append(out, shortVendor(v)+" "+i.device)
+			g.Name = shortVendor(v) + " " + i.device
 		default:
-			out = append(out, i.vendor+":"+i.device)
+			g.Name = i.vendor + ":" + i.device
 		}
+		if n, ok := readInt(i.addr + "/mem_info_vram_total"); ok && n > 0 {
+			g.VRAM = uint64(n)
+		}
+		switch i.vendor {
+		case "10de": // NVIDIA: the proprietary driver doesn't expose VRAM in sysfs.
+			if nv == nil {
+				nv = nvidiaVRAM()
+			}
+			if n := nv[strings.ToLower(filepath.Base(i.addr))]; n > 0 {
+				g.VRAM = n
+			}
+		case "8086":
+			g.Shared = g.VRAM == 0
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// nvidiaVRAM maps PCI addresses (0000:01:00.0) to total memory from
+// nvidia-smi, when it is installed.
+func nvidiaVRAM() map[string]uint64 {
+	out := map[string]uint64{}
+	if _, err := hostfs.LookPath("nvidia-smi"); err != nil {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	b, err := hostfs.Command(ctx, "nvidia-smi", "--query-gpu=pci.bus_id,memory.total", "--format=csv,noheader,nounits").Output()
+	if err != nil {
+		return out
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		addr, mib, ok := strings.Cut(l, ",")
+		if !ok {
+			continue
+		}
+		n, err := strconv.ParseUint(strings.TrimSpace(mib), 10, 64)
+		if err != nil {
+			continue
+		}
+		// nvidia-smi prints 00000000:01:00.0; sysfs uses 0000:01:00.0.
+		a := strings.ToLower(strings.TrimSpace(addr))
+		if len(a) > 12 {
+			a = a[len(a)-12:]
+		}
+		out[a] = n << 20
 	}
 	return out
 }
@@ -287,7 +350,12 @@ func primaryIP() string {
 
 // GetSpecs returns machine specs.
 func GetSpecs() Specs {
-	specsOnce.Do(func() { staticSpecs = computeStatic() })
+	specsOnce.Do(func() {
+		staticSpecs = computeStatic()
+		for _, g := range staticSpecs.GPUDetails {
+			staticSpecs.GPUs = append(staticSpecs.GPUs, g.Name)
+		}
+	})
 	s := staticSpecs
 	s.Packages = packageCounts()
 	s.LocalIP = primaryIP()
@@ -367,3 +435,6 @@ func serveLogo(w http.ResponseWriter, r *http.Request) {
 	}
 	http.ServeFile(w, r, rp)
 }
+
+// Timezone is the host's IANA timezone (e.g. "America/Toronto"), or "".
+func Timezone() string { return timezone() }

@@ -63,7 +63,7 @@ function DriveRow({ r, current, onPick }: { r: Root; current: boolean; onPick: (
         {current && <CurrentBar />}
         <div className="flex items-center gap-2">
           <RootIcon root={r} className={cn("size-4 shrink-0", current ? "text-accent" : "text-subtle")} />
-          <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium">{r.name}</span>
+          <span className="min-w-0 flex-1 truncate text-ui font-medium">{r.name}</span>
           {r.readOnly && (
             <span className="flex h-4 shrink-0 items-center gap-0.5 rounded border border-border px-1 text-[0.625rem] font-medium uppercase tracking-wide text-muted" title="Read-only">
               <Lock className="size-2.5" aria-hidden="true" />
@@ -138,7 +138,7 @@ function BookmarkRow({ b, index, count, current, onPick, drag }: { b: Bookmark; 
             count > 1 && "pointer-fine:group-hover:opacity-0",
           )}
         />
-        <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium">{b.name}</span>
+        <span className="min-w-0 flex-1 truncate text-ui font-medium">{b.name}</span>
       </div>
       <div className={cn("num mt-0.5 truncate pl-6 text-2xs text-subtle", disabled && "opacity-70")}>{disabled ? (b.reason ?? "Unavailable") : shortPath(b.abs, home)}</div>
     </button>
@@ -385,7 +385,7 @@ export function Breadcrumbs({
   );
   return (
     <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
-      <ol ref={ref} className="flex min-w-0 items-center overflow-x-auto text-[0.8125rem] [scrollbar-width:none]">
+      <ol ref={ref} className="flex min-w-0 items-center overflow-x-auto text-ui [scrollbar-width:none]">
         <li className="flex shrink-0 items-center">
           {api.roots.length > 1 || api.bookmarks.length > 0 ? (
             <div className="flex items-center">

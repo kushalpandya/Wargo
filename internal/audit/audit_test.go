@@ -3,6 +3,8 @@
 package audit
 
 import (
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -68,5 +70,38 @@ func TestPruneRowCap(t *testing.T) {
 	st.DB.QueryRow(`SELECT COUNT(*), MIN(id) FROM audit_log`).Scan(&n, &minID)
 	if n != maxRows || minID != 11 {
 		t.Fatalf("rows %d min id %d", n, minID)
+	}
+}
+
+func TestListPrefix(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	l := New(st, httpx.NewProxyTrust(nil))
+	for _, a := range []string{"files.upload", "auth.password", "files.delete"} {
+		l.RecordSystem(a, "x", "ok")
+	}
+	mux := http.NewServeMux()
+	l.Register(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/audit?prefix=files.", nil))
+	var out []Entry
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if len(out) != 2 || out[0].Action != "files.delete" {
+		t.Fatalf("got %+v", out)
+	}
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/audit?prefix=FILES.", nil))
+	out = nil
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if len(out) != 0 {
+		t.Fatalf("prefix should be case-sensitive: %+v", out)
+	}
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/audit?prefix=fil%25", nil))
+	if w.Code != 400 {
+		t.Fatalf("wildcard prefix: %d", w.Code)
 	}
 }

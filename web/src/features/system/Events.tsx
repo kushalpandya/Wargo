@@ -28,7 +28,7 @@ interface SysEvent {
   last: number;
 }
 
-interface EventsResponse {
+export interface EventsResponse {
   events: SysEvent[];
   errors: number;
   warnings: number;
@@ -56,13 +56,13 @@ function EventRow({ e }: { e: SysEvent }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-start gap-3 px-3.5 py-2.5 text-left hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none"
+        className="flex w-full items-start gap-3 px-4 py-2.5 text-left hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none"
       >
         <span className={cn("mt-0.5 shrink-0 [&_svg]:size-4", err ? "text-crit" : "text-warn")}>
           {err ? <CircleAlert aria-label="Error" /> : <AlertTriangle aria-label="Warning" />}
         </span>
         <span className="min-w-0 flex-1">
-          <span className={cn("block text-[0.8125rem] text-fg", open ? "whitespace-pre-wrap break-words" : "truncate")}>{e.message || "(no message)"}</span>
+          <span className={cn("block text-ui text-fg", open ? "whitespace-pre-wrap break-words" : "truncate")}>{e.message || "(no message)"}</span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
             <span className="inline-flex items-center gap-1 text-subtle [&_svg]:size-3">
               {src.icon}
@@ -148,19 +148,19 @@ export const EventsPanel = memo(function EventsPanel() {
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Card className="p-3.5">
+        <Card className="p-4">
           <div className="text-2xs font-semibold uppercase tracking-wider text-subtle">Errors</div>
           <div className={cn("num mt-1 text-2xl font-medium", data?.errors ? "text-crit" : "text-fg")}>{data ? data.errors.toLocaleString() : "–"}</div>
           <div className="text-xs text-muted">{RANGE_LABEL[range]}</div>
         </Card>
-        <Card className="p-3.5">
+        <Card className="p-4">
           <div className="text-2xs font-semibold uppercase tracking-wider text-subtle">Warnings</div>
           <div className={cn("num mt-1 text-2xl font-medium", level === "warning" && data?.warnings ? "text-warn" : "text-fg")}>
             {data ? (level === "warning" ? data.warnings.toLocaleString() : "Hidden") : "–"}
           </div>
           <div className="text-xs text-muted">{RANGE_LABEL[range]}</div>
         </Card>
-        <Card className="col-span-2 p-3.5 sm:col-span-1">
+        <Card className="col-span-2 p-4 sm:col-span-1">
           <div className="text-2xs font-semibold uppercase tracking-wider text-subtle">Distinct messages</div>
           <div className="num mt-1 text-2xl font-medium">{data ? data.events.length.toLocaleString() : "–"}</div>
           <div className="text-xs text-muted">repeats are grouped</div>
@@ -215,13 +215,13 @@ export const EventsPanel = memo(function EventsPanel() {
         </div>
 
         {query.isLoading ? (
-          <div className="space-y-2 p-3.5">
+          <div className="space-y-2 p-4">
             {Array.from({ length: 6 }, (_, i) => (
               <Skeleton key={i} className="h-11" />
             ))}
           </div>
         ) : query.error ? (
-          <div className="p-3.5">
+          <div className="p-4">
             <ErrorNote error={query.error} />
           </div>
         ) : shown.length === 0 ? (
@@ -238,7 +238,7 @@ export const EventsPanel = memo(function EventsPanel() {
             </ul>
           </div>
         )}
-        {data?.truncated && <p ref={setFootEl} className="border-t border-border px-3.5 py-2 text-xs text-muted">Showing the 500 most recent distinct messages.</p>}
+        {data?.truncated && <p ref={setFootEl} className="border-t border-border px-4 py-2 text-xs text-muted">Showing the 500 most recent distinct messages.</p>}
       </Card>
     </div>
   );

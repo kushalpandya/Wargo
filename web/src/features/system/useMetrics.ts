@@ -65,6 +65,8 @@ export interface SystemInfo {
   kernel: string;
   arch: string;
   cpuModel: string;
+  /** Highest maximum clock of any core, in MHz. */
+  cpuMaxMHz?: number;
   cores: number;
   threads: number;
   memTotal: number;
@@ -126,4 +128,14 @@ export function useSeries(points: Point[], keys: (keyof Point)[]) {
     return [xs, ...keys.map((k) => points.map((p) => p[k] as number))] as [number[], ...number[][]];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points]);
+}
+
+/** The host's public address, looked up by the server (cached there). */
+export function usePublicIP() {
+  return useQuery({
+    queryKey: ["system", "public-ip"],
+    queryFn: () => api.get<{ ip?: string; source?: string; checkedAt?: number; error?: string }>("/api/system/public-ip"),
+    staleTime: 30 * 60_000,
+    refetchInterval: 30 * 60_000,
+  });
 }

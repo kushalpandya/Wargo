@@ -53,7 +53,8 @@ path = "/home/alice"
 [docker]
 socket = "/var/run/docker.sock"
 # Check container images for newer versions in the background (read-only
-# registry lookups; nothing is pulled). "0" disables.
+# registry lookups; nothing is pulled). "0" disables. A value chosen in
+# Settings → General takes precedence.
 update_check_interval = "6h"
 
 [metrics]

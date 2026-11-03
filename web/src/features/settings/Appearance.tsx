@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { ReactNode } from "react";
-import { Check, Monitor, Moon, Sun } from "lucide-react";
+import { Check, Contrast, House, Moon, Paintbrush, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { setTheme, useIsDark, useThemeMode, type ThemeMode } from "@/lib/theme";
+import { ACCENTS, setAccent, setTheme, useAccent, useIsDark, useThemeMode, type ThemeMode } from "@/lib/theme";
+import { usePref } from "@/lib/prefs";
+import { Switch, useRadioGroup } from "@/components/ui/form";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { SettingsHeader } from "./shared";
+import { WeatherSettings } from "@/features/weather/WeatherSettings";
+import { SettingsStack } from "./shared";
 
 /** Miniature dashboard drawn in the given palette (scoped with the `dark` class). */
 function Preview({ dark }: { dark: boolean }) {
@@ -47,29 +50,87 @@ function SplitPreview() {
 }
 
 const options: { value: ThemeMode; label: string; icon: ReactNode; hint: string }[] = [
-  { value: "auto", label: "Match system", icon: <Monitor />, hint: "Follows your device's light or dark setting" },
+  { value: "auto", label: "Match system", icon: <Contrast />, hint: "Follows your device's light or dark setting" },
   { value: "light", label: "Light", icon: <Sun />, hint: "Bright surfaces, best in daylight" },
-  { value: "dark", label: "Dark", icon: <Moon />, hint: "Low-glare slate palette" },
+  { value: "dark", label: "Dark", icon: <Moon />, hint: "Deep, low-glare colours for night" },
 ];
+
+function AccentCard() {
+  const accent = useAccent();
+  const radio = useRadioGroup(
+    ACCENTS.map((a) => a.id),
+    accent,
+    setAccent,
+  );
+  return (
+    <Card>
+      <CardHeader title="Accent colour" icon={<Paintbrush />} tint="iris" meta="this browser" />
+      <CardBody>
+        <div {...radio.group} aria-label="Accent colour" className="flex flex-wrap gap-2">
+          {ACCENTS.map((a) => {
+            const active = accent === a.id;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                {...radio.item(a.id)}
+                onClick={() => setAccent(a.id)}
+                className={cn(
+                  "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-ui font-medium transition-colors",
+                  active ? "border-accent bg-accent-soft text-fg" : "border-border text-muted hover:border-border-strong hover:text-fg",
+                )}
+              >
+                <span className="size-4 rounded-full ring-1 ring-black/10" style={{ background: a.swatch }} aria-hidden="true" />
+                {a.label}
+                {active && <Check className="size-3.5 text-accent" aria-hidden="true" />}
+              </button>
+            );
+          })}
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+/** What Home shows (per browser). */
+function HomeCard() {
+  const [feed, setFeed] = usePref("wargo.home.feed", "on", ["on", "off"] as const);
+  return (
+    <Card>
+      <CardHeader title="Home" icon={<House />} tint="mint" meta="this browser" />
+      <CardBody>
+        <Switch
+          checked={feed === "on"}
+          onCheckedChange={(on) => setFeed(on ? "on" : "off")}
+          label="Show the feed"
+          description="Updates, containers needing attention, downloads, recent files and system errors, beside the rest of Home."
+        />
+      </CardBody>
+    </Card>
+  );
+}
 
 export default function Appearance() {
   const mode = useThemeMode();
   const dark = useIsDark();
+  const radio = useRadioGroup(
+    options.map((o) => o.value),
+    mode,
+    setTheme,
+  );
   return (
-    <>
-      <SettingsHeader title="Appearance" description="Theme is stored in this browser only." />
+    <SettingsStack>
       <Card>
         <CardHeader title="Theme" meta={mode === "auto" ? `currently ${dark ? "dark" : "light"}` : undefined} />
         <CardBody>
-          <div role="radiogroup" aria-label="Theme" className="grid gap-3 sm:grid-cols-3">
+          <div {...radio.group} aria-label="Theme" className="grid gap-3 sm:grid-cols-3">
             {options.map((o) => {
               const active = mode === o.value;
               return (
                 <button
                   key={o.value}
                   type="button"
-                  role="radio"
-                  aria-checked={active}
+                  {...radio.item(o.value)}
                   onClick={() => setTheme(o.value)}
                   className={cn(
                     "flex flex-col gap-2.5 rounded-lg border p-2.5 text-left transition-colors",
@@ -91,6 +152,9 @@ export default function Appearance() {
           </div>
         </CardBody>
       </Card>
-    </>
+      <AccentCard />
+      <WeatherSettings />
+      <HomeCard />
+    </SettingsStack>
   );
 }

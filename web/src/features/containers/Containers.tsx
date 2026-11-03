@@ -114,7 +114,7 @@ function Summary({ list, checkedAt }: { list?: Container[]; checkedAt?: number |
             <div
               key={it.label}
               className={cn(
-                "min-w-0 px-3.5 py-3",
+                "min-w-0 px-4 py-3",
                 i % 2 === 1 && "max-sm:border-l max-sm:border-border",
                 i > 1 && "max-sm:border-t max-sm:border-border",
               )}
@@ -136,7 +136,7 @@ function Summary({ list, checkedAt }: { list?: Container[]; checkedAt?: number |
             </div>
           ))
         : Array.from({ length: 4 }, (_, i) => (
-            <div key={i} className="px-3.5 py-3">
+            <div key={i} className="px-4 py-3">
               <Skeleton className="h-3 w-16" />
               <Skeleton className="mt-2 h-6 w-10" />
             </div>
@@ -431,11 +431,11 @@ export default function Page() {
           </Button>
         </div>
         {list.error ? (
-          <div className="p-3.5">
+          <div className="p-4">
             <ErrorNote error={list.error} />
           </div>
         ) : !data ? (
-          <div className="space-y-2 p-3.5">
+          <div className="space-y-2 p-4">
             {Array.from({ length: 6 }, (_, i) => (
               <Skeleton key={i} className="h-10" />
             ))}
@@ -571,7 +571,7 @@ export default function Page() {
                   aria-label={group ? g.key || "Standalone" : undefined}
                 >
                   {group && (
-                    <h2 className="border-b border-border bg-surface-2/60 px-3.5 py-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle">
+                    <h2 className="border-b border-border bg-surface-2/60 px-4 py-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle">
                       {g.key || "Standalone"}{" "}
                       <span className="num ml-1 font-normal">
                         {g.rows.length}
@@ -584,7 +584,7 @@ export default function Page() {
                       return (
                         <li
                           key={c.id}
-                          className="border-b border-border px-3.5 py-2.5 last:border-b-0"
+                          className="border-b border-border px-4 py-2.5 last:border-b-0"
                         >
                           <div className="flex items-start gap-2">
                             <button
