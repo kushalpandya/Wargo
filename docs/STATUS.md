@@ -1,6 +1,6 @@
-# Wargo alpha: status notes
+# Wargo beta: status notes
 
-Where the first alpha (`v1.0.0-alpha.1`) stands: what was tested and how, and
+Where the first beta (`v1.0.0-beta.1`) stands: what was tested and how, and
 the known gaps to pick up next.
 
 ## Try it from source
@@ -20,18 +20,18 @@ sign-in needs `/etc/pam.d/wargo` (from `deploy/pam/wargo`).
 
 | Area | Status | Tested against |
 |---|---|---|
-| Home and System → Activity Monitor (CPU per core, memory, sensors, fans, network, public IP, disk activity, drives, partitions) | Done | Real server |
+| Home (live tiles, host details, feed, weather) and System → Activity Monitor (CPU per core, memory, sensors, fans, network, public IP, disk activity, drives, partitions) | Done | Real server; weather against Open-Meteo |
 | Processes (list, tree, details, signals) | Done | Real server (reading); signals only on test processes; a root process shows the approval prompt (cancelled) |
 | System → Events (journal, kernel, containers, Wargo) | Done | Real journal on Manjaro, natively and from the container; Docker events with a fake Docker |
 | Containers (list, health, ports, usage, logs, update check) | Done | Real Docker (read only) |
 | Container start, stop, restart and update with rollback | Done | Fake Docker API only |
 | Terminal (host, root and container shells, tabs, reconnect) | Done | Host shell live; root and container commands by unit test |
 | File manager (browse, preview, edit, upload, archives, permissions) | Done | Test folder; home folder browsed read only |
-| OS updates (check, upgrade through systemd-run, restart detection) | Done | Real `pamac checkupdates`; upgrades only with a simulated script |
+| OS updates (check, background check, upgrade through systemd-run, restart detection) | Done | Real `pamac checkupdates`; upgrades only with a simulated script |
 | Prowlarr search, magnet, .torrent, queue | Done | Real Prowlarr (search and magnet read only); queue with fakes |
 | Transmission downloads (pause, resume, remove) | Done | Fake Transmission (the real one needs your password) |
 | App launcher (square tiles, edit, drag to reorder) | Done | Real container suggestions; order saved on the server |
-| Settings (appearance, security, integrations, launcher, audit log, about) | Done | Dev instance and a virtual authenticator |
+| Settings (general, appearance with accent colours, integrations, security, about with the audit log) | Done | Dev instance and a virtual authenticator |
 | Sign-in: PAM plus two-factor code, passkeys, recovery codes, sessions | Done | Unit tests and a virtual authenticator; native PAM sign-in not tried yet (needs your password) |
 | Admin approval through sudo | Done | Prompt tested; sudo never actually run |
 | wargo-privd (passkey-approved root actions) | Done | Run as a normal user on a test socket; the root path not tried |
@@ -44,7 +44,7 @@ and phone sizes, in light and dark themes.
 
 Memory: about 23 MB idle and about 42 MB with several live pages open (Go
 itself uses 5 to 6 MB; the rest is the runtime and the program file). The
-main JavaScript bundle is 140 KB compressed; the terminal, editor and charts
+main JavaScript bundle is about 110 KB compressed; the terminal, editor and charts
 load only when needed.
 
 ## Before first real use
@@ -64,8 +64,7 @@ load only when needed.
 - **Containers:** compose updates need the `docker compose` plugin, and
   CasaOS compose files can only be read by root, so "auto" recreates
   containers through the Docker API instead (keeping their labels). Private
-  images that need a registry login aren't supported. Update check results
-  are kept in memory only.
+  images that need a registry login aren't supported.
 - **Updates:** dnf, zypper and apk are tested only with sample output.
   Running upgrades can't be cancelled (on purpose). Download sizes are often
   unknown.

@@ -53,9 +53,9 @@ proxy, a tunnel or `ssh -L 2207:127.0.0.1:2207 <server>`.
 Sign in with your **server** account's password, then set up a two-factor
 code or a passkey, just like a native install.
 
-**Image tags:** each release gets its own tag (for example `v1.0.0-alpha.1`).
+**Image tags:** each release gets its own tag (for example `v1.0.0-beta.1`).
 `latest` and `next` point to the newest release; until 1.0, `latest` includes
-pre-releases. To stay on one version, set `WARGO_TAG=v1.0.0-alpha.1`. Images
+pre-releases. To stay on one version, set `WARGO_TAG=v1.0.0-beta.1`. Images
 are built for amd64 and arm64.
 
 ## Settings

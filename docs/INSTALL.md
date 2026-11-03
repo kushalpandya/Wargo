@@ -35,7 +35,7 @@ That's it. The installer:
 - starts Wargo on `127.0.0.1:2207`, running as your user (not root).
 
 **Upgrade:** run the same command again. Your settings are kept.
-**Pick a version:** `… | sh -s -- --version v1.0.0-alpha.1`
+**Pick a version:** `… | sh -s -- --version v1.0.0-beta.1`
 **Uninstall:** `… | sh -s -- --uninstall` (add `--purge` to delete its data too)
 **Preview:** `… | sh -s -- --dry-run` shows every step without changing anything.
 

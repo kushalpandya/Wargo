@@ -7,7 +7,7 @@
 services:
   wargo:
     # latest = newest release (pre-releases included until v1.0.0), next =
-    # newest pre-release. Pin a version with WARGO_TAG=v1.0.0-alpha.1.
+    # newest pre-release. Pin a version with WARGO_TAG=v1.0.0-beta.1.
     image: ghcr.io/kushalpandya/wargo:${WARGO_TAG:-latest}
     container_name: wargo
     restart: unless-stopped

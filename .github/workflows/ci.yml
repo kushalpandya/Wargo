@@ -178,7 +178,7 @@ jobs:
   # Multi-arch container image (container mode, see docs/DOCKER.md), built
   # from the binaries the build job compiled natively on each architecture
   # (deploy/docker/Dockerfile.release) so nothing compiles under emulation.
-  # Tags: on every v* tag the version (e.g. v1.0.0-alpha.1), "latest" and
+  # Tags: on every v* tag the version (e.g. v1.0.0-beta.1), "latest" and
   # "next". Until the first stable release, latest tracks every release.
   # After v1.0.0, restrict latest to stable tags and keep next for
   # pre-releases.
