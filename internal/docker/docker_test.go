@@ -208,7 +208,9 @@ func TestStripImageDefaults(t *testing.T) {
 type fakeContainer struct {
 	id, name, image string
 	running         bool
+	exitCode        int
 	inspect         map[string]any
+	inspects        int // health reports served
 }
 
 type fakeDocker struct {
@@ -218,7 +220,10 @@ type fakeDocker struct {
 	failStart  bool // starting a container with the new image fails
 	exitAfter  bool // new containers stop right after starting
 	newImageID string
-	seq        int
+	// newHealth is the health status sequence reported for running
+	// containers of the new image (the last one repeats).
+	newHealth []string
+	seq       int
 }
 
 func (f *fakeDocker) find(ref string) *fakeContainer {
@@ -240,7 +245,12 @@ func (f *fakeDocker) inspectOf(c *fakeContainer) map[string]any {
 	if c.running {
 		status = "running"
 	}
-	m["State"] = map[string]any{"Status": status, "Running": c.running, "ExitCode": 0}
+	st := map[string]any{"Status": status, "Running": c.running, "ExitCode": c.exitCode}
+	if c.running && c.image == f.newImageID && len(f.newHealth) > 0 {
+		st["Health"] = map[string]any{"Status": f.newHealth[min(c.inspects, len(f.newHealth)-1)]}
+		c.inspects++
+	}
+	m["State"] = st
 	return m
 }
 

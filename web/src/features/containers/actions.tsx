@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/ui/dialog";
 import { Segmented } from "@/components/ui/form";
 import { toast } from "@/components/ui/toast";
 import { JobDialog } from "./JobDialog";
+import { startSelfUpdate } from "./SelfUpdateDialog";
 import type { Container } from "./types";
 
 export type Action = "start" | "stop" | "restart" | "update";
@@ -15,11 +16,12 @@ type Strategy = "auto" | "recreate" | "compose";
 const verbs: Record<Action, string> = { start: "Start", stop: "Stop", restart: "Restart", update: "Update" };
 const past: Record<Action, string> = { start: "Started", stop: "Stopped", restart: "Restarted", update: "Updated" };
 
-function describe(action: Action, c: Container): string {
+function describe(action: Action, c: Container, selfUpdate: boolean): string {
   if (c.self) {
     if (action === "stop") return "This is Wargo's own container. Stopping it ends this session, and Wargo stays down until you start the container again from the host.";
     if (action === "restart") return "This is Wargo's own container. Restarting it disconnects you until Wargo is back, usually within a few seconds.";
-    return "Wargo can't update its own container yet. On the host, run docker compose pull && docker compose up -d in the folder of your Wargo compose file.";
+    if (selfUpdate) return "Wargo downloads the new version, then restarts on it. This page reconnects by itself. If the new version doesn't start properly, the current one comes back.";
+    return "Wargo can't update its own container here because it can't see its Docker socket. On the host, run docker compose pull && docker compose up -d in the folder of your Wargo compose file.";
   }
   if (action === "stop") return "The container stops and its services become unavailable until it is started again.";
   if (action === "restart") return "The container is stopped and started again; its services are briefly unavailable.";
@@ -29,7 +31,9 @@ function describe(action: Action, c: Container): string {
 /** State + dialogs for container actions. Render `element` once. */
 export function useContainerActions() {
   const qc = useQueryClient();
-  const caps = useCapabilities().data?.docker;
+  const allCaps = useCapabilities().data;
+  const caps = allCaps?.docker;
+  const selfUpdate = !!caps?.selfUpdate;
   const [pending, setPending] = useState<{ action: Action; c: Container } | null>(null);
   const [strategy, setStrategy] = useState<Strategy>("auto");
   const [job, setJob] = useState<{ id: string; title: string } | null>(null);
@@ -37,7 +41,7 @@ export function useContainerActions() {
 
   const mut = useMutation({
     mutationFn: async ({ action, c }: { action: Action; c: Container }) => {
-      if (action === "update") return api.post<{ jobId: string }>(`/api/containers/${c.id}/update`, { strategy });
+      if (action === "update") return api.post<{ jobId: string; strategy: string }>(`/api/containers/${c.id}/update`, c.self ? {} : { strategy });
       // Wargo's own container: the dialog already showed the warning.
       return api.post(`/api/containers/${c.id}/${action}`, c.self ? { confirmSelf: true } : undefined);
     },
@@ -46,7 +50,9 @@ export function useContainerActions() {
     onSuccess: (res, { action, c }) => {
       setPending(null);
       if (action === "update") {
-        setJob({ id: (res as { jobId: string }).jobId, title: `Update ${c.name}` });
+        const r = res as { jobId: string; strategy: string };
+        if (r.strategy === "self") startSelfUpdate(r.jobId, allCaps?.version);
+        else setJob({ id: r.jobId, title: `Update ${c.name}` });
       } else {
         toast.ok(`${past[action]} ${c.name}`);
       }
@@ -66,6 +72,8 @@ export function useContainerActions() {
   };
 
   const p = pending;
+  // Wargo's own container: update through its updater, or explain why not.
+  const selfUpd = !!p?.c.self && p.action === "update";
   const composeOk = !!caps?.compose && !!p?.c.compose;
   const element = (
     <>
@@ -73,12 +81,12 @@ export function useContainerActions() {
         <ConfirmDialog
           open
           onOpenChange={(o) => !o && setPending(null)}
-          title={`${verbs[p.action]} ${p.c.name}?`}
-          confirmLabel={p.c.self ? (p.action === "update" ? "OK" : `${verbs[p.action]} Wargo`) : verbs[p.action]}
+          title={selfUpd ? "Update Wargo" : `${verbs[p.action]} ${p.c.name}?`}
+          confirmLabel={p.c.self ? (selfUpd ? (selfUpdate ? "Update Wargo" : "OK") : `${verbs[p.action]} Wargo`) : verbs[p.action]}
           danger={p.action === "stop" || (!!p.c.self && p.action === "restart")}
           loading={mut.isPending}
-          onConfirm={() => (p.c.self && p.action === "update" ? setPending(null) : mut.mutate(p))}
-          description={describe(p.action, p.c)}
+          onConfirm={() => (selfUpd && !selfUpdate ? setPending(null) : mut.mutate(p))}
+          description={describe(p.action, p.c, selfUpdate)}
         >
           {p.action === "update" && !p.c.self && (
             <div className="space-y-2">

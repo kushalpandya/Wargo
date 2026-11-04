@@ -192,3 +192,22 @@ export interface JobSnapshot {
   result?: Record<string, unknown>;
   logLines: number;
 }
+
+/** GET /api/containers/self-update: Wargo updating its own container. */
+export interface SelfUpdateStatus {
+  /** Set while an update is handed over to the updater container. */
+  pending?: { startedAt: number; fromVersion: string; toVersion?: string; ref: string; jobId: string };
+  /** Outcome of the last update, recorded by the Wargo that runs afterwards. */
+  result?: {
+    ok: boolean;
+    rolledBack: boolean;
+    error?: string;
+    fromVersion: string;
+    toVersion?: string;
+    startedAt: number;
+    finishedAt: number;
+    exitCode?: number;
+    log: string[];
+    jobId: string;
+  };
+}

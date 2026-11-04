@@ -133,6 +133,21 @@ func (l *Log) RecordSystem(action, target, result string) {
 	l.maybePrune()
 }
 
+// RecordSystemDetails is RecordSystem with JSON details.
+func (l *Log) RecordSystemDetails(action, target, result string, details any) {
+	var d []byte
+	if details != nil {
+		d, _ = json.Marshal(details)
+		if len(d) > maxDetails {
+			d, _ = json.Marshal(map[string]any{"truncated": clip(string(d), maxDetails)})
+		}
+	}
+	_, _ = l.st.DB.Exec(`INSERT INTO audit_log(ts, ip, action, target, result, details) VALUES(?,?,?,?,?,?)`,
+		time.Now().Unix(), "local", action, clip(target, maxTarget), clip(result, maxResult), string(d))
+	slog.Info("audit", "action", action, "target", target, "result", result)
+	l.maybePrune()
+}
+
 func (l *Log) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/audit", httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
 		limit := min(max(httpx.QueryInt(r, "limit", 100), 1), 500)

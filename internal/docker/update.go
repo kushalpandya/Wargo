@@ -214,7 +214,7 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request, id string
 		return dockerErr(err)
 	}
 	if s.selfID != "" && in.ID == s.selfID {
-		return errSelfUpdate
+		return s.handleSelfUpdate(w, r, in)
 	}
 	name := strings.TrimPrefix(in.Name, "/")
 	labels := in.Config.Labels
@@ -456,7 +456,7 @@ func (s *Service) UpdateRecreate(ctx context.Context, job *jobs.Job, id string) 
 	}
 	job.Log(fmt.Sprintf("New image %s (was %s)", shortID(img.ID), shortID(old.Image)))
 	job.Progress("Recreating container", -1, strings.TrimPrefix(old.Name, "/"))
-	newID, err := s.recreate(ctx, job, old, "")
+	newID, err := s.recreate(ctx, job, old, "", false)
 	if err != nil {
 		return nil, err
 	}
@@ -479,7 +479,7 @@ func (s *Service) UpdateRecreate(ctx context.Context, job *jobs.Job, id string) 
 			job.Log(fmt.Sprintf("Recreating %s, which shares %s's network", c.Name, name))
 			dep, err := s.inspectFull(ctx, c.FullID)
 			if err == nil {
-				_, err = s.recreate(ctx, job, dep, "container:"+newID)
+				_, err = s.recreate(ctx, job, dep, "container:"+newID, false)
 			}
 			if err != nil {
 				job.Log(fmt.Sprintf("warning: could not recreate %s: %v", c.Name, err))
@@ -654,7 +654,21 @@ func createBody(old *inspected, imgCfg map[string]any, netMode string, multiEndp
 	return body, extraNets
 }
 
-func (s *Service) recreate(ctx context.Context, job *jobs.Job, old *inspected, netMode string) (string, error) {
+// logger receives progress lines (satisfied by *jobs.Job).
+type logger interface{ Log(string) }
+
+var (
+	// ErrRolledBack means the update failed and the old container is back.
+	ErrRolledBack = errors.New("update failed and was rolled back")
+	// ErrRollbackFailed means the update failed and restoring the old
+	// container did not fully work either.
+	ErrRollbackFailed = errors.New("update failed and the rollback did not complete")
+)
+
+// recreate replaces old with a new container from the same config. With
+// waitHealthy set and a health check on the new container, it must report
+// healthy (not just stay up) before the old one is removed.
+func (s *Service) recreate(ctx context.Context, log logger, old *inspected, netMode string, waitHealthy bool) (string, error) {
 	name := strings.TrimPrefix(old.Name, "/")
 	tmpName := name + "-wargo-old"
 	wasRunning := old.State.Running || old.State.Restarting
@@ -677,27 +691,35 @@ func (s *Service) recreate(ctx context.Context, job *jobs.Job, old *inspected, n
 	if err := s.c.call(ctx, http.MethodPost, "/containers/"+old.ID+"/rename?name="+q(tmpName), nil, nil); err != nil {
 		return "", fmt.Errorf("rename old container: %w", err)
 	}
-	job.Log(fmt.Sprintf("Renamed %s to %s", name, tmpName))
+	log.Log(fmt.Sprintf("Renamed %s to %s", name, tmpName))
 	newID := ""
 	rollback := func(cause error) error {
-		job.Log("Error: " + cause.Error() + " — rolling back")
+		log.Log("Error: " + cause.Error() + ", rolling back")
 		rctx, cancel := bg()
 		defer cancel()
+		failed := false
 		if newID != "" {
 			if err := s.c.call(rctx, http.MethodDelete, "/containers/"+newID+"?force=1", nil, nil); err != nil {
-				job.Log("rollback: remove new container: " + err.Error())
+				log.Log("rollback: remove new container: " + err.Error())
+				failed = true
 			}
 		}
 		if err := s.c.call(rctx, http.MethodPost, "/containers/"+old.ID+"/rename?name="+q(name), nil, nil); err != nil {
-			job.Log("rollback: rename: " + err.Error())
+			log.Log("rollback: rename: " + err.Error())
+			failed = true
 		}
 		if wasRunning {
 			if err := s.c.call(rctx, http.MethodPost, "/containers/"+old.ID+"/start", nil, nil); err != nil {
-				job.Log("rollback: start old container: " + err.Error())
+				log.Log("rollback: start old container: " + err.Error())
+				failed = true
 			}
 		}
-		job.Log("Rolled back to the previous container")
-		return fmt.Errorf("update failed and was rolled back: %w", cause)
+		if failed {
+			log.Log("Rollback did not complete")
+			return fmt.Errorf("%w: %w", ErrRollbackFailed, cause)
+		}
+		log.Log("Rolled back to the previous container")
+		return fmt.Errorf("%w: %w", ErrRolledBack, cause)
 	}
 
 	if wasRunning {
@@ -705,7 +727,7 @@ func (s *Service) recreate(ctx context.Context, job *jobs.Job, old *inspected, n
 		if old.Config.StopTimeout != nil {
 			t = *old.Config.StopTimeout
 		}
-		job.Log("Stopping old container")
+		log.Log("Stopping old container")
 		if err := s.c.call(ctx, http.MethodPost, fmt.Sprintf("/containers/%s/stop?t=%d", old.ID, t), nil, nil); err != nil {
 			return "", rollback(fmt.Errorf("stop: %w", err))
 		}
@@ -719,9 +741,9 @@ func (s *Service) recreate(ctx context.Context, job *jobs.Job, old *inspected, n
 	}
 	newID = created.ID
 	for _, w := range created.Warnings {
-		job.Log("warning: " + w)
+		log.Log("warning: " + w)
 	}
-	job.Log("Created " + shortID(newID))
+	log.Log("Created " + shortID(newID))
 	for netName, ep := range extra {
 		if err := s.c.call(ctx, http.MethodPost, "/networks/"+url.PathEscape(netName)+"/connect",
 			map[string]any{"Container": newID, "EndpointConfig": ep}, nil); err != nil {
@@ -732,7 +754,7 @@ func (s *Service) recreate(ctx context.Context, job *jobs.Job, old *inspected, n
 		if err := s.c.call(ctx, http.MethodPost, "/containers/"+newID+"/start", nil, nil); err != nil {
 			return "", rollback(fmt.Errorf("start: %w", err))
 		}
-		job.Log("Started new container, checking it stays up")
+		log.Log("Started new container, checking it stays up")
 		select {
 		case <-ctx.Done():
 			return "", rollback(ctx.Err())
@@ -747,13 +769,59 @@ func (s *Service) recreate(ctx context.Context, job *jobs.Job, old *inspected, n
 		if !st.State.Running || st.State.Restarting {
 			return "", rollback(fmt.Errorf("new container is not running (state %s, exit code %d)", st.State.Status, st.State.ExitCode))
 		}
+		if waitHealthy && st.State.Health != nil {
+			if err := s.waitHealthy(ctx, log, newID); err != nil {
+				return "", rollback(err)
+			}
+		}
 	}
 	rctx, cancel := bg()
 	defer cancel()
 	if err := s.c.call(rctx, http.MethodDelete, "/containers/"+old.ID+"?force=1", nil, nil); err != nil {
-		job.Log("warning: could not remove old container " + tmpName + ": " + err.Error())
+		log.Log("warning: could not remove old container " + tmpName + ": " + err.Error())
 	} else {
-		job.Log("Removed old container")
+		log.Log("Removed old container")
 	}
 	return newID, nil
+}
+
+// waitHealthy polls the container's health check until it reports
+// healthy. Unhealthy, stopping, or ctx ending is an error.
+func (s *Service) waitHealthy(ctx context.Context, log logger, id string) error {
+	log.Log("Waiting for the health check to pass")
+	poll := s.healthPoll
+	if poll <= 0 {
+		poll = time.Second
+	}
+	last := ""
+	for {
+		var st struct {
+			State inspectState `json:"State"`
+		}
+		if err := s.c.call(ctx, http.MethodGet, "/containers/"+id+"/json", nil, &st); err != nil {
+			return fmt.Errorf("inspect new container: %w", err)
+		}
+		if !st.State.Running || st.State.Restarting {
+			return fmt.Errorf("new container stopped (state %s, exit code %d)", st.State.Status, st.State.ExitCode)
+		}
+		status := ""
+		if st.State.Health != nil {
+			status = st.State.Health.Status
+		}
+		if status != last {
+			log.Log("Health: " + status)
+			last = status
+		}
+		switch status {
+		case "healthy", "":
+			return nil
+		case "unhealthy":
+			return errors.New("new container is unhealthy")
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("new container did not become healthy in time: %w", ctx.Err())
+		case <-time.After(poll):
+		}
+	}
 }

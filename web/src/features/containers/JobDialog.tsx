@@ -19,10 +19,6 @@ export function JobDialog({ jobId, title, onClose }: { jobId: string | null; tit
   });
   const job = q.data?.job;
   const log = q.data?.log ?? [];
-  const pre = useRef<HTMLPreElement>(null);
-  useEffect(() => {
-    if (pre.current) pre.current.scrollTop = pre.current.scrollHeight;
-  }, [log.length]);
   const running = job ? job.state === "running" : !q.error;
   const result = job?.result as { updated?: boolean; message?: string } | undefined;
 
@@ -61,25 +57,41 @@ export function JobDialog({ jobId, title, onClose }: { jobId: string | null; tit
           </span>
           {running && job && job.progress >= 0 && <span className="num ml-auto text-xs text-muted">{Math.round(job.progress * 100)}%</span>}
         </div>
-        {running && (
-          <Meter
-            value={job && job.progress >= 0 ? job.progress * 100 : 100}
-            tone="accent"
-            label="Progress"
-            className={job && job.progress >= 0 ? undefined : "animate-pulse opacity-60"}
-          />
-        )}
+        {running && <JobMeter job={job} />}
         {q.error && !job && <ErrorNote error={q.error} />}
         {job?.error && <p className="rounded-md border border-crit/30 bg-crit-soft px-3 py-2 text-sm text-crit">{job.error}</p>}
-        <pre
-          ref={pre}
-          tabIndex={0}
-          aria-label="Job log"
-          className="num max-h-72 min-h-32 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-2.5 text-2xs leading-relaxed text-muted"
-        >
-          {log.length ? log.join("\n") : "Waiting for output…"}
-        </pre>
+        <JobLog lines={log} />
       </div>
     </Dialog>
+  );
+}
+
+/** Progress bar for a running job (pulsing while indeterminate). */
+export function JobMeter({ job }: { job?: JobSnapshot }) {
+  return (
+    <Meter
+      value={job && job.progress >= 0 ? job.progress * 100 : 100}
+      tone="accent"
+      label="Progress"
+      className={job && job.progress >= 0 ? undefined : "animate-pulse opacity-60"}
+    />
+  );
+}
+
+/** A job's log, kept scrolled to the newest line. */
+export function JobLog({ lines, empty = "Waiting for output…" }: { lines: string[]; empty?: string }) {
+  const pre = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (pre.current) pre.current.scrollTop = pre.current.scrollHeight;
+  }, [lines.length]);
+  return (
+    <pre
+      ref={pre}
+      tabIndex={0}
+      aria-label="Job log"
+      className="num max-h-72 min-h-32 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-2.5 text-2xs leading-relaxed text-muted"
+    >
+      {lines.length ? lines.join("\n") : empty}
+    </pre>
   );
 }

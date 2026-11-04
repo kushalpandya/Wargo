@@ -134,11 +134,46 @@ This section is for the curious. All container-specific code lives in
   file, with attempts slowed down) or a passkey. See
   [SECURITY.md](SECURITY.md).
 
+## Updating
+
+When a new image is out, click **Update** on Wargo's own row in Containers
+or Updates. This works when Wargo can see where its Docker socket comes from
+on the host (the `/var/run/docker.sock` mount in the compose file above).
+
+How it works:
+
+1. Wargo pulls its image again (the same name and tag it runs, e.g.
+   `ghcr.io/kushalpandya/wargo:latest`). If nothing changed, it stops there.
+2. It starts a small helper container named `wargo-self-update` (label
+   `io.wargo.self-update=1`) from the new image, with only the Docker
+   socket mounted and no network.
+3. The helper recreates Wargo's container with the same settings, mounts and
+   networks, like any other container update, and waits for the new one's
+   health check to pass. If it doesn't, the new container is removed and the
+   old one starts again.
+4. The Wargo that runs afterwards (new or old) reads the helper's result and
+   log, records it in the audit log, and removes the helper. The page
+   reconnects by itself and shows the outcome.
+
+Wargo is down for a short while during the update. "Update all" never
+includes Wargo itself.
+
+If the button isn't offered, or something goes wrong, update from the host
+in the folder of your Wargo compose file:
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+Wargo shows the helper's log when an update fails. If Wargo doesn't come
+back at all, `docker logs wargo-self-update` on the host shows what
+happened.
+
 ## Limitations
 
-- Wargo doesn't update its own container. The Containers page marks it, asks
-  you to confirm before stopping or restarting it, and won't recreate it.
-  Update it with `docker compose pull && docker compose up -d`.
+- Wargo asks you to confirm before stopping or restarting its own container,
+  and only updates it through the helper described in
+  [Updating](#updating).
 - `wargo-privd` isn't used; Wargo checks passkey approvals itself.
 - Accounts that come from LDAP, SSSD or systemd-homed (not listed in
   `/etc/passwd` and `/etc/shadow`) can't sign in. Use a local account.

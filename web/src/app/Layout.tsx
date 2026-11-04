@@ -30,6 +30,7 @@ import { useCapabilities, useMe } from "./session";
 import { Logo } from "./Logo";
 import { PageSlotsContext } from "./pageSlots";
 import { UpdatesBadge } from "@/features/updates/UpdatesBadge";
+import { SelfUpdateDialog } from "@/features/containers/SelfUpdateDialog";
 import { Menu, MenuItem, MenuLabel, Tooltip } from "@/components/ui/menu";
 import { IconButton } from "@/components/ui/button";
 import { Badge, Spinner, StatusDot } from "@/components/ui/misc";
@@ -385,6 +386,7 @@ export function Layout() {
           </ErrorBoundary>
         </main>
       </div>
+      <SelfUpdateDialog />
     </div>
     </PageSlotsContext.Provider>
   );

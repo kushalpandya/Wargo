@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/kushalpandya/wargo/internal/auth"
 	"github.com/kushalpandya/wargo/internal/config"
+	"github.com/kushalpandya/wargo/internal/docker"
 	"github.com/kushalpandya/wargo/internal/helper"
 	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/server"
@@ -32,6 +34,8 @@ Usage:
   wargo helper <op> ...            privileged helper (invoked via sudo)
   wargo version
   wargo health [-addr HOST:PORT]   exit 0 if the local web service answers
+  wargo self-update -target ID     recreate Wargo's container from its new image
+                                   (run by Wargo in its updater container)
 
 Container mode is enabled by WARGO_HOST_ROOT (see docs/DOCKER.md).
 `, server.Version)
@@ -54,6 +58,8 @@ func main() {
 		fmt.Println(server.Version)
 	case "health":
 		os.Exit(health(args))
+	case "self-update":
+		os.Exit(selfUpdate(args))
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -183,4 +189,29 @@ func health(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// selfUpdate runs in the updater container Wargo starts to update itself.
+// Exit codes: 0 updated (or already up to date), 1 failed and rolled back,
+// 2 failed and the rollback did not complete, 3 bad usage.
+func selfUpdate(args []string) int {
+	fs := flag.NewFlagSet("self-update", flag.ExitOnError)
+	target := fs.String("target", "", "id of Wargo's container")
+	socket := fs.String("socket", docker.DefaultSocket, "Docker socket")
+	timeout := fs.Duration("timeout", 3*time.Minute, "how long the update may take, health check included")
+	fs.Parse(args)
+	if *target == "" {
+		fmt.Fprintln(os.Stderr, "self-update: -target is required")
+		return 3
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	err := docker.SelfUpdate(ctx, *socket, *target, os.Stdout, *timeout)
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, docker.ErrRollbackFailed):
+		return 2
+	}
+	return 1
 }

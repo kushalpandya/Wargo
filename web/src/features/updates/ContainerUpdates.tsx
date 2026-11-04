@@ -340,7 +340,7 @@ export function ContainerUpdates({
         </Notice>
       )}
 
-      {/* Wargo can't recreate its own container; it's updated from the host. */}
+      {/* Wargo updates itself on its own (it restarts), never as part of a batch. */}
       <BulkContainerUpdate open={bulk} containers={stale.filter((c) => !c.self)} onClose={() => setBulk(false)} />
       {actions.element}
     </div>

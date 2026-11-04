@@ -203,8 +203,14 @@ differently from a native install:
   `passkey`). `wargo-privd` isn't used: its promise (a compromised web
   process can't get root) can't hold when the process already is root.
 - **Protecting itself.** Wargo recognises its own container. It asks you to
-  confirm before stopping or restarting it, refuses to recreate (update) it,
+  confirm before stopping or restarting it, never recreates it directly,
   and never signals its own process or its init process.
+- **Updating itself.** To update its own container, Wargo starts a helper
+  container (`wargo-self-update`) that recreates it. The helper gets the same
+  Docker socket access Wargo already has and nothing more: no network, no
+  privileges and no other host files. It only ever runs from the image Wargo just
+  pulled for its own image reference (the name and tag its container was
+  created with), and only targets Wargo's own container.
 - **Network.** The image listens on `0.0.0.0:2207` (on the host's network),
   so it is reachable on your local network right away. Over plain HTTP, your
   password and session are visible to others on that network. Put HTTPS in

@@ -42,6 +42,12 @@ type Service struct {
 
 	// settle is how long a recreated container must stay up (tests shorten it).
 	settle time.Duration
+	// healthPoll is how often a health check is polled while waiting for
+	// it; selfPoll and selfWait pace finishing a self update (tests shorten them).
+	healthPoll time.Duration
+	selfPoll   time.Duration
+	selfWait   time.Duration
+	version    string // Wargo's own version (for self update records)
 	// composeCmd runs `docker compose ...`; replaced in tests.
 	composeAvailable func() bool
 
@@ -53,6 +59,9 @@ type Service struct {
 	statsPrev map[string]statsPrev
 	caps      *capsCache
 	probes    *prober // Wargo's own reachability checks
+
+	runCtx        context.Context // set by Run
+	selfFinishing bool            // finishSelfUpdate is running
 
 	composeOnce sync.Once
 	composeOK   bool
@@ -86,6 +95,8 @@ type Options struct {
 	// UpdateInterval is how often images are checked in the background
 	// (0 disables; the first check runs ~2 minutes after start).
 	UpdateInterval time.Duration
+	// Version is Wargo's own version, recorded around self updates.
+	Version string
 }
 
 // Configure applies opts and loads persisted update results.
@@ -100,6 +111,7 @@ func (s *Service) Configure(o Options) *Service {
 		s.icons = newIconStore(o.DataDir)
 	}
 	s.ownIcon = o.OwnIcon
+	s.version = o.Version
 	s.loadUpdates()
 	return s
 }
@@ -116,6 +128,7 @@ func New(socket string, hub *events.Hub, jm *jobs.Manager, al *audit.Log, el *el
 	}
 	s := &Service{
 		c: Shared(socket), hub: hub, jobs: jm, audit: al, elevate: el, settle: 3 * time.Second,
+		healthPoll: time.Second, selfPoll: 2 * time.Second, selfWait: 10 * time.Minute,
 		updates: map[string]UpdateCheck{}, updating: map[string]bool{}, statsPrev: map[string]statsPrev{},
 		probes: newProber(),
 		images: map[string]imageMeta{}, checkDelay: 2 * time.Minute,
@@ -148,8 +161,11 @@ func (s *Service) isSelf(ctx context.Context, id string) bool {
 	return v.ID == s.selfID
 }
 
-var errSelfUpdate = httpx.Errorf(http.StatusConflict, "self_container",
-	"Wargo can't update its own container yet. Pull the new image and recreate it from the host, e.g. `docker compose pull && docker compose up -d` in the directory of your Wargo compose file.")
+// errSelfUpdate explains why Wargo can't update its own container here.
+func errSelfUpdate(reason string) error {
+	return httpx.Errorf(http.StatusConflict, "self_container",
+		"Wargo can't update its own container here: "+reason+". Update it from the host instead: run `docker compose pull && docker compose up -d` in the folder of your Wargo compose file.")
+}
 
 // Client exposes the underlying Docker API client for other features
 // (e.g. the terminal's `docker exec`).
@@ -200,6 +216,7 @@ func (s *Service) Capabilities(ctx context.Context) (string, any) {
 		out["compose"] = s.composeAvailable()
 		out["updateCheckIntervalMs"] = s.checkInterval.Milliseconds()
 		out["icons"] = s.icons != nil
+		out["selfUpdate"] = s.selfUpdatePossible(cctx)
 	}
 	s.mu.Lock()
 	s.caps = &capsCache{at: time.Now(), val: out}
@@ -332,6 +349,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 		return nil
 	}))
 	mux.HandleFunc("POST /api/containers/check-updates", httpx.Handler(s.handleCheckUpdates))
+	mux.HandleFunc("GET /api/containers/self-update", httpx.Handler(s.handleSelfUpdateStatus))
 	mux.HandleFunc("GET /api/containers/settings", httpx.Handler(s.sched.HandleGet))
 	mux.HandleFunc("PUT /api/containers/settings", httpx.Handler(s.sched.HandlePut))
 	mux.HandleFunc("GET /api/containers/{id}/icon", httpx.Handler(s.handleIcon))
@@ -599,9 +617,13 @@ func (s *Service) handleAction(w http.ResponseWriter, r *http.Request) error {
 
 // Run watches Docker events and polls while someone is subscribed.
 func (s *Service) Run(ctx context.Context) {
+	s.mu.Lock()
+	s.runCtx = ctx
+	s.mu.Unlock()
 	go s.watchEvents(ctx)
 	go s.pollStats(ctx)
 	go s.autoCheck(ctx)
+	go s.finishSelfUpdate(ctx)
 	if s.hub != nil {
 		go s.probeLoop(ctx)
 	}

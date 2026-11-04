@@ -80,7 +80,9 @@ processes, open shells and install updates. It is not a sandbox, so treat it
 like the native install. [DOCKER.md](DOCKER.md) explains each option and
 every setting.
 
-**Upgrade:** `docker compose pull && docker compose up -d`
+**Upgrade:** click **Update** on Wargo's row in Containers or Updates, or
+run `docker compose pull && docker compose up -d` (see
+[DOCKER.md](DOCKER.md#updating)).
 
 ---
 

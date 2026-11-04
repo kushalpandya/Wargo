@@ -47,6 +47,8 @@ export interface Capabilities {
     updateCheckIntervalMs?: number;
     /** Container logos are served at Container.icon. */
     icons?: boolean;
+    /** Wargo can update its own container (container mode, socket mounted). */
+    selfUpdate?: boolean;
   };
   prowlarr?: { available: boolean; configured: boolean; hasTransmissionClient: boolean; version?: string; error?: string };
   transmission?: { available: boolean; configured: boolean; version?: string; error?: string };
