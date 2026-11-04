@@ -29,13 +29,13 @@ username and password, and set up two-factor sign-in when asked.
 
 That's it. The installer:
 
-- downloads the latest release for your CPU and checks its checksum,
+- downloads the latest stable release for your CPU and checks its checksum,
 - installs `/usr/local/bin/wargo`, a systemd service (`wargo@<you>`), a small
   PAM file and `/etc/wargo/config.toml`,
 - starts Wargo on `127.0.0.1:2207`, running as your user (not root).
 
 **Upgrade:** run the same command again. Your settings are kept.
-**Pick a version:** `… | sh -s -- --version v1.0.0-rc`
+**Pick a version:** `… | sh -s -- --version v1.0.0` (also for pre-releases)
 **Uninstall:** `… | sh -s -- --uninstall` (add `--purge` to delete its data too)
 **Preview:** `… | sh -s -- --dry-run` shows every step without changing anything.
 

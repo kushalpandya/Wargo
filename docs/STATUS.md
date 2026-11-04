@@ -1,6 +1,6 @@
-# Wargo release candidate: status notes
+# Wargo 1.0: status notes
 
-Where the release candidate (`v1.0.0-rc`) stands: what was tested and how, and
+Where the first stable release (`v1.0.0`) stands: what was tested and how, and
 the known gaps to pick up next.
 
 ## Try it from source
@@ -24,7 +24,8 @@ sign-in needs `/etc/pam.d/wargo` (from `deploy/pam/wargo`).
 | Processes (list, tree, details, signals) | Done | Real server (reading); signals only on test processes; a root process shows the approval prompt (cancelled) |
 | System → Events (journal, kernel, containers, Wargo) | Done | Real journal on Manjaro, natively and from the container; Docker events with a fake Docker |
 | Containers (list, health, ports, usage, logs, update check) | Done | Real Docker (read only) |
-| Container start, stop, restart and update with rollback | Done | Fake Docker API only |
+| Container start, stop, restart and update with rollback | Done | Fake Docker API, and a real update of a Transmission container behind Gluetun |
+| Wargo updating its own container (helper container, health check, rollback) | Done | Real Docker with a local registry: an update, a forced rollback and the browser flow |
 | Terminal (host, root and container shells, tabs, reconnect) | Done | Host shell live; root and container commands by unit test |
 | File manager (browse, preview, edit, upload, archives, permissions) | Done | Test folder; home folder browsed read only |
 | OS updates (check, background check, upgrade through systemd-run, restart detection) | Done | Real `pamac checkupdates`; upgrades only with a simulated script |

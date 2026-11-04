@@ -6,8 +6,8 @@
 # on the host. Expose it only behind TLS (reverse proxy / tunnel).
 services:
   wargo:
-    # latest = newest release (pre-releases included until v1.0.0), next =
-    # newest pre-release. Pin a version with WARGO_TAG=v1.0.0-rc.
+    # latest = newest stable release, next = newest release including
+    # pre-releases. Pin a version with WARGO_TAG=v1.0.0.
     image: ghcr.io/kushalpandya/wargo:${WARGO_TAG:-latest}
     container_name: wargo
     restart: unless-stopped

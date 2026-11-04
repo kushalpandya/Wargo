@@ -52,9 +52,9 @@ Read more in [SECURITY.md](docs/SECURITY.md).
 
 ## Status
 
-Wargo is a **release candidate** for 1.0: feature complete and in daily use
-on the author's server, with a few rough edges left. [STATUS.md](docs/STATUS.md)
-lists what was tested and the known gaps. Feedback and bug reports are very
+Wargo **1.0** is the first stable release: feature complete and in daily use
+on the author's server. [STATUS.md](docs/STATUS.md) lists what was tested and
+the known gaps. Feedback and bug reports are very
 welcome in [issues](https://github.com/kushalpandya/wargo/issues).
 
 ## Documentation
