@@ -2,13 +2,16 @@
 // Renders the app icons from public/favicon.svg (a full-bleed square) with
 // headless Chrome:
 //   node scripts/icons.mjs
-// - apple-touch-icon.png (512, square: iOS rounds it itself and scales it
-//   down to each device; 180 looked soft on high-density screens)
+// - apple-touch-icon.png (180, square, the size Apple documents; iOS and
+//   macOS round it themselves) and apple-touch-icon-512.png for larger uses
 // - icon-192.png, icon-512.png (rounded corners, transparent outside)
 // - icon-maskable-512.png (square, art shrunk into the round safe zone)
 // - favicon-32.png and favicon.ico (16, 32, 48): Safari ignores SVG
 //   favicons and falls back to these for tabs and bookmarks
 // - apple-touch-icon-precomposed.png: the older name some iOS versions ask for
+// Then it stamps every icon link in index.html and the manifest with a hash
+// of the file (?v=…), so browsers that cached an older icon fetch the new one.
+import { createHash } from "node:crypto";
 import { copyFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -23,7 +26,8 @@ if (noBg === svg) throw new Error("background rect not found in favicon.svg");
 
 const full = (radius) => `<div style="width:100%;height:100%;border-radius:${radius};overflow:hidden">${svg}</div>`;
 const targets = [
-  ["apple-touch-icon.png", 512, full("0")],
+  ["apple-touch-icon.png", 180, full("0")],
+  ["apple-touch-icon-512.png", 512, full("0")],
   ["icon-192.png", 192, full("22%")],
   ["icon-512.png", 512, full("22%")],
   ["favicon-32.png", 32, full("22%")],
@@ -63,3 +67,22 @@ console.log("wrote favicon.ico");
 copyFileSync(pub + "apple-touch-icon.png", pub + "apple-touch-icon-precomposed.png");
 console.log("wrote apple-touch-icon-precomposed.png");
 for (const f of ["ico-16.png", "ico-48.png"]) rmSync(pub + f);
+
+// Version stamps: index.html links and manifest icons point at name?v=<hash>.
+const stamp = (name) => `${name}?v=${createHash("sha256").update(readFileSync(pub + name)).digest("hex").slice(0, 10)}`;
+const manifestPath = pub + "manifest.webmanifest";
+const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+// PNG only: Apple's platforms can't use an SVG as an app icon.
+manifest.icons = [
+  { src: stamp("icon-192.png"), sizes: "192x192", type: "image/png", purpose: "any" },
+  { src: stamp("icon-512.png"), sizes: "512x512", type: "image/png", purpose: "any" },
+  { src: stamp("icon-maskable-512.png"), sizes: "512x512", type: "image/png", purpose: "maskable" },
+];
+writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+const html = fileURLToPath(new URL("../index.html", import.meta.url));
+let doc = readFileSync(html, "utf8");
+for (const name of ["favicon.ico", "favicon-32.png", "favicon.svg", "apple-touch-icon.png", "apple-touch-icon-512.png", "manifest.webmanifest"]) {
+  doc = doc.replace(new RegExp(`href="/${name.replace(".", "\\.")}(\\?v=[0-9a-f]+)?"`), `href="/${stamp(name)}"`);
+}
+writeFileSync(html, doc);
+console.log("stamped index.html and manifest.webmanifest");
