@@ -181,7 +181,14 @@ function Row({
         props.onToggle(i);
       }}
       onDoubleClick={(ev) => ev.stopPropagation()}
-      className={cn("flex items-center justify-center", !sel && !selecting && !props.coarse && "opacity-0 group-hover:opacity-100", props.coarse && !selecting && "hidden")}
+      // On touch screens the box only shows while selecting (long press), but
+      // its cell stays: removing it would shift every column of the row grid
+      // left, squeezing the name into the checkbox column (iPad list view).
+      className={cn(
+        "flex items-center justify-center",
+        !sel && !selecting && !props.coarse && "opacity-0 group-hover:opacity-100",
+        props.coarse && !selecting && "pointer-events-none invisible",
+      )}
     >
       <Checkbox checked={sel} onCheckedChange={() => {}} aria-label={`Select ${e.name}`} />
     </span>
