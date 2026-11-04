@@ -5,6 +5,9 @@ import { CheckCircle2, Eye, EyeOff, FileKey2, Radar, Unplug, XCircle } from "luc
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Card, CardHeader } from "@/components/ui/card";
+import prowlarrLogo from "./logos/prowlarr.svg";
+import transmissionLogo from "./logos/transmission.svg";
+import plexLogo from "./logos/plex.svg";
 import { Button, IconButton } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { FormField, Input } from "@/components/ui/form";
@@ -39,7 +42,6 @@ function useInvalidate() {
 /** Prowlarr, Transmission and Plex connection settings (used by Settings → Integrations). */
 export default function IntegrationSettings() {
   const status = useStatus();
-  const discover = useDiscover();
   if (status.isLoading) {
     return (
       <div className="space-y-4">
@@ -52,9 +54,9 @@ export default function IntegrationSettings() {
   if (status.error || !status.data) return <Notice tone="crit">{errorMessage(status.error)}</Notice>;
   return (
     <div className="settings-stack">
-      <ProwlarrCard status={status.data} discover={discover} />
-      <TransmissionCard status={status.data} discover={discover} />
-      <PlexCard status={status.data} discover={discover} />
+      <ProwlarrCard status={status.data} />
+      <TransmissionCard status={status.data} />
+      <PlexCard status={status.data} />
     </div>
   );
 }
@@ -66,7 +68,9 @@ function StatusPill({ configured, available, version, error }: { configured: boo
   if (available)
     return (
       <Badge tone="ok" title={version}>
-        Connected{version ? ` · ${version.split(" ")[0]}` : ""}
+        Connected
+        {/* The short version (Plex adds a build hash); hidden on phones to fit. */}
+        {version && <span className="max-sm:hidden"> · {version.split(/[ -]/)[0]}</span>}
       </Badge>
     );
   return (
@@ -187,7 +191,12 @@ function DetectPanel({ discover, children, empty }: { discover: DiscoverMutation
   );
 }
 
-function ProwlarrCard({ status, discover }: { status: IntegrationsStatus; discover: DiscoverMutation }) {
+/** The integration's own logo, in the card header. */
+const Logo = ({ src }: { src: string }) => <img src={src} alt="" className="size-6 object-contain" draggable={false} />;
+
+function ProwlarrCard({ status }: { status: IntegrationsStatus }) {
+  // Each card detects on its own, so Detect here leaves the others alone.
+  const discover = useDiscover();
   const p = status.prowlarr;
   const invalidate = useInvalidate();
   const ids = { url: useId(), key: useId() };
@@ -241,7 +250,7 @@ function ProwlarrCard({ status, discover }: { status: IntegrationsStatus; discov
     <Card>
       <CardHeader
         title="Prowlarr"
-        meta="torrent search"
+        icon={<Logo src={prowlarrLogo} />}
         actions={
           <>
             <StatusPill {...p} />
@@ -339,7 +348,8 @@ function ProwlarrCard({ status, discover }: { status: IntegrationsStatus; discov
   );
 }
 
-function TransmissionCard({ status, discover }: { status: IntegrationsStatus; discover: DiscoverMutation }) {
+function TransmissionCard({ status }: { status: IntegrationsStatus }) {
+  const discover = useDiscover();
   const t = status.transmission;
   const invalidate = useInvalidate();
   const ids = { url: useId(), user: useId(), pass: useId() };
@@ -383,7 +393,7 @@ function TransmissionCard({ status, discover }: { status: IntegrationsStatus; di
     <Card>
       <CardHeader
         title="Transmission"
-        meta="downloads"
+        icon={<Logo src={transmissionLogo} />}
         actions={
           <>
             <StatusPill {...t} />
@@ -492,7 +502,8 @@ function TransmissionCard({ status, discover }: { status: IntegrationsStatus; di
   );
 }
 
-function PlexCard({ status, discover }: { status: IntegrationsStatus; discover: DiscoverMutation }) {
+function PlexCard({ status }: { status: IntegrationsStatus }) {
+  const discover = useDiscover();
   const p = status.plex;
   const invalidate = useInvalidate();
   const ids = { url: useId(), token: useId() };
@@ -537,7 +548,7 @@ function PlexCard({ status, discover }: { status: IntegrationsStatus; discover: 
     <Card>
       <CardHeader
         title="Plex"
-        meta="what is playing, read only"
+        icon={<Logo src={plexLogo} />}
         actions={
           <>
             <StatusPill {...p} />

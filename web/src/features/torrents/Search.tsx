@@ -11,6 +11,7 @@ import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { Select, SearchInput } from "@/components/ui/form";
+import { Chip, ChipRow, StatusBar, StatusItem, toolbarClass, torrentCardClass } from "./parts";
 import { EmptyState, ErrorNote, PageHeader, Spinner } from "@/components/ui/misc";
 import { SortTh, Table, Td, Th, THead, Tr, useSort } from "@/components/ui/table";
 import { CATEGORIES, type IndexerRef, type SearchResponse, type SearchResult } from "./api";
@@ -170,8 +171,8 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
     <div className="@container">
       {!embedded && <PageHeader title="Torrent search" description={`Searches ${idx.length ? "the selected" : "all enabled"} Prowlarr indexers.`} />}
 
-      <Card className={cn(embedded && "flex min-h-96 flex-col")}>
-        <form onSubmit={submit} role="search" className="flex flex-wrap items-center gap-2 border-b border-border p-3">
+      <Card className={cn(embedded && torrentCardClass)}>
+        <form onSubmit={submit} role="search" className={toolbarClass}>
           <div className="flex min-w-0 flex-1 basis-64">
             <div className="relative min-w-0 flex-1">
               <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
@@ -198,17 +199,16 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
             </button>
           </div>
           <IndexerPicker indexers={indexerList} value={idx} onChange={(v) => update({ idx: v.join(",") || null })} />
-          <div className="flex w-full flex-wrap items-center gap-1.5" role="group" aria-label="Categories">
-            <span className="mr-1 text-2xs font-semibold uppercase tracking-wider text-subtle">Category</span>
-            <CatChip active={cats.length === 0} onClick={() => update({ cat: null })}>
+          <ChipRow label="Category">
+            <Chip active={cats.length === 0} onClick={() => update({ cat: null })}>
               All
-            </CatChip>
+            </Chip>
             {CATEGORIES.map((c) => (
-              <CatChip key={c.id} active={cats.includes(c.id)} onClick={() => toggleCat(c.id)}>
+              <Chip key={c.id} active={cats.includes(c.id)} onClick={() => toggleCat(c.id)}>
                 {c.label}
-              </CatChip>
+              </Chip>
             ))}
-          </div>
+          </ChipRow>
         </form>
 
         {!q ? (
@@ -253,10 +253,6 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
                   <option value="name:asc">Name</option>
                 </Select>
               </div>
-              <span className="num ml-auto text-xs text-muted" role="status">
-                {filtered.length !== search.data.results.length ? `${filtered.length} of ` : ""}
-                {search.data.results.length} results · {(search.data.tookMs / 1000).toFixed(1)}s{search.isFetching && " · refreshing…"}
-              </span>
             </div>
             {search.data.errors.length > 0 && <IndexerErrors errors={search.data.errors} />}
             {sorted.length === 0 ? (
@@ -316,25 +312,28 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
             )}
           </>
         ) : null}
+        <StatusBar label="Search status">
+          {search.data ? (
+            <>
+              <StatusItem>
+                {filtered.length !== search.data.results.length ? `${filtered.length} of ` : ""}
+                {search.data.results.length} results
+              </StatusItem>
+              <StatusItem>{(search.data.tookMs / 1000).toFixed(1)}s</StatusItem>
+              {search.data.errors.length > 0 && <StatusItem tone="text-warn">{search.data.errors.length} indexer errors</StatusItem>}
+              {search.isFetching && <StatusItem>refreshing…</StatusItem>}
+            </>
+          ) : (
+            <StatusItem>{search.isFetching ? "Searching…" : "Ready"}</StatusItem>
+          )}
+          <StatusItem>
+            {indexerCount} indexer{indexerCount === 1 ? "" : "s"}
+            {idx.length ? " selected" : ""}
+          </StatusItem>
+        </StatusBar>
       </Card>
       {actions.dialog}
     </div>
-  );
-}
-
-function CatChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={cn(
-        "inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-medium transition-colors @max-3xl:h-8",
-        active ? "border-accent/40 bg-accent-soft text-accent" : "border-border bg-surface-2 text-muted hover:border-border-strong hover:text-fg",
-      )}
-    >
-      {children}
-    </button>
   );
 }
 

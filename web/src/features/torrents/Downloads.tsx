@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { SearchInput, Select } from "@/components/ui/form";
+import { Chip, ChipRow, StatusBar, StatusItem, toolbarClass, torrentCardClass } from "./parts";
 import { Badge, EmptyState, ErrorNote, Meter, PageHeader, Skeleton, Spinner, type Tone } from "@/components/ui/misc";
 import { SortTh, Table, Td, Th, THead, Tr, useSort } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
@@ -194,33 +195,11 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
 
           {data?.error && <ErrorNote error={`Transmission: ${data.error}`} className="mb-4" />}
 
-          <Card className={cn(embedded && "flex min-h-96 flex-col")}>
-            {/* Live totals in one row, part of the same card as the list. */}
-            <div className="grid grid-cols-4 divide-x divide-border border-b border-border">
-              <StatCell label="Download" icon={<ArrowDown />} value={stats ? rate(stats.downloadSpeed) : undefined} tone="text-frost" />
-              <StatCell label="Upload" icon={<ArrowUp />} value={stats ? rate(stats.uploadSpeed) : undefined} tone="text-ok" />
-              <StatCell
-                label="Active"
-                value={stats ? String(stats.activeTorrentCount) : undefined}
-                sub={stats ? `${stats.pausedTorrentCount} paused · ${torrents?.length ?? 0} total` : undefined}
-              />
-              <StatCell label="Free space" icon={<HardDrive />} value={stats ? (stats.freeSpace !== undefined ? bytes(stats.freeSpace) : "—") : undefined} />
-            </div>
-            <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
-              <SearchInput value={q} onChange={setQ} placeholder="Filter by name…" label="Filter torrents by name" className="min-w-0 flex-1 basis-32" />
+          <Card className={cn(embedded && torrentCardClass)}>
+            {/* Same shape as the Search card: input and controls, then chips. */}
+            <div className={toolbarClass}>
+              <SearchInput value={q} onChange={setQ} placeholder="Filter by name…" label="Filter torrents by name" className="min-w-0 flex-1 basis-48" />
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5">
-                  <label htmlFor="filter-torrents" className="text-2xs font-semibold uppercase tracking-wider text-subtle @max-3xl:sr-only">
-                    Show
-                  </label>
-                  <Select id="filter-torrents" className="w-auto" title="Show" value={filter} onChange={(e) => setFilter(e.target.value as Filter)}>
-                    {FILTERS.map(([v, l]) => (
-                      <option key={v} value={v}>
-                        {l} ({counts[v]})
-                      </option>
-                    ))}
-                  </Select>
-                </div>
                 <div className="flex items-center gap-1.5">
                   <label htmlFor="sort-torrents" className="text-2xs font-semibold uppercase tracking-wider text-subtle @max-3xl:sr-only">
                     Sort
@@ -244,6 +223,13 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
                   </Select>
                 </div>
               </div>
+              <ChipRow label="Show">
+                {FILTERS.map(([v, l]) => (
+                  <Chip key={v} active={filter === v} onClick={() => setFilter(v)}>
+                    {l} <span className="num opacity-70">{counts[v]}</span>
+                  </Chip>
+                ))}
+              </ChipRow>
             </div>
 
             {initial.isLoading && !live ? (
@@ -309,6 +295,18 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
                 </ul>
               </>
             )}
+            <StatusBar label="Transmission status">
+              <StatusItem icon={<ArrowDown />} tone="text-frost">
+                {stats ? rate(stats.downloadSpeed) : "…"}
+              </StatusItem>
+              <StatusItem icon={<ArrowUp />} tone="text-ok">
+                {stats ? rate(stats.uploadSpeed) : "…"}
+              </StatusItem>
+              <StatusItem>
+                {stats ? `${stats.activeTorrentCount} active · ${stats.pausedTorrentCount} paused · ${torrents?.length ?? 0} total` : "…"}
+              </StatusItem>
+              <StatusItem icon={<HardDrive />}>{stats ? (stats.freeSpace !== undefined ? `${bytes(stats.freeSpace)} free` : "free space unknown") : "…"}</StatusItem>
+            </StatusBar>
           </Card>
         </>
       )}
@@ -319,33 +317,6 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
         onClose={() => setRemoving(null)}
         onRemove={(withData) => removing && act(removing, withData ? "remove-data" : "remove")}
       />
-    </div>
-  );
-}
-
-function StatCell({
-  label,
-  value,
-  sub,
-  icon,
-  tone,
-  className,
-}: {
-  label: string;
-  value?: string;
-  sub?: string;
-  icon?: React.ReactNode;
-  tone?: string;
-  className?: string;
-}) {
-  return (
-    <div className={cn("min-w-0 px-3 py-2.5", className)}>
-      <div className="flex items-center gap-1.5 truncate text-2xs font-medium uppercase tracking-wider text-subtle [&_svg]:size-3.5 [&_svg]:shrink-0">
-        {icon && <span className={tone}>{icon}</span>}
-        <span className="truncate">{label}</span>
-      </div>
-      {value === undefined ? <Skeleton className="mt-1.5 h-5 w-16" /> : <div className="num mt-0.5 truncate text-base font-medium leading-tight @3xl:text-lg">{value}</div>}
-      {sub && <div className="mt-0.5 truncate text-xs text-muted">{sub}</div>}
     </div>
   );
 }
