@@ -54,6 +54,9 @@ type CheckResult struct {
 	Error        string    `json:"error,omitempty"`
 	// Stale is set after an upgrade ran; the list no longer reflects the host.
 	Stale bool `json:"stale,omitempty"`
+	// AfterRun is the upgrade this check ran right after, on its own; the
+	// page keeps that run's result on screen until a later check.
+	AfterRun string `json:"afterRun,omitempty"`
 }
 
 // RunRecord describes an upgrade run (persisted so Wargo can re-attach).
@@ -792,6 +795,7 @@ func (s *Service) finish(rec *RunRecord, j *jobs.Job, exit *int, runErr error, s
 		s.d.Store.Set(ctx, keyLastCheck, last)
 	}
 	s.publish()
+	go s.recheck(rec.ID, rec.OK)
 }
 
 // newOnly keeps files created by this run, plus older ones as long as the

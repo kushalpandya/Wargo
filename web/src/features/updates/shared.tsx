@@ -243,7 +243,10 @@ export function runVisible(s: { running?: JobSnapshot; lastRun?: RunRecord; last
   const r = s.lastRun;
   if (!r || r.id === dismissed) return false;
   const c = s.lastCheck;
-  const superseded = !!r.finishedAt && !!c && !c.stale && new Date(c.at).getTime() > new Date(r.finishedAt).getTime();
+  // A check after the run hides its result, except the one that ran on its
+  // own right after it (to refresh the list).
+  const superseded =
+    !!r.finishedAt && !!c && !c.stale && c.afterRun !== r.id && new Date(c.at).getTime() > new Date(r.finishedAt).getTime();
   return !superseded;
 }
 

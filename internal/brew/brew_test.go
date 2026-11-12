@@ -266,13 +266,22 @@ func TestSimulatedCheckAndUpgrade(t *testing.T) {
 			if !st.LastRun.OK || st.LastRun.Upgraded != 6 || st.LastRun.Stage != StageCleanup {
 				t.Fatalf("run %+v", st.LastRun)
 			}
-			if !st.LastCheck.Stale {
-				t.Error("check not marked stale after the update")
-			}
 			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("update did not finish")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// The list is refreshed after the update (simulated: nothing pending,
+	// the pinned formula still listed).
+	for {
+		c := s.status().LastCheck
+		if !c.Stale && len(c.Updates) == 0 && len(c.Extras) == 1 && c.AfterRun == s.status().LastRun.ID {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("list not refreshed after the update: %+v", c)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

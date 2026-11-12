@@ -4,6 +4,7 @@ package pkg
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/schedule"
@@ -39,22 +40,72 @@ func (s *Service) autoCheck(ctx context.Context) {
 			}
 			return s.last.At
 		},
-		func(ctx context.Context) error {
-			s.mu.Lock()
-			busy := s.checking || s.job != nil
-			if !busy {
-				s.checking = true
-			}
-			s.mu.Unlock()
-			if busy {
-				return schedule.ErrSkipped
-			}
-			s.publish()
-			_, err := s.list(ctx, true)
-			s.mu.Lock()
-			s.checking = false
-			s.mu.Unlock()
-			s.publish()
-			return err
-		})
+		s.backgroundCheck)
+}
+
+// backgroundCheck lists updates without asking for approval, unless a check
+// or upgrade is already running (schedule.ErrSkipped).
+func (s *Service) backgroundCheck(ctx context.Context) error {
+	s.mu.Lock()
+	busy := s.checking || s.job != nil
+	if !busy {
+		s.checking = true
+	}
+	s.mu.Unlock()
+	if busy {
+		return schedule.ErrSkipped
+	}
+	s.publish()
+	_, err := s.list(ctx, true)
+	s.mu.Lock()
+	s.checking = false
+	s.mu.Unlock()
+	s.publish()
+	return err
+}
+
+// recheck refreshes the list after an upgrade, so the Updates page shows
+// what is still pending instead of the list from before it. The upgrade
+// already refreshed the package databases, so no approval is needed.
+func (s *Service) recheck(runID string, ok bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if s.fake {
+		// Simulated upgrades change nothing; pretend a successful one
+		// installed everything so the page shows what a real one would.
+		if !ok {
+			return
+		}
+		s.mu.Lock()
+		if s.last != nil {
+			c := *s.last
+			c.At, c.Updates, c.DownloadSize, c.Stale = time.Now(), []Update{}, 0, false
+			s.last = &c
+		}
+		s.mu.Unlock()
+	} else if err := s.backgroundCheck(ctx); err != nil {
+		if err != schedule.ErrSkipped {
+			slog.Warn("pkg: check after upgrade failed", "err", err)
+		}
+		return
+	}
+	s.mu.Lock()
+	last := TagAfterRun(&s.last, runID)
+	s.mu.Unlock()
+	if last != nil {
+		s.d.Store.Set(ctx, keyLastCheck, last)
+	}
+	s.publish()
+}
+
+// TagAfterRun marks *last as the check that ran right after runID (see
+// CheckResult.AfterRun) and returns it. The caller holds the lock.
+func TagAfterRun(last **CheckResult, runID string) *CheckResult {
+	if *last == nil {
+		return nil
+	}
+	c := **last
+	c.AfterRun = runID
+	*last = &c
+	return &c
 }

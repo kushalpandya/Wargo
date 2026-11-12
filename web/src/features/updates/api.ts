@@ -25,6 +25,8 @@ export interface CheckResult {
   error?: string;
   /** An upgrade ran after this check; the list may be outdated. */
   stale?: boolean;
+  /** The upgrade this check ran right after, on its own. */
+  afterRun?: string;
 }
 
 export interface ConfigFile {

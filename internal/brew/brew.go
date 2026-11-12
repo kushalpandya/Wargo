@@ -256,15 +256,53 @@ func (s *Service) Run(ctx context.Context) {
 			}
 			return s.last.At
 		},
-		func(ctx context.Context) error {
-			if !s.begin() {
-				return schedule.ErrSkipped
-			}
-			defer s.end()
-			_, err := s.list(ctx, true)
-			return err
-		})
+		s.backgroundCheck)
 	<-ctx.Done()
+}
+
+// backgroundCheck lists updates unless a check or update is already
+// running (schedule.ErrSkipped).
+func (s *Service) backgroundCheck(ctx context.Context) error {
+	if !s.begin() {
+		return schedule.ErrSkipped
+	}
+	defer s.end()
+	_, err := s.list(ctx, true)
+	return err
+}
+
+// recheck refreshes the list after an update, so the Updates page shows
+// what is still outdated instead of the list from before it.
+func (s *Service) recheck(runID string, ok bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if s.fake {
+		// Simulated updates change nothing; pretend a successful one
+		// installed everything (pinned formulae stay) so the page shows
+		// what a real one would.
+		if !ok {
+			return
+		}
+		s.mu.Lock()
+		if s.last != nil {
+			c := *s.last
+			c.At, c.Updates, c.Stale = time.Now(), []pkg.Update{}, false
+			s.last = &c
+		}
+		s.mu.Unlock()
+	} else if err := s.backgroundCheck(ctx); err != nil {
+		if err != schedule.ErrSkipped {
+			slog.Warn("brew: check after update failed", "err", err)
+		}
+		return
+	}
+	s.mu.Lock()
+	last := pkg.TagAfterRun(&s.last, runID)
+	s.mu.Unlock()
+	if last != nil {
+		s.d.Store.Set(ctx, keyLastCheck, last)
+	}
+	s.publish()
 }
 
 var reVersion = regexp.MustCompile(`^Homebrew (\S+)`)
@@ -747,6 +785,7 @@ func (s *Service) finish(rec *pkg.RunRecord, j *jobs.Job, exit *int, runErr erro
 		s.d.Store.Set(ctx, keyLastCheck, last)
 	}
 	s.publish()
+	go s.recheck(rec.ID, rec.OK)
 }
 
 // handleLog returns the tail of the current or last update's log.
