@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build linux || darwin
+
 package fsops
 
 import (
@@ -122,11 +124,16 @@ func TestBetweenRoots(t *testing.T) {
 	if err := RenameBetween(ra, "d/e", rb, "esc/e"); err == nil {
 		t.Fatal("renamed through a symlink")
 	}
+	// RealPath has no symlinks in it; the temp folder may (/var on macOS).
+	realB, err := filepath.EvalSymlinks(b)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p, err := RealPath(rb, "moved")
-	if err != nil || p != filepath.Join(b, "moved") {
+	if err != nil || p != filepath.Join(realB, "moved") {
 		t.Fatal(p, err)
 	}
-	if p, _ := RealPath(rb, "."); p != b {
+	if p, _ := RealPath(rb, "."); p != realB {
 		t.Fatal(p)
 	}
 	// Copying a folder into itself through overlapping roots stops instead
@@ -161,10 +168,8 @@ func TestNoReplace(t *testing.T) {
 	if err := RenameOut(root, "c", filepath.Join(trash, "x")); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("RenameOut over existing: %v", err)
 	}
-	// The fallback path (no renameat2) behaves the same.
-	old := sysRenameat2
-	sysRenameat2 = 0
-	defer func() { sysRenameat2 = old }()
+	// The fallback path (no renameat2, or no RENAME_EXCL) behaves the same.
+	defer forceNoReplaceFallback()()
 	if err := RenameBetweenNoReplace(root, "c", root, "b"); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("fallback: %v", err)
 	}
@@ -185,4 +190,26 @@ func TestCopySkipsSwappedFIFO(t *testing.T) {
 		t.Fatal("open of FIFO should not block or fail:", err)
 	}
 	f.Close()
+}
+
+func TestRealPathMatchesEvalSymlinks(t *testing.T) {
+	dir := t.TempDir() // /var/folders/... on macOS, really /private/var/...
+	if err := os.MkdirAll(filepath.Join(dir, "a/b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	want, _ := filepath.EvalSymlinks(filepath.Join(dir, "a/b"))
+	got, err := RealPath(root, "a/b")
+	if err != nil || got != want {
+		t.Fatalf("RealPath = %q, %v; want %q", got, err, want)
+	}
+	gotRoot, _ := RealPath(root, ".")
+	wantRoot, _ := filepath.EvalSymlinks(dir)
+	if gotRoot != wantRoot {
+		t.Fatalf("root = %q, want %q", gotRoot, wantRoot)
+	}
 }

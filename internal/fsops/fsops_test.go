@@ -128,11 +128,18 @@ func TestMoveCrossDeviceKeepsSpecialFiles(t *testing.T) {
 
 // On a case-insensitive drive "A" and "a" name the same entry, so renaming
 // one to the other must not fail as "already exists". Two hard links
-// stand in for that here.
+// stand in for that on a case-sensitive drive; on a case-insensitive one
+// (macOS by default) the link fails and the real case is tested.
 func TestMoveCaseOnlyRenameOnSameInode(t *testing.T) {
 	dir := t.TempDir()
 	must(t, os.WriteFile(filepath.Join(dir, "A"), []byte("data"), 0o644))
-	must(t, os.Link(filepath.Join(dir, "A"), filepath.Join(dir, "a")))
+	caseInsensitive := false
+	if err := os.Link(filepath.Join(dir, "A"), filepath.Join(dir, "a")); err != nil {
+		if !errors.Is(err, fs.ErrExist) {
+			t.Fatal(err)
+		}
+		caseInsensitive = true
+	}
 	must(t, os.WriteFile(filepath.Join(dir, "B"), []byte("other"), 0o644))
 	root := openTestRoot(t, dir)
 	if err := Move(root, "A", "a"); err != nil {
@@ -141,12 +148,16 @@ func TestMoveCaseOnlyRenameOnSameInode(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(dir, "a")); string(b) != "data" {
 		t.Errorf("a = %q", b)
 	}
-	if _, err := os.Lstat(filepath.Join(dir, "A")); err == nil {
-		t.Error("A still exists")
-	}
 	ents, _ := os.ReadDir(dir)
 	if len(ents) != 2 {
 		t.Errorf("entries left: %v", ents)
+	}
+	if caseInsensitive {
+		if len(ents) == 2 && (ents[0].Name() != "B" || ents[1].Name() != "a") {
+			t.Errorf("entries %q, %q; want B, a", ents[0].Name(), ents[1].Name())
+		}
+	} else if _, err := os.Lstat(filepath.Join(dir, "A")); err == nil {
+		t.Error("A still exists")
 	}
 	// A different file at the destination is still refused.
 	if err := Move(root, "B", "a"); !errors.Is(err, fs.ErrExist) {
