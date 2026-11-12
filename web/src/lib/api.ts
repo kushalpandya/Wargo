@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { classifyResponse, fetchFailure } from "./reach";
 
 /** Error returned by the Wargo API ({code, message, data}). */
 export class ApiError extends Error {
@@ -11,6 +12,17 @@ export class ApiError extends Error {
     this.code = code;
     this.data = data;
   }
+}
+
+const unreachableMessage = "Wargo can't be reached";
+
+/**
+ * True for errors meaning the server couldn't be reached at all: the network
+ * failed, the request timed out, or something other than Wargo answered
+ * (see classifyResponse).
+ */
+export function isUnreachable(e: unknown): boolean {
+  return e instanceof ApiError && e.code === "unreachable";
 }
 
 export type ElevationCredential =
@@ -96,7 +108,14 @@ async function send(path: string, opts: RequestOptions, elevation?: ElevationCre
     body = JSON.stringify(opts.body);
   }
   if (elevation) headers["X-Wargo-Elevation"] = encodeElevation(elevation);
-  return fetch(path, { method, headers, body, signal: opts.signal, credentials: "same-origin" });
+  try {
+    return await fetch(path, { method, headers, body, signal: opts.signal, credentials: "same-origin" });
+  } catch (e) {
+    // A query cancelled by the app stays a cancellation; a network failure or
+    // a timeout (AbortSignal.timeout) means the server can't be reached.
+    if (fetchFailure(e, opts.signal?.reason) === "abort") throw e;
+    throw new ApiError(0, "unreachable", unreachableMessage);
+  }
 }
 
 async function toError(res: Response): Promise<ApiError> {
@@ -116,6 +135,9 @@ async function toError(res: Response): Promise<ApiError> {
 export async function request<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
   let res = await send(path, opts);
   if (res.status === 421) blockHost();
+  if (classifyResponse({ path, status: res.status, contentType: res.headers.get("Content-Type") ?? "" }) === "unreachable") {
+    throw new ApiError(res.status, "unreachable", unreachableMessage);
+  }
   if (res.status === 403 || res.status === 401) {
     const err = await toError(res.clone());
     if (err.code === "elevation_required" && elevationPrompt) {

@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "react-router";
 import { ApiError, isHostBlocked, onHostBlocked } from "@/lib/api";
+import { shouldRetry } from "@/lib/reach";
 import { events } from "@/lib/ws";
 import { HostBlocked } from "@/app/HostBlocked";
 import { router } from "@/app/routes";
@@ -11,12 +12,13 @@ import { ElevationProvider } from "@/app/Elevation";
 import { Toaster } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/menu";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { registerServiceWorker, reloadOnStaleChunk } from "@/lib/sw";
 import "@/styles/index.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: (n, err) => !isHostBlocked() && !(err instanceof ApiError && err.status < 500) && n < 2,
+      retry: (n, err) => !isHostBlocked() && shouldRetry(n, err instanceof ApiError ? err : null),
       refetchOnWindowFocus: false,
     },
     // Mutation state (variables like passwords or API keys, results like
@@ -52,3 +54,6 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </StrictMode>,
 );
+
+reloadOnStaleChunk();
+registerServiceWorker();

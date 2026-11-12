@@ -36,6 +36,7 @@ import { Menu, MenuItem, MenuLabel, Tooltip } from "@/components/ui/menu";
 import { IconButton } from "@/components/ui/button";
 import { Badge, Spinner, StatusDot } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
+import { HomeSkeleton } from "./AppSkeleton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 interface NavItem {
@@ -240,7 +241,8 @@ function TopBar({
   return (
     <header
       className={cn(
-        "sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b px-3 transition-[background-color,border-color] duration-200 sm:px-5 lg:px-7",
+        // Clears the iPhone status bar in the Home Screen app, where iOS blurs whatever sits under it.
+        "sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)] transition-[background-color,border-color] duration-200 sm:px-5 lg:px-7",
         scrolled ? "border-border bg-bg/75 backdrop-blur-md" : "border-transparent",
       )}
     >
@@ -305,7 +307,7 @@ export function Layout() {
     <div className="wargo-canvas flex min-h-dvh">
       <aside
         className={cn(
-          "sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200 md:flex",
+          "sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-border bg-surface pt-[env(safe-area-inset-top)] transition-[width] duration-200 md:flex",
           collapsed ? "w-[4.25rem]" : "w-60",
         )}
         aria-label="Sidebar"
@@ -345,7 +347,7 @@ export function Layout() {
       <D.Root open={drawer} onOpenChange={setDrawer}>
         <D.Portal>
           <D.Overlay className="fixed inset-0 z-50 bg-overlay md:hidden" />
-          <D.Content className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-border bg-surface pb-[env(safe-area-inset-bottom)] shadow-pop focus:outline-none md:hidden">
+          <D.Content className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-border bg-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-pop focus:outline-none md:hidden">
             <D.Title className="sr-only">Navigation</D.Title>
             <D.Description className="sr-only">Main navigation</D.Description>
             <div className="flex h-16 items-center gap-2.5 px-4">
@@ -376,9 +378,13 @@ export function Layout() {
           <ErrorBoundary resetKey={loc.pathname}>
             <Suspense
               fallback={
-                <div className="flex h-40 items-center justify-center text-muted">
-                  <Spinner />
-                </div>
+                loc.pathname === "/" ? (
+                  <HomeSkeleton />
+                ) : (
+                  <div className="flex h-40 items-center justify-center text-muted">
+                    <Spinner />
+                  </div>
+                )
               }
             >
               <Outlet />

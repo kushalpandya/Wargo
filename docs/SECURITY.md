@@ -63,6 +63,14 @@ This section describes the native install. See
   (`ProtectSystem`, `PrivateTmp` and similar), because it would also apply to
   every shell opened in the web terminal. It also leaves `NoNewPrivileges`
   off so sudo works when you approve an action.
+- **Service worker.** Over HTTPS (or on `localhost`), the browser keeps a
+  copy of Wargo's own app files (the HTML, scripts, styles, fonts and icons
+  the sign-in page already loads without signing in) so the installed Home
+  Screen app opens without waiting on the network. It never stores or answers
+  anything under `/api/` or `/ws/`: data, downloads, logos and the terminal
+  and event sockets always come from the server, so signing out leaves
+  nothing private on the device. A new Wargo version replaces the stored copy
+  the next time the app is opened or brought back to the foreground.
 
 ## Signing in
 

@@ -2,12 +2,14 @@
 import { lazy, Suspense, useEffect } from "react";
 import { createBrowserRouter, Navigate, Outlet, useNavigate, useRouteError } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { setUnauthorizedHandler } from "@/lib/api";
+import { isUnreachable, setUnauthorizedHandler } from "@/lib/api";
 import { events } from "@/lib/ws";
 import { Spinner } from "@/components/ui/misc";
 import { ErrorFallback } from "@/components/ui/error-boundary";
 import { useAuthState, useMe, type AuthState } from "./session";
 import { Layout } from "./Layout";
+import { Unreachable, useAutoRetry } from "./Unreachable";
+import { AppSkeleton } from "./AppSkeleton";
 
 // Sign-in screens are only needed when signed out; keep them out of the main bundle.
 const Login = lazy(() => import("@/features/auth/Login").then((m) => ({ default: m.Login })));
@@ -39,8 +41,16 @@ function FullPageSpinner() {
   );
 }
 
+/** The first auth check never got an answer from Wargo (see app/Unreachable.tsx). */
+function useUnreachable(state: ReturnType<typeof useAuthState>) {
+  const down = !state.data && isUnreachable(state.error);
+  useAutoRetry(down, () => void state.refetch());
+  return down ? <Unreachable onRetry={() => void state.refetch()} retrying={state.isFetching} /> : null;
+}
+
 function RequireAuth() {
   const state = useAuthState();
+  const unreachable = useUnreachable(state);
   const me = useMe(!!state.data?.authenticated);
   const nav = useNavigate();
 
@@ -64,7 +74,8 @@ function RequireAuth() {
     return () => events.stop();
   }, [ready]);
 
-  if (state.isLoading || (authed && me.isLoading)) return <FullPageSpinner />;
+  if (unreachable) return unreachable;
+  if (state.isLoading || (authed && me.isLoading)) return <AppSkeleton />;
   if (!authed) return <Navigate to="/login" replace />;
   if (me.data?.totpSetupRequired) return <Navigate to="/setup/2fa" replace />;
   return <Outlet />;
@@ -72,6 +83,8 @@ function RequireAuth() {
 
 function PublicOnly() {
   const state = useAuthState();
+  const unreachable = useUnreachable(state);
+  if (unreachable) return unreachable;
   if (state.isLoading) return <FullPageSpinner />;
   if (state.data?.authenticated) return <Navigate to="/" replace />;
   return <Outlet />;

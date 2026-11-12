@@ -3,6 +3,7 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
+import { serviceWorker } from "./sw/plugin.ts";
 
 const api = process.env.WARGO_API ?? "http://127.0.0.1:2207";
 // scripts/dev.sh --lan serves the UI to other machines. The proxy then adds
@@ -22,13 +23,19 @@ function preloadFont(): Plugin {
     transformIndexHtml(_html, ctx) {
       const file = Object.keys(ctx.bundle ?? {}).find((f) => /plus-jakarta-sans-latin-wght-normal-[\w-]+\.woff2$/.test(f));
       if (!file) return;
-      return [{ tag: "link", attrs: { rel: "preload", href: `${base}${file}`, as: "font", type: "font/woff2", crossorigin: "" }, injectTo: "head" }];
+      return [
+        {
+          tag: "link",
+          attrs: { rel: "preload", href: `${base}${file}`, as: "font", type: "font/woff2", crossorigin: "" },
+          injectTo: "head",
+        },
+      ];
     },
   };
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), preloadFont()],
+  plugins: [react(), tailwindcss(), preloadFont(), serviceWorker()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   server: {
     proxy: {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, isUnreachable } from "@/lib/api";
 
 export interface AuthState {
   authenticated: boolean;
@@ -25,7 +25,19 @@ export interface Me {
 }
 
 export function useAuthState() {
-  return useQuery({ queryKey: ["auth", "state"], queryFn: () => api.get<AuthState>("/api/auth/state"), staleTime: 30_000 });
+  return useQuery({
+    queryKey: ["auth", "state"],
+    // A server that doesn't answer within 10 s counts as unreachable (see app/Unreachable.tsx).
+    queryFn: ({ signal }) =>
+      api.get<AuthState>(
+        "/api/auth/state",
+        // AbortSignal.any needs iOS 17.4+; older browsers just wait for the network.
+        typeof AbortSignal.any === "function" ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : signal,
+      ),
+    staleTime: 30_000,
+    // When Wargo can't be reached, app/Unreachable.tsx shows at once and retries on its own.
+    retry: (n, err) => !isUnreachable(err) && n < 2,
+  });
 }
 
 export function useMe(enabled = true) {

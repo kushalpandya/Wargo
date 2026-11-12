@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AppWindow,
@@ -26,6 +26,8 @@ import { cn } from "@/lib/cn";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/misc";
 import { Logo } from "@/app/Logo";
+import { specsShapeKey } from "@/app/AppSkeleton";
+import { setPref } from "@/lib/prefs";
 import { useCapabilities } from "@/app/session";
 import { usePublicIP, type Snapshot, type SystemInfo } from "@/features/system/useMetrics";
 import { useContainers } from "@/features/containers/api";
@@ -187,6 +189,12 @@ export function SpecsCard({ snap }: { snap: Snapshot | null }) {
     { icon: <Clock />, label: "Timezone", value: sp?.timezone },
     { icon: <Languages />, label: "Locale", value: sp?.locale },
   ];
+
+  // Remembered for the launch placeholder (app/AppSkeleton.tsx), so it is as tall as this card.
+  const shape = info ? [hardware, software, network].map((items) => items.filter((i) => i.value).length).join(",") : "";
+  useEffect(() => {
+    if (shape) setPref(specsShapeKey, shape);
+  }, [shape]);
 
   return (
     <Card className="@container flex h-full flex-col overflow-hidden">
