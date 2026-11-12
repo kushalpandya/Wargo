@@ -164,9 +164,17 @@ note "you may be asked for your sudo password"
 as_root install -m 0755 "$SRC/wargo" "$BIN_DIR/wargo"
 [ -x "$SRC/wargo-privd" ] && as_root install -m 0755 "$SRC/wargo-privd" "$BIN_DIR/wargo-privd"
 
+# sha256 of the previous deploy/pam/wargo (without nodelay). An installed file
+# with this hash is our unmodified one and is safe to replace.
+OLD_PAM_SHA=220703a0e9c5286c9347d52dbe9f55c7b323a83fbc369c9c712af7be08bf11a3
 if [ ! -e "$PAM_FILE" ]; then
   as_root install -m 0644 "$SRC/deploy/pam/wargo" "$PAM_FILE"
   note "installed $PAM_FILE (password checks without account lockout)"
+elif [ "$(as_root sha256sum "$PAM_FILE" | cut -d' ' -f1)" = "$OLD_PAM_SHA" ]; then
+  as_root install -m 0644 "$SRC/deploy/pam/wargo" "$PAM_FILE"
+  note "updated $PAM_FILE (adds nodelay to the pam_unix.so auth line)"
+elif ! grep -q 'pam_unix.so.*nodelay' "$PAM_FILE" 2>/dev/null; then
+  note "$PAM_FILE was changed by you, so it was left alone; add nodelay to its pam_unix.so auth line yourself"
 fi
 
 as_root install -m 0644 "$SRC/deploy/systemd/wargo@.service" "$UNIT"

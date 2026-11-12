@@ -90,7 +90,9 @@ This section describes the native install. See
     attacker can't lock the owner out;
   - at most five second-factor guesses per password, and a correct password
     doesn't reset the wait until sign-in finishes;
-  - every attempt takes the same time and gets the same generic error.
+  - every failed attempt gets the same generic error and takes at least
+    3 seconds, whether or not the username was right, so timing doesn't reveal
+    the admin's username. A correct password is not slowed down.
 - Once you have a second factor, a password alone never signs you in.
 - Sessions use 256-bit random tokens, stored only as SHA-256 hashes, in
   `HttpOnly; Secure; SameSite=Strict` cookies. They end after 30 minutes of

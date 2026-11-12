@@ -2,5 +2,6 @@
 # Wargo password check. Deliberately minimal and WITHOUT pam_faillock:
 # Wargo throttles login attempts itself, so internet-facing brute force
 # can never lock the real OS account (SSH, sudo, console).
-auth     required  pam_unix.so
+# nodelay: Wargo applies its own fixed delay to failed sign-ins.
+auth     required  pam_unix.so nodelay
 account  required  pam_unix.so

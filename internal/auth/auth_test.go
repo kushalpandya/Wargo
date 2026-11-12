@@ -40,7 +40,46 @@ func newTestService(t *testing.T) (*Service, *store.Store) {
 	cfg := config.Default()
 	cfg.Auth.User = "tester"
 	proxy := httpx.NewProxyTrust(nil)
-	return New(cfg, st, audit.New(st, proxy), proxy), st
+	s := New(cfg, st, audit.New(st, proxy), proxy)
+	s.sleep = func(time.Duration) {}
+	return s, st
+}
+
+func TestPasswordFailureTimingFloor(t *testing.T) {
+	s, _ := newTestService(t)
+	s.authenticate = func(_, pw string) error {
+		if pw != "good" {
+			return errors.New("bad password")
+		}
+		return nil
+	}
+	var slept []time.Duration
+	s.sleep = func(d time.Duration) { slept = append(slept, d) }
+	check := func(user, pw string) error {
+		r := newTestRequest("POST", "/api/auth/login", "{}")
+		return s.checkPassword(r, user, pw)
+	}
+	if err := check("nobody", "x"); err == nil {
+		t.Fatal("unknown user accepted")
+	}
+	if err := check("tester", "wrong"); err == nil {
+		t.Fatal("wrong password accepted")
+	}
+	if len(slept) != 2 {
+		t.Fatalf("slept %d times, want 2", len(slept))
+	}
+	for i, d := range slept {
+		if d > failFloor || d < failFloor-time.Second {
+			t.Fatalf("sleep %d = %s, want just under %s", i, d, failFloor)
+		}
+	}
+	slept = nil
+	if err := check("tester", "good"); err != nil {
+		t.Fatal(err)
+	}
+	if len(slept) != 0 {
+		t.Fatalf("a correct password slept %v", slept)
+	}
 }
 
 func TestThrottleBackoff(t *testing.T) {

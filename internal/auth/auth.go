@@ -89,6 +89,9 @@ type Service struct {
 	// authenticate replaces the admin check and password verification in
 	// checkPassword (tests only).
 	authenticate func(username, password string) error
+	// sleep pads failed password checks up to failFloor (time.Sleep unless
+	// a test replaces it).
+	sleep func(time.Duration)
 
 	mu       sync.Mutex
 	pending  map[string]pendingLogin
@@ -108,6 +111,7 @@ func New(cfg config.Config, st *store.Store, al *audit.Log, proxy *httpx.ProxyTr
 		cfg: cfg, st: st, audit: al, proxy: proxy, throttle: NewThrottle(),
 		pending: map[string]pendingLogin{}, cerem: map[string]ceremony{}, lastSeen: map[string]time.Time{},
 		usedLogin: map[[32]byte]time.Time{}, bootID: randToken(16),
+		sleep: time.Sleep,
 	}
 	if cfg.Dev.AuthBypass {
 		if cfg.LoopbackOnly() {
@@ -505,6 +509,11 @@ func (s *Service) gcPending() {
 	}
 }
 
+// failFloor is the minimum time every failed password check takes, so the
+// response time never shows whether the username was right. It must stay
+// above pam_unix's own fail delay (about 2 s) for the admin account.
+const failFloor = 3 * time.Second
+
 // checkPassword verifies the admin password via PAM with throttling.
 func (s *Service) checkPassword(r *http.Request, username, password string) error {
 	ip := s.proxy.ClientIP(r)
@@ -522,11 +531,12 @@ func (s *Service) checkPassword(r *http.Request, username, password string) erro
 	} else if err = s.userIsAdmin(username); err == nil {
 		err = s.passwordAuthenticate(username, password)
 	}
-	// Even out response timing between unknown users and PAM failures.
-	if d := 400*time.Millisecond - time.Since(start); d > 0 {
-		time.Sleep(d)
-	}
 	if err != nil {
+		// Even out response timing between unknown users and PAM failures.
+		// A correct password is not slowed down.
+		if d := failFloor - time.Since(start); d > 0 {
+			s.sleep(d)
+		}
 		s.throttle.Fail(ip)
 		slog.Info("password check failed", "ip", ip, "err", err)
 		return invalid
