@@ -23,7 +23,7 @@ func TestSameHostRedirects(t *testing.T) {
 	via := []*http.Request{req(t, "http://prowlarr:9696/api")}
 	for raw, ok := range map[string]bool{
 		"http://prowlarr:9696/x":     true,
-		"https://prowlarr/x":         true, // upgrade on the same host name
+		"https://prowlarr:9696/x":    true, // upgrade on the same host and port
 		"http://prowlarr:9697/x":     false,
 		"http://evil.example/x":      false,
 		"http://127.0.0.1:9696/x":    false,
@@ -57,5 +57,26 @@ func TestHTTPRedirects(t *testing.T) {
 	}
 	if check(req(t, "https://b/"), via) != nil {
 		t.Fatal("http redirect refused")
+	}
+}
+
+func TestSameHostRedirectsRequiresPort(t *testing.T) {
+	check := SameHostRedirects(3)
+	try := func(from, to string) error {
+		a, _ := http.NewRequest("GET", from, nil)
+		b, _ := http.NewRequest("GET", to, nil)
+		return check(b, []*http.Request{a})
+	}
+	if err := try("http://h:32400/x", "https://h:8443/x"); !errors.Is(err, ErrRedirect) {
+		t.Errorf("different port upgrade allowed: %v", err)
+	}
+	if err := try("http://h/x", "https://h/x"); err != nil {
+		t.Errorf("default ports refused: %v", err)
+	}
+	if err := try("http://h:80/x", "https://h:443/x"); err != nil {
+		t.Errorf("80 to 443 refused: %v", err)
+	}
+	if err := try("http://h:32400/x", "https://h:32400/x"); err != nil {
+		t.Errorf("same port refused: %v", err)
 	}
 }

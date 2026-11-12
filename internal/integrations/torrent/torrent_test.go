@@ -173,3 +173,10 @@ func TestMagnetInfoHash(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeRejectsTooManyValues(t *testing.T) {
+	in := []byte("l" + strings.Repeat("le", maxValues+1) + "e")
+	if _, err := Decode(in); !errors.Is(err, errTooManyValues) {
+		t.Fatalf("err = %v, want errTooManyValues", err)
+	}
+}

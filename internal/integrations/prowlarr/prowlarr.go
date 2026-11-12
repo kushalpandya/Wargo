@@ -44,14 +44,23 @@ type Client struct {
 	SearchTimeout time.Duration
 }
 
+// transport has no proxy from the environment: requests go where configured.
+// The response header timeout is lifted because searches and grabs are slow
+// by nature; each client Timeout bounds the whole request instead.
+var transport = func() *http.Transport {
+	t := netx.NewTransport(15 * time.Second)
+	t.ResponseHeaderTimeout = 0
+	return t
+}()
+
 func New(baseURL, apiKey string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		APIKey:  apiKey,
 		// The API key travels in X-Api-Key, which net/http would forward on
 		// a cross-host redirect: only follow redirects within the host.
-		HTTP:          &http.Client{Timeout: 15 * time.Second, CheckRedirect: netx.SameHostRedirects(5)},
-		Download:      &http.Client{Timeout: 45 * time.Second, CheckRedirect: netx.NoRedirects},
+		HTTP:          &http.Client{Timeout: 15 * time.Second, Transport: transport, CheckRedirect: netx.SameHostRedirects(5)},
+		Download:      &http.Client{Timeout: 45 * time.Second, Transport: transport, CheckRedirect: netx.NoRedirects},
 		SearchTimeout: 90 * time.Second,
 	}
 }

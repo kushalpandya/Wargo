@@ -178,3 +178,19 @@ func TestRedactAndSafeInfoURL(t *testing.T) {
 		}
 	}
 }
+
+func TestProwlarrIgnoresProxyEnv(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://proxy.invalid:3128")
+	t.Setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+	c := New("http://prowlarr.invalid", "key")
+	for name, hc := range map[string]*http.Client{"api": c.HTTP, "download": c.Download} {
+		tr, ok := hc.Transport.(*http.Transport)
+		if !ok || tr.Proxy != nil {
+			t.Errorf("%s client must use a transport without a proxy function, got %#v", name, hc.Transport)
+			continue
+		}
+		if tr.ResponseHeaderTimeout != 0 && tr.ResponseHeaderTimeout < c.SearchTimeout {
+			t.Errorf("%s client header timeout %v would cut off slow searches", name, tr.ResponseHeaderTimeout)
+		}
+	}
+}

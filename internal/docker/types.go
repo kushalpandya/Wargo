@@ -183,7 +183,7 @@ func convert(a apiContainer) Container {
 		name = strings.TrimPrefix(a.Names[0], "/")
 	}
 	c := Container{
-		ID: shortID(a.ID), FullID: a.ID, Name: name, Image: a.Image, ImageID: a.ImageID, Command: a.Command,
+		ID: shortID(a.ID), FullID: a.ID, Name: name, Image: a.Image, ImageID: a.ImageID, Command: redactCommand(a.Command),
 		State: a.State, Status: a.Status, Health: parseHealth(a.Status), Created: a.Created * 1000,
 		Ports: normalizePorts(a.Ports), NetworkMode: a.HostConfig.NetworkMode, CasaOS: isCasaOS(a.Labels),
 	}
@@ -433,4 +433,10 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return strings.ToValidUTF8(s[:n], "") + "…"
+}
+
+// redactCommand masks URL credentials in a container command line, the same
+// way buildDetails treats Args.
+func redactCommand(s string) string {
+	return strings.Join(redactAll(strings.Split(s, " ")), " ")
 }

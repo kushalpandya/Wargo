@@ -20,8 +20,9 @@ const (
 )
 
 var (
-	ErrTooLarge = errors.New("bencode: input too large")
-	ErrTooDeep  = errors.New("bencode: nesting too deep")
+	ErrTooLarge      = errors.New("bencode: input too large")
+	ErrTooDeep       = errors.New("bencode: nesting too deep")
+	errTooManyValues = errors.New("bencode: too many values")
 )
 
 // SyntaxError reports malformed input at a byte offset.
@@ -40,9 +41,13 @@ type decoder struct {
 	buf   []byte
 	pos   int
 	depth int
+	count int
 	// span of the value stored under the top-level "info" key
 	infoStart, infoEnd int
 }
+
+// maxValues bounds how many values one document may contain.
+const maxValues = 1_000_000
 
 func (d *decoder) fail(msg string) error { return &SyntaxError{Offset: d.pos, Msg: msg} }
 
@@ -68,6 +73,10 @@ func decode(b []byte) (any, *decoder, error) {
 }
 
 func (d *decoder) value() (any, error) {
+	d.count++
+	if d.count > maxValues {
+		return nil, errTooManyValues
+	}
 	if d.pos >= len(d.buf) {
 		return nil, d.fail("unexpected end of input")
 	}

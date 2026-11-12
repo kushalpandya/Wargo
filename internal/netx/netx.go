@@ -60,11 +60,20 @@ func SameHostRedirects(max int) func(*http.Request, []*http.Request) error {
 		switch {
 		case u.Scheme == orig.Scheme && strings.EqualFold(u.Host, orig.Host):
 			return nil
-		case orig.Scheme == "http" && u.Scheme == "https" && strings.EqualFold(u.Hostname(), orig.Hostname()):
+		case orig.Scheme == "http" && u.Scheme == "https" && strings.EqualFold(u.Hostname(), orig.Hostname()) && upgradePortOK(orig.Port(), u.Port()):
 			return nil
 		}
 		return ErrRedirect
 	}
+}
+
+// upgradePortOK reports whether an http to https upgrade keeps the same port,
+// or goes from the default http port to the default https port.
+func upgradePortOK(from, to string) bool {
+	if from == to {
+		return true
+	}
+	return (from == "" || from == "80") && (to == "" || to == "443")
 }
 
 // HTTPRedirects returns a CheckRedirect that follows at most max redirects

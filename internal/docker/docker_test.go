@@ -534,3 +534,13 @@ func TestPullProgressLogged(t *testing.T) {
 	}
 	_ = io.EOF
 }
+
+func TestConvertRedactsCommand(t *testing.T) {
+	c := convert(apiContainer{ID: gluetunID, Command: "app --db postgres://u:S3cret@db/x"})
+	if strings.Contains(c.Command, "S3cret") {
+		t.Fatalf("command leaks a password: %q", c.Command)
+	}
+	if !strings.Contains(c.Command, "app --db postgres://") || !strings.Contains(c.Command, "@db/x") {
+		t.Fatalf("command over-redacted: %q", c.Command)
+	}
+}

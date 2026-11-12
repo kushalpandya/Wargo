@@ -5,6 +5,7 @@ package transmission_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/kushalpandya/wargo/internal/integrations/transmission"
@@ -116,5 +117,14 @@ func TestStatusName(t *testing.T) {
 		if got := transmission.StatusName(i); got != w {
 			t.Errorf("%d: %s", i, got)
 		}
+	}
+}
+
+func TestTransmissionIgnoresProxyEnv(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://proxy.invalid:3128")
+	c := transmission.New("http://transmission.invalid/transmission/rpc", "", "")
+	tr, ok := c.HTTP.Transport.(*http.Transport)
+	if !ok || tr.Proxy != nil {
+		t.Fatalf("client must use a transport without a proxy function, got %#v", c.HTTP.Transport)
 	}
 }

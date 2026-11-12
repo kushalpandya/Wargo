@@ -48,10 +48,14 @@ type Client struct {
 	sid string
 }
 
+// transport has no proxy from the environment: requests go where configured.
+var transport = netx.NewTransport(15 * time.Second)
+
 // New returns a client for the given RPC URL (e.g. http://host:9091/transmission/rpc).
 func New(url, username, password string) *Client {
 	return &Client{URL: url, Username: username, Password: password, HTTP: &http.Client{
 		Timeout:       15 * time.Second,
+		Transport:     transport,
 		CheckRedirect: netx.NoRedirects,
 	}}
 }
