@@ -4,6 +4,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -167,13 +168,13 @@ func TestTOTPReplayRejected(t *testing.T) {
 	sealed, _ := st.Seal(key.Secret())
 	st.Set(ctx, "totp", totpState{Secret: sealed, Enabled: true})
 	code, _ := totp.GenerateCode(key.Secret(), time.Now())
-	if err := s.verifyTOTP(ctx, code); err != nil {
+	if err := s.verifyTOTP(ctx, code, false); err != nil {
 		t.Fatalf("first use: %v", err)
 	}
-	if err := s.verifyTOTP(ctx, code); err == nil {
+	if err := s.verifyTOTP(ctx, code, false); err == nil {
 		t.Fatal("replayed code must be rejected")
 	}
-	if err := s.verifyTOTP(ctx, "000000"); err == nil {
+	if err := s.verifyTOTP(ctx, "000000", false); err == nil {
 		t.Fatal("wrong code accepted")
 	}
 }
@@ -416,4 +417,174 @@ func TestWebSocketUpgradeOriginChecked(t *testing.T) {
 	if rec.Code != 403 {
 		t.Fatalf("cross-origin WebSocket upgrade: %d", rec.Code)
 	}
+}
+
+func newTestRequest(method, target, body string) *http.Request {
+	r := httptest.NewRequest(method, target, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	return r
+}
+
+func addPasskey(st *store.Store, id string) {
+	st.DB.Exec(`INSERT INTO webauthn_credentials(id, name, data, rp_id, created_at) VALUES(?,?,'{}','example.com',0)`, id, id)
+}
+
+func enableTOTP(t *testing.T, st *store.Store) string {
+	t.Helper()
+	key, _ := totp.Generate(totp.GenerateOpts{Issuer: "Wargo", AccountName: "tester"})
+	sealed, _ := st.Seal(key.Secret())
+	if err := st.Set(context.Background(), "totp", totpState{Secret: sealed, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	return key.Secret()
+}
+
+func passkeyDelete(s *Service, id string) *httptest.ResponseRecorder {
+	r := newTestRequest("DELETE", "/api/auth/passkeys/"+id, `{"password":"x"}`)
+	r.SetPathValue("id", id)
+	rec := httptest.NewRecorder()
+	httpx.Handler(s.handlePasskeyDelete)(rec, r)
+	return rec
+}
+
+func TestPasskeyDeleteRefusesLastFactorWhenRequired(t *testing.T) {
+	s, st := newTestService(t)
+	s.cfg.Auth.RequireTOTP = true
+	s.bypass = true
+	s.authenticate = func(string, string) error { return nil }
+	addPasskey(st, "k1")
+	rec := passkeyDelete(s, "k1")
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "last_second_factor") {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+	var n int
+	st.DB.QueryRow(`SELECT COUNT(*) FROM webauthn_credentials`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("passkey was removed: %d left", n)
+	}
+}
+
+func TestPasskeyDeleteAllowedWithTOTP(t *testing.T) {
+	s, st := newTestService(t)
+	s.cfg.Auth.RequireTOTP = true
+	s.authenticate = func(string, string) error { return nil }
+	enableTOTP(t, st)
+	addPasskey(st, "k1")
+	if rec := passkeyDelete(s, "k1"); rec.Code != 200 {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTOTPEnableRefusedWhenEnabled(t *testing.T) {
+	s, st := newTestService(t)
+	ctx := context.Background()
+	secret := enableTOTP(t, st)
+	if _, err := s.newRecoveryCodes(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var before, after string
+	st.DB.QueryRow(`SELECT group_concat(hash) FROM recovery_codes`).Scan(&before)
+	code, _ := totp.GenerateCode(secret, time.Now().Add(30*time.Second))
+	rec := httptest.NewRecorder()
+	httpx.Handler(s.handleTOTPEnable)(rec, newTestRequest("POST", "/api/auth/totp/enable", `{"code":"`+code+`"}`))
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "totp_already_enabled") {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+	st.DB.QueryRow(`SELECT group_concat(hash) FROM recovery_codes`).Scan(&after)
+	if before == "" || before != after {
+		t.Fatal("recovery codes changed")
+	}
+}
+
+func TestUnconfirmedTOTPNotASecondFactor(t *testing.T) {
+	s, st := newTestService(t)
+	ctx := context.Background()
+	key, _ := totp.Generate(totp.GenerateOpts{Issuer: "Wargo", AccountName: "tester"})
+	sealed, _ := st.Seal(key.Secret())
+	st.Set(ctx, "totp", totpState{Secret: sealed}) // setup without enable
+	s.pending["tok"] = pendingLogin{ip: "192.0.2.1", expires: time.Now().Add(time.Minute)}
+	code, _ := totp.GenerateCode(key.Secret(), time.Now())
+	rec := httptest.NewRecorder()
+	httpx.Handler(s.handleSecondFactor)(rec, newTestRequest("POST", "/api/auth/second-factor", `{"token":"tok","code":"`+code+`"}`))
+	if rec.Code != 401 {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Every Allow must be matched by exactly one Fail, Success or Release. A
+// foreign in-flight slot reserved beforehand must survive each outcome.
+func TestCheckPasswordReleasesOnce(t *testing.T) {
+	const ip = "192.0.2.1"
+	login := func(t *testing.T, s *Service, user, pw string) *httptest.ResponseRecorder {
+		t.Helper()
+		if ok, _ := s.throttle.Allow(ip); !ok { // another request's slot
+			t.Fatal("setup Allow")
+		}
+		rec := httptest.NewRecorder()
+		httpx.Handler(s.handleLogin)(rec, newTestRequest("POST", "/api/auth/login", fmt.Sprintf(`{"username":%q,"password":%q}`, user, pw)))
+		return rec
+	}
+	inflight := func(s *Service) int { return len(s.throttle.inflight[throttleKey(ip)]) }
+	setup := func(t *testing.T) (*Service, *store.Store) {
+		s, st := newTestService(t)
+		s.cfg.Auth.RequireTOTP = false
+		s.authenticate = func(_, pw string) error {
+			if pw != "good" {
+				return errors.New("bad password")
+			}
+			return nil
+		}
+		return s, st
+	}
+	t.Run("password only success", func(t *testing.T) {
+		s, _ := setup(t)
+		if rec := login(t, s, "tester", "good"); rec.Code != 200 {
+			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+		if n := inflight(s); n != 1 {
+			t.Fatalf("in-flight slots = %d, want 1 (the foreign one)", n)
+		}
+	})
+	t.Run("password then second factor", func(t *testing.T) {
+		s, st := setup(t)
+		secret := enableTOTP(t, st)
+		rec := login(t, s, "tester", "good")
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "second-factor") {
+			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+		if n := inflight(s); n != 1 {
+			t.Fatalf("after password step: in-flight slots = %d, want 1", n)
+		}
+		var tok string
+		for k := range s.pending {
+			tok = k
+		}
+		code, _ := totp.GenerateCode(secret, time.Now())
+		rec = httptest.NewRecorder()
+		httpx.Handler(s.handleSecondFactor)(rec, newTestRequest("POST", "/api/auth/second-factor", `{"token":"`+tok+`","code":"`+code+`"}`))
+		if rec.Code != 200 {
+			t.Fatalf("second factor: %d %s", rec.Code, rec.Body.String())
+		}
+		if n := inflight(s); n != 1 {
+			t.Fatalf("after second factor: in-flight slots = %d, want 1", n)
+		}
+	})
+	t.Run("wrong password", func(t *testing.T) {
+		s, _ := setup(t)
+		if rec := login(t, s, "tester", "bad"); rec.Code != 401 {
+			t.Fatalf("got %d", rec.Code)
+		}
+		if n := inflight(s); n != 1 {
+			t.Fatalf("in-flight slots = %d, want 1", n)
+		}
+	})
+	t.Run("unknown user", func(t *testing.T) {
+		s, _ := setup(t)
+		if rec := login(t, s, "nobody", "good"); rec.Code != 401 {
+			t.Fatalf("got %d", rec.Code)
+		}
+		if n := inflight(s); n != 1 {
+			t.Fatalf("in-flight slots = %d, want 1", n)
+		}
+	})
 }

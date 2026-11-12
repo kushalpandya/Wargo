@@ -358,12 +358,31 @@ func (s *Service) handlePasskeyDelete(w http.ResponseWriter, r *http.Request) er
 		return err
 	}
 	id := r.PathValue("id")
-	res, err := s.st.DB.ExecContext(r.Context(), `DELETE FROM webauthn_credentials WHERE id = ?`, id)
+	// Read before the transaction: the store has a single connection.
+	totpOn := s.totpEnabled(r.Context())
+	// Count and delete in one transaction so two parallel deletes cannot
+	// both pass the last-factor check.
+	tx, err := s.st.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM webauthn_credentials`).Scan(&n); err != nil {
+		return err
+	}
+	if s.cfg.Auth.RequireTOTP && n == 1 && !totpOn {
+		return httpx.Errorf(http.StatusConflict, "last_second_factor", "This is your last second factor. Turn on two-factor codes before removing it.")
+	}
+	res, err := tx.ExecContext(r.Context(), `DELETE FROM webauthn_credentials WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return httpx.ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	s.audit.Record(r, "auth.passkey_delete", id, nil, nil)
 	httpx.OK(w, map[string]bool{"ok": true})

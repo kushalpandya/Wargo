@@ -86,6 +86,9 @@ type Service struct {
 	proxy    *httpx.ProxyTrust
 	throttle *Throttle
 	bypass   bool
+	// authenticate replaces the admin check and password verification in
+	// checkPassword (tests only).
+	authenticate func(username, password string) error
 
 	mu       sync.Mutex
 	pending  map[string]pendingLogin
@@ -501,6 +504,8 @@ func (s *Service) checkPassword(r *http.Request, username, password string) erro
 	var err error
 	if username != s.cfg.Auth.User {
 		err = errors.New("user not allowed")
+	} else if s.authenticate != nil {
+		err = s.authenticate(username, password)
 	} else if err = s.userIsAdmin(username); err == nil {
 		err = s.passwordAuthenticate(username, password)
 	}
@@ -516,8 +521,9 @@ func (s *Service) checkPassword(r *http.Request, username, password string) erro
 	// Not Success: a correct password is only half of a sign-in when a
 	// second factor follows, and clearing the backoff here would give
 	// someone who knows the password fresh TOTP guesses after every
-	// re-login. Callers call throttle.Success once fully authenticated.
-	s.throttle.Release(ip)
+	// re-login. The in-flight slot stays reserved: every caller ends the
+	// attempt exactly once, with Success once fully authenticated or with
+	// Release when it stops short (a second factor follows, or it errors).
 	return nil
 }
 
@@ -619,6 +625,8 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if s.needsSecondFactor(r.Context()) {
+		// The password half is done; the second factor takes its own slot.
+		s.throttle.Release(s.proxy.ClientIP(r))
 		if !s.totpEnabled(r.Context()) && !s.hasRecoveryCodes(r.Context()) {
 			return httpx.Errorf(http.StatusConflict, "passkey_required", "This account signs in with a passkey. Use “Sign in with a passkey”.")
 		}
@@ -631,6 +639,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	if _, err := s.createSession(w, r, MethodPassword, req.Remember); err != nil {
+		s.throttle.Release(s.proxy.ClientIP(r))
 		return err
 	}
 	s.throttle.Success(s.proxy.ClientIP(r))
@@ -674,7 +683,7 @@ func (s *Service) handleSecondFactor(w http.ResponseWriter, r *http.Request) err
 		method = MethodRecovery
 		err = s.useRecoveryCode(r.Context(), req.Recovery)
 	} else {
-		err = s.verifyTOTP(r.Context(), req.Code)
+		err = s.verifyTOTP(r.Context(), req.Code, false)
 	}
 	s.audit.Record(r, "auth.second_factor", method, err, nil)
 	if err != nil {

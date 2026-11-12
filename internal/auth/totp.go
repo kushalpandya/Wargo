@@ -42,11 +42,14 @@ func (s *Service) totpEnabled(ctx context.Context) bool {
 	return ok && t.Enabled
 }
 
-func (s *Service) verifyTOTP(ctx context.Context, code string) error {
+// verifyTOTP checks code against the stored secret. A secret that was set up
+// but never confirmed is not a second factor: only the enable step passes
+// allowPending to confirm it.
+func (s *Service) verifyTOTP(ctx context.Context, code string, allowPending bool) error {
 	totpMu.Lock()
 	defer totpMu.Unlock()
 	t, ok := s.loadTOTP(ctx)
-	if !ok || t.Secret == "" {
+	if !ok || t.Secret == "" || (!t.Enabled && !allowPending) {
 		return errors.New("totp not configured")
 	}
 	secret, err := s.st.Unseal(t.Secret)
@@ -106,7 +109,10 @@ func (s *Service) handleTOTPEnable(w http.ResponseWriter, r *http.Request) error
 	if err := httpx.Decode(r, &req); err != nil {
 		return err
 	}
-	if err := s.verifyTOTP(r.Context(), req.Code); err != nil {
+	if s.totpEnabled(r.Context()) {
+		return httpx.Errorf(http.StatusConflict, "totp_already_enabled", "Two-factor codes are already on.")
+	}
+	if err := s.verifyTOTP(r.Context(), req.Code, true); err != nil {
 		return httpx.Errorf(http.StatusBadRequest, "invalid_code", "That code didn't match. Check your device clock and try again.")
 	}
 	t, _ := s.loadTOTP(r.Context())
