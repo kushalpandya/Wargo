@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readPref, setPref } from "@/lib/prefs";
 import { Suspense, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { Dialog as D } from "radix-ui";
@@ -259,17 +260,16 @@ const SIDEBAR_KEY = "wargo.sidebar";
 /** Collapsed (icon rail) vs expanded sidebar, remembered per browser. */
 function useSidebarCollapsed(): [boolean, () => void] {
   const [collapsed, setCollapsed] = useState(() => {
-    const v = localStorage.getItem(SIDEBAR_KEY);
+    const v = readPref(SIDEBAR_KEY);
     if (v === "collapsed") return true;
     if (v === "expanded") return false;
     // No preference yet: rail on tablets, full sidebar on desktops.
     return !window.matchMedia("(min-width: 1024px)").matches;
   });
-  const toggle = () =>
-    setCollapsed((c) => {
-      localStorage.setItem(SIDEBAR_KEY, c ? "expanded" : "collapsed");
-      return !c;
-    });
+  const toggle = () => {
+    setPref(SIDEBAR_KEY, collapsed ? "expanded" : "collapsed");
+    setCollapsed(!collapsed);
+  };
   return [collapsed, toggle];
 }
 

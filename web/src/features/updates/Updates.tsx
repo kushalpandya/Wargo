@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readPref, setPref } from "@/lib/prefs";
 import { useState } from "react";
 import { useSearchParams } from "react-router";
 import { Tabs } from "radix-ui";
@@ -203,11 +204,11 @@ function Summary({ status, checking }: { status: PkgStatus; checking: boolean })
 }
 
 function useDismissed(): [string | null, (id: string) => void] {
-  const [v, setV] = useState<string | null>(() => localStorage.getItem(DISMISS_KEY));
+  const [v, setV] = useState<string | null>(() => readPref(DISMISS_KEY));
   return [
     v,
     (id) => {
-      localStorage.setItem(DISMISS_KEY, id);
+      setPref(DISMISS_KEY, id);
       setV(id);
     },
   ];

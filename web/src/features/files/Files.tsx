@@ -4,6 +4,7 @@
 //   /files/<root>/<path>?pane=<root>:<path>&pane=…&active=<n>&view=<file>
 // The first pane lives in the path; extra panes in ?pane=; ?active is
 // 1-based and ?view previews a file in the active pane.
+import { readPref, setPref } from "@/lib/prefs";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { HardDrive } from "lucide-react";
@@ -33,9 +34,9 @@ const newKey = () => `pane${++keySeq}`;
 function defaultMeta(from?: PaneMeta): PaneMeta {
   return {
     key: newKey(),
-    view: from?.view ?? ((localStorage.getItem("wargo.files.view") as "list" | "grid" | null) ?? "list"),
+    view: from?.view ?? ((readPref("wargo.files.view") as "list" | "grid" | null) ?? "list"),
     sort: from?.sort ?? ({ key: "name", dir: "asc" } as Sort),
-    hidden: from?.hidden ?? localStorage.getItem("wargo.files.hidden") === "1",
+    hidden: from?.hidden ?? readPref("wargo.files.hidden") === "1",
     back: [],
     fwd: [],
   };
@@ -48,7 +49,7 @@ interface SavedLayout {
 
 function loadLayout(): SavedLayout | null {
   try {
-    const v = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "null") as SavedLayout | null;
+    const v = JSON.parse(readPref(LAYOUT_KEY) ?? "null") as SavedLayout | null;
     if (!v || !Array.isArray(v.panes)) return null;
     // localStorage can hold anything (older versions, manual edits): keep only well-formed entries.
     const panes = v.panes.filter((l) => l && typeof l.root === "string" && typeof l.path === "string").slice(0, MAX_PANES);
@@ -203,7 +204,7 @@ function FilesView({ rootList, loading }: { rootList: Root[]; loading: boolean }
   // Persist the layout.
   useEffect(() => {
     if (!count) return;
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ panes: locs, weights: w } satisfies SavedLayout));
+    setPref(LAYOUT_KEY, JSON.stringify({ panes: locs, weights: w } satisfies SavedLayout));
   }, [locs, w, count]);
 
   // ---- visible window (phones show one pane, tablets two) ----

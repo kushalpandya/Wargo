@@ -9,7 +9,7 @@ const listeners = new Set<() => void>();
 const media = window.matchMedia("(prefers-color-scheme: dark)");
 
 function read(): ThemeMode {
-  const v = localStorage.getItem(KEY);
+  const v = readPref(KEY);
   return v === "light" || v === "dark" ? v : "auto";
 }
 
@@ -24,7 +24,7 @@ function apply(mode: ThemeMode) {
 media.addEventListener("change", () => apply(read()));
 
 export function setTheme(mode: ThemeMode) {
-  localStorage.setItem(KEY, mode);
+  setPref(KEY, mode);
   apply(mode);
 }
 

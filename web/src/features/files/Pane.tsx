@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // One independent file browser. The page shows one or more panes side by
 // side; each owns its location, selection, view settings and history.
+import { setPref } from "@/lib/prefs";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { ContextMenu as CM } from "radix-ui";
 import {
@@ -178,11 +179,11 @@ export function Pane(props: PaneProps) {
 
   const setView = (v: "list" | "grid") => {
     props.onMeta({ view: v });
-    localStorage.setItem("wargo.files.view", v);
+    setPref("wargo.files.view", v);
   };
   const setHidden = (h: boolean) => {
     props.onMeta({ hidden: h });
-    localStorage.setItem("wargo.files.hidden", h ? "1" : "0");
+    setPref("wargo.files.hidden", h ? "1" : "0");
   };
   const setSort = (fn: (s: Sort) => Sort) => props.onMeta({ sort: fn(sort) });
 
@@ -237,7 +238,9 @@ export function Pane(props: PaneProps) {
       ? { key, label: "Remove bookmark", icon: <StarOff />, shortcut: here ? "Ctrl+D" : undefined, run: () => locApi.removeBookmark(b) }
       : { key, label: here ? "Bookmark this folder" : "Add bookmark", icon: <Star />, shortcut: here ? "Ctrl+D" : undefined, run: () => locApi.toggleBookmark(l) };
   };
-  const pathOf = (e: Entry) => joinPath(path, e.name);
+  // The folder the entries on screen belong to: while a placeholder listing shows,
+  // that is the previous folder, not the route path.
+  const pathOf = (e: Entry) => joinPath(listing.data?.path ?? path, e.name);
 
   const open = (e: Entry) => {
     if (e.targetType === "outside") return toast.error("Link points outside this root", `${e.name} → ${e.target}`);
@@ -391,7 +394,7 @@ export function Pane(props: PaneProps) {
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>, cols: number) => {
-    if (e.target !== e.currentTarget) return;
+    if (e.target !== e.currentTarget || listing.isPlaceholderData) return;
     const n = entries.length;
     const mod = e.ctrlKey || e.metaKey;
     if (e.altKey && !mod) {
@@ -528,6 +531,7 @@ export function Pane(props: PaneProps) {
       dragDepth.current++;
     },
     onDragOver: (e: DragEvent) => {
+      if (listing.isPlaceholderData) return;
       if (isFiles(e)) {
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
@@ -554,6 +558,7 @@ export function Pane(props: PaneProps) {
     onDrop: async (e: DragEvent) => {
       dragDepth.current = 0;
       setHint(null);
+      if (listing.isPlaceholderData) return;
       if (isFiles(e)) {
         e.preventDefault();
         const files = await fromDrop(e.dataTransfer);
@@ -880,6 +885,7 @@ export function Pane(props: PaneProps) {
                 </EmptyState>
               )}
               {listing.data && entries.length > 0 && (
+                <div aria-busy={listing.isPlaceholderData || undefined} inert={listing.isPlaceholderData} className={cn("min-h-full transition-opacity", listing.isPlaceholderData && "opacity-60")}>
                 <Listing
                   ref={listRef}
                   idPrefix={idPrefix}
@@ -904,6 +910,7 @@ export function Pane(props: PaneProps) {
                   label={`Files in ${baseName(path) === "." ? rootInfo?.name : baseName(path)}${props.count > 1 ? ` (pane ${props.index + 1})` : ""}`}
                   dnd={coarse ? undefined : { onDragStart, onDragEnd: () => props.onDrag(null), dropRow: hint?.row ?? null, dragging }}
                 />
+                </div>
               )}
               {listing.data?.truncated && <div className="px-3 py-2 text-center text-xs text-warn">Only the first 20,000 entries are shown.</div>}
             </div>

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowUpFromLine, Check, ChevronDown, ChevronUp, Copy, FolderInput, Pause, Play, RotateCcw, X, PackageOpen, AlertTriangle } from "lucide-react";
 import { api } from "@/lib/api";
 import { bytes, rate } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import { useTopic } from "@/lib/ws";
+import { useSocketStatus, useTopic } from "@/lib/ws";
 import { Button, IconButton } from "@/components/ui/button";
 import { Meter } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
@@ -27,6 +27,48 @@ export function useFileJobs(onFinish: (j: JobSnapshot) => void) {
     });
   }, [initial.data]);
   const seen = useRef<Record<string, JobSnapshot["state"]>>({});
+  // Job updates sent while the socket was down are lost. On every (re)connect,
+  // refetch the job list and end local running jobs the server no longer reports.
+  const qc = useQueryClient();
+  const status = useSocketStatus();
+  const jobsRef = useRef(jobs);
+  jobsRef.current = jobs;
+  useEffect(() => {
+    if (status !== "open") return;
+    let alive = true;
+    // Judge only jobs running when the request starts: a job that begins while it
+    // is in flight may be missing from the response without being gone.
+    const asked = new Set(Object.values(jobsRef.current).filter((j) => j.state === "running").map((j) => j.id));
+    qc.fetchQuery({ queryKey: ["jobs"], queryFn: () => api.get<JobSnapshot[]>("/api/jobs"), staleTime: 0 })
+      .then((list) => {
+        if (!alive) return;
+        const byId = new Map(list.map((j) => [j.id, j]));
+        // Jobs the server finished while we were away (or no longer reports).
+        const done: JobSnapshot[] = [];
+        for (const j of Object.values(jobsRef.current)) {
+          if (j.state !== "running" || !asked.has(j.id)) continue;
+          const now = byId.get(j.id);
+          if (now?.state === "running") continue;
+          // Missing means the server restarted and the job died: never report success.
+          done.push(now ?? { ...j, state: "failed", error: "Interrupted. Check the destination." });
+        }
+        for (const j of done) {
+          seen.current[j.id] = j.state;
+          cb.current(j);
+        }
+        if (done.length) {
+          setJobs((cur) => {
+            const next = { ...cur };
+            for (const j of done) if (next[j.id]?.state === "running") next[j.id] = j;
+            return next;
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [status, qc]);
   useTopic<JobSnapshot>("jobs", (j) => {
     if (!j.kind.startsWith("files.")) return;
     const prev = seen.current[j.id];

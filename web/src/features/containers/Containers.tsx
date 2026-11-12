@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readPref, setPref } from "@/lib/prefs";
 import { Fragment, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import {
@@ -286,7 +287,7 @@ export default function Page() {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [group, setGroup] = useState(
-    () => localStorage.getItem("wargo.containers.group") === "1",
+    () => readPref("wargo.containers.group") === "1",
   );
   const list = useContainers();
   const stats =
@@ -360,7 +361,7 @@ export default function Page() {
     nav(`/containers/${c.id}${t !== "overview" ? `?tab=${t}` : ""}`);
   const setGroupPersist = (v: boolean) => {
     setGroup(v);
-    localStorage.setItem("wargo.containers.group", v ? "1" : "0");
+    setPref("wargo.containers.group", v ? "1" : "0");
   };
 
   if (caps && !caps.available) {

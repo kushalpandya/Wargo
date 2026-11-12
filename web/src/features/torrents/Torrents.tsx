@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readPref, setPref } from "@/lib/prefs";
 import { useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { Columns2, Download, Search as SearchIcon, Square } from "lucide-react";
@@ -33,9 +34,9 @@ export default function Torrents() {
   const { data: caps } = useCapabilities();
   const [params, setParams] = useSearchParams();
   const wide = useMedia("(min-width: 1280px)");
-  const [layout, setLayoutState] = useState<Layout>(() => (localStorage.getItem(LAYOUT_KEY) === "tabs" ? "tabs" : "split"));
+  const [layout, setLayoutState] = useState<Layout>(() => (readPref(LAYOUT_KEY) === "tabs" ? "tabs" : "split"));
   const setLayout = (l: Layout) => {
-    localStorage.setItem(LAYOUT_KEY, l);
+    setPref(LAYOUT_KEY, l);
     setLayoutState(l);
   };
 

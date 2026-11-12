@@ -61,8 +61,13 @@ export function LogsView({ id, name, className }: { id: string; name: string; cl
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${proto}//${location.host}/ws/containers/${encodeURIComponent(id)}/logs?tail=500`);
     let ended = false;
-    ws.onopen = () => setState("live");
+    let alive = true;
+    ws.onopen = () => {
+      if (!alive) return;
+      setState("live");
+    };
     ws.onmessage = (ev) => {
+      if (!alive) return;
       try {
         const m = JSON.parse(ev.data as string) as { lines?: LogLine[]; eof?: boolean; error?: string };
         if (m.lines?.length) {
@@ -86,12 +91,17 @@ export function LogsView({ id, name, className }: { id: string; name: string; cl
       }
     };
     ws.onerror = () => {
+      if (!alive) return;
       if (!ended) setState("error");
     };
     ws.onclose = () => {
+      if (!alive) return;
       if (!ended) setState((s) => (s === "error" ? s : "ended"));
     };
-    return () => ws.close();
+    return () => {
+      alive = false;
+      ws.close();
+    };
   }, [id, gen]);
 
   const ql = q.trim().toLowerCase();

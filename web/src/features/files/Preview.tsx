@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readPref, setPref } from "@/lib/prefs";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog as D } from "radix-ui";
@@ -192,7 +193,7 @@ export function Preview({
   const idx = entry ? entries.indexOf(entry) : -1;
   const [text, setText] = useState<TextState & { save?: () => void; writable?: boolean }>({ dirty: false, saving: false });
   const [editSvg, setEditSvg] = useState(false);
-  const [wrap, setWrap] = useState(() => localStorage.getItem("wargo.files.wrap") === "1");
+  const [wrap, setWrap] = useState(() => readPref("wargo.files.wrap") === "1");
   const [guard, setGuard] = useState<null | (() => void)>(null);
   const editorRef = useRef<EditorHandle | null>(null);
   const onState = useCallback((s: Partial<typeof text>) => setText((t) => ({ ...t, ...s })), []);
@@ -200,7 +201,7 @@ export function Preview({
     setText({ dirty: false, saving: false });
     setEditSvg(false);
   }, [name]);
-  useEffect(() => localStorage.setItem("wargo.files.wrap", wrap ? "1" : "0"), [wrap]);
+  useEffect(() => setPref("wargo.files.wrap", wrap ? "1" : "0"), [wrap]);
 
   const guarded = (fn: () => void) => (text.dirty ? setGuard(() => fn) : fn());
   const go = (d: number) => {
