@@ -326,7 +326,7 @@ func statInto(m map[string]any, p string) {
 	}
 	bs := uint64(st.Bsize)
 	m["total"], m["free"], m["used"] = st.Blocks*bs, st.Bavail*bs, (st.Blocks-st.Bfree)*bs
-	if st.Flags&1 != 0 { // ST_RDONLY
+	if st.Flags&1 != 0 && !sealedRoot(p) { // ST_RDONLY
 		m["readOnly"] = true
 	}
 }

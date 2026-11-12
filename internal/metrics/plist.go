@@ -11,13 +11,18 @@ import (
 	"strings"
 )
 
-const plistMaxDepth = 32
+const (
+	plistMaxDepth = 32
+	plistMaxBytes = 8 << 20
+)
+
+var errPlistTooLarge = errors.New("plist: document too large")
 
 // decodePlist parses an Apple XML property list. It returns map[string]any,
 // []any, string, int64, float64, bool or []byte. Dates become strings.
-// Nesting deeper than 32 levels is an error.
+// Nesting deeper than 32 levels or a document over 8 MiB is an error.
 func decodePlist(r io.Reader) (any, error) {
-	d := xml.NewDecoder(r)
+	d := xml.NewDecoder(&plistLimit{r: r, n: plistMaxBytes})
 	d.Strict = true
 	for {
 		tok, err := d.Token()
@@ -139,4 +144,26 @@ func plistValue(d *xml.Decoder, se xml.StartElement, depth int) (any, error) {
 		return se.Name.Local == "true", nil
 	}
 	return nil, errors.New("plist: unknown element " + se.Name.Local)
+}
+
+// plistLimit reads at most n bytes and then fails, so an oversized
+// document is an error instead of a silently truncated one.
+// A read after exactly n bytes returns errPlistTooLarge, not io.EOF, even
+// if the source is at its end; decodePlist stops at the closing root
+// value, so a complete document of n bytes or less still decodes.
+type plistLimit struct {
+	r io.Reader
+	n int64
+}
+
+func (l *plistLimit) Read(p []byte) (int, error) {
+	if l.n <= 0 {
+		return 0, errPlistTooLarge
+	}
+	if int64(len(p)) > l.n {
+		p = p[:l.n]
+	}
+	n, err := l.r.Read(p)
+	l.n -= int64(n)
+	return n, err
 }

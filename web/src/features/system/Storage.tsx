@@ -49,6 +49,7 @@ function driveKind(d: Drive) {
   if (d.transport === "usb") return d.rotational ? "USB HDD" : "USB drive";
   if (d.transport === "mmc") return "SD / eMMC";
   if (d.transport === "virtio") return "Virtual disk";
+  if (d.transport === "other") return d.rotational ? "HDD" : "SSD";
   return d.rotational ? "HDD" : "SATA SSD";
 }
 
@@ -110,11 +111,27 @@ export const StorageCard = memo(function StorageCard() {
       if (!byPart.has(f.partition)) byPart.set(f.partition, []);
       byPart.get(f.partition)!.push(f);
     }
+    // Device names the drive list knows. Only filesystems on other devices
+    // (macOS APFS volumes such as disk3s1s1) are matched by mount point,
+    // so an over-mount on Linux still groups by partition alone.
+    const known = new Set<string>();
+    for (const d of data?.drives ?? []) {
+      known.add(d.name);
+      for (const p of d.partitions ?? []) known.add(p.name);
+    }
     const claimed = new Set<string>();
+    const claimedFs = new Set<Filesystem>();
     const groups = (data?.drives ?? []).map((d) => {
       const parts: PartRow[] = (d.partitions ?? []).map((p) => {
         claimed.add(p.name);
-        return { name: p.name, size: p.size, label: p.label, fs: byPart.get(p.name) ?? [] };
+        // A partition's filesystems: those on it, plus those it lists by
+        // mount point (macOS APFS volumes live on a container device).
+        const fs = [...(byPart.get(p.name) ?? [])];
+        for (const f of data?.filesystems ?? []) {
+          if (!fs.includes(f) && !(f.partition && known.has(f.partition)) && p.mounts?.includes(f.mount)) fs.push(f);
+        }
+        for (const f of fs) claimedFs.add(f);
+        return { name: p.name, size: p.size, label: p.label, fs };
       });
       // A filesystem directly on the whole drive (no partition table).
       if (byPart.has(d.name)) {
@@ -127,7 +144,7 @@ export const StorageCard = memo(function StorageCard() {
     const rest = new Map<string, PartRow>();
     for (const f of data?.filesystems ?? []) {
       const key = f.partition || f.device;
-      if (f.partition && claimed.has(f.partition)) continue;
+      if ((f.partition && claimed.has(f.partition)) || claimedFs.has(f)) continue;
       if (!rest.has(key)) rest.set(key, { name: key.replace(/^\/dev\//, ""), size: f.total, fs: [] });
       rest.get(key)!.fs.push(f);
     }

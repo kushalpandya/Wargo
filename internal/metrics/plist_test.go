@@ -31,3 +31,31 @@ func TestDecodePlistDepthLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDecodePlistMalformed(t *testing.T) {
+	deep := `<plist>` + strings.Repeat("<dict><key>k</key>", 40) + "<true/>" + strings.Repeat("</dict>", 40) + `</plist>`
+	for name, doc := range map[string]string{
+		"entity":      `<?xml version="1.0"?><!DOCTYPE plist [<!ENTITY x "boom">]><plist><string>&x;</string></plist>`,
+		"truncated":   `<plist><dict><key>Size</key><integer>12`,
+		"no plist":    `<dict><key>a</key><true/></dict>`,
+		"integer":     `<plist><integer>12abc</integer></plist>`,
+		"dict no key": `<plist><dict><string>a</string><true/></dict></plist>`,
+		"deep dict":   deep,
+		"unknown":     `<plist><bogus/></plist>`,
+	} {
+		if v, err := decodePlist(strings.NewReader(doc)); err == nil {
+			t.Errorf("%s: decoded %v, want error", name, v)
+		}
+	}
+}
+
+func TestDecodePlistSizeLimit(t *testing.T) {
+	big := `<plist><string>` + strings.Repeat("a", plistMaxBytes) + `</string></plist>`
+	if _, err := decodePlist(strings.NewReader(big)); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("err = %v, want too large", err)
+	}
+	ok := `<plist><string>` + strings.Repeat("a", 1<<20) + `</string></plist>`
+	if _, err := decodePlist(strings.NewReader(ok)); err != nil {
+		t.Fatal(err)
+	}
+}
