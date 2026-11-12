@@ -49,7 +49,7 @@ func TestContainerSpecs(t *testing.T) {
 		t.Fatalf("tmux: %q", sp.Argv)
 	}
 	sp, _ = buildSpec(KindRoot, "", false, 0, a, tl)
-	if strings.Join(sp.Argv, " ") != ns+"su -l kushal -c exec /usr/bin/sudo -i" {
+	if strings.Join(sp.Argv, " ") != ns+"setpriv --reuid=1000 --regid=1000 --init-groups -- env -i HOME=/home/kushal USER=kushal LOGNAME=kushal SHELL=/usr/bin/zsh TERM=xterm-256color PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin /usr/bin/sudo -i" {
 		t.Fatalf("root: %q", sp.Argv)
 	}
 	sp, err = buildSpec(KindContainer, "prowlarr", false, 0, a, tl)
@@ -65,5 +65,17 @@ func TestContainerSpecs(t *testing.T) {
 	}
 	if termEnviron() != nil {
 		t.Fatal("container env must not leak into terminals")
+	}
+}
+
+func TestPtyPathsContainerMode(t *testing.T) {
+	ptmx, dir := ptyPaths()
+	if ptmx != "/dev/ptmx" || dir != "/dev/pts" {
+		t.Fatalf("native: %q %q", ptmx, dir)
+	}
+	t.Cleanup(host.SetRoot("/host"))
+	ptmx, dir = ptyPaths()
+	if ptmx != "/host/dev/pts/ptmx" || dir != "/host/dev/pts" {
+		t.Fatalf("container: %q %q", ptmx, dir)
 	}
 }

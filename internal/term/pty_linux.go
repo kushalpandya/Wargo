@@ -4,11 +4,15 @@ package term
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"syscall"
 	"unsafe"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 // A tiny Linux PTY implementation (the parts of creack/pty we need) so the
@@ -35,9 +39,30 @@ func ioctl(f *os.File, req uintptr, arg unsafe.Pointer) error {
 	return nil
 }
 
+// ptyPaths returns the ptmx device and the devpts directory to use. In
+// container mode they point into the host's devpts instance, so the shell
+// (which runs in the host's mount namespace) sees its /dev/pts/N.
+func ptyPaths() (ptmx, ptsDir string) {
+	if host.Container() {
+		return host.Path("/dev/pts/ptmx"), host.Path("/dev/pts")
+	}
+	return "/dev/ptmx", "/dev/pts"
+}
+
+var warnHostPTY sync.Once
+
 // openPTY returns the master (non-blocking, poller-backed) and slave ends.
+// The slave is opened from the same devpts instance as the master.
 func openPTY() (master, slave *os.File, err error) {
-	master, err = os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY|syscall.O_CLOEXEC, 0)
+	ptmx, ptsDir := ptyPaths()
+	master, err = os.OpenFile(ptmx, os.O_RDWR|syscall.O_NOCTTY|syscall.O_CLOEXEC, 0)
+	if err != nil && ptmx != "/dev/ptmx" {
+		warnHostPTY.Do(func() {
+			slog.Warn("term: cannot open the host's devpts, falling back to the container's", "err", err)
+		})
+		ptmx, ptsDir = "/dev/ptmx", "/dev/pts"
+		master, err = os.OpenFile(ptmx, os.O_RDWR|syscall.O_NOCTTY|syscall.O_CLOEXEC, 0)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -51,7 +76,7 @@ func openPTY() (master, slave *os.File, err error) {
 		master.Close()
 		return nil, nil, fmt.Errorf("ptsname: %w", err)
 	}
-	slave, err = os.OpenFile("/dev/pts/"+strconv.FormatUint(uint64(n), 10), os.O_RDWR|syscall.O_NOCTTY|syscall.O_CLOEXEC, 0)
+	slave, err = os.OpenFile(ptsDir+"/"+strconv.FormatUint(uint64(n), 10), os.O_RDWR|syscall.O_NOCTTY|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		master.Close()
 		return nil, nil, err

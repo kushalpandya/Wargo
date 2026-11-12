@@ -162,6 +162,26 @@ func LoginShellArgv(acct *Account, cmd string) []string {
 	return out
 }
 
+// RootShellArgv returns argv for the host's `sudo -i` run by the admin on the
+// host. `su -c` calls setsid and drops the controlling terminal, which makes
+// sudo fail with "a terminal is required", so with setpriv(1) available the
+// admin identity is taken with setpriv and sudo is exec'd directly (the PTY
+// stays the controlling terminal). The login environment is set explicitly.
+// Without setpriv it falls back to the `su -l` form. Container mode only.
+func RootShellArgv(acct *Account, sudo string) []string {
+	if userSwitch() != SwitchSetpriv {
+		return LoginShellArgv(acct, "exec "+ShellQuote(sudo)+" -i")
+	}
+	out := NsenterArgv("", acct, SwitchSetpriv, []string{
+		"env", "-i",
+		"HOME=" + acct.Home, "USER=" + acct.Name, "LOGNAME=" + acct.Name,
+		"SHELL=" + acct.Shell, "TERM=xterm-256color",
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		sudo, "-i",
+	})
+	return out
+}
+
 // ShellQuote quotes s for a POSIX shell.
 func ShellQuote(s string) string {
 	if s != "" && strings.IndexFunc(s, func(r rune) bool {

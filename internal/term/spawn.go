@@ -241,7 +241,7 @@ func buildContainerSpec(kind, target string, useTmux bool, tmuxN int, a account,
 		if t.Sudo == "" {
 			return spec{}, errors.New("sudo is not installed on the host")
 		}
-		return spec{Argv: host.LoginShellArgv(acct, "exec "+host.ShellQuote(t.Sudo)+" -i"), Title: "root"}, nil
+		return spec{Argv: host.RootShellArgv(acct, t.Sudo), Title: "root"}, nil
 	case KindContainer:
 		if !ValidContainer(target) {
 			return spec{}, fmt.Errorf("invalid container name %q", target)
