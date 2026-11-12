@@ -11,7 +11,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -354,7 +356,7 @@ func (f *fakeDocker) listContainers(w http.ResponseWriter) {
 
 func startFake(t *testing.T, f *fakeDocker) *Service {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "docker.sock")
+	sock := filepath.Join(shortTempDir(t), "docker.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -542,5 +544,24 @@ func TestConvertRedactsCommand(t *testing.T) {
 	}
 	if !strings.Contains(c.Command, "app --db postgres://") || !strings.Contains(c.Command, "@db/x") {
 		t.Fatalf("command over-redacted: %q", c.Command)
+	}
+}
+
+// shortTempDir returns a temp dir with a short path: unix socket paths are
+// limited to about 104 bytes on macOS, and its TMPDIR is long.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("/tmp", "wd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(d) })
+	return d
+}
+
+func TestCLIEnvPinsSocket(t *testing.T) {
+	got := cliEnv("/s.sock", []string{"PATH=/bin", "DOCKER_HOST=tcp://x", "DOCKER_CONTEXT=y"})
+	if !slices.Equal(got, []string{"PATH=/bin", "DOCKER_HOST=unix:///s.sock"}) {
+		t.Fatal(got)
 	}
 }

@@ -9,6 +9,6 @@ import (
 
 func init() {
 	server.RegisterFeature(func(d *server.Deps) (server.Registrar, error) {
-		return term.New(d.Audit, d.Hub.OriginPatterns), nil
+		return term.New(d.Audit, d.Hub.OriginPatterns, d.Cfg.Docker.Socket), nil
 	})
 }

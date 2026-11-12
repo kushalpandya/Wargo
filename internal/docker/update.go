@@ -338,6 +338,9 @@ func (s *Service) composeUpdate(ctx context.Context, job *jobs.Job, dir, project
 		// Natively plain exec in dir; in container mode the host's docker
 		// CLI runs as the admin user in the host's namespaces.
 		cmd := host.CommandOpts(ctx, host.Opts{AsUser: true, Dir: dir}, append([]string{"docker"}, args...)...)
+		if !host.Container() {
+			cmd.Env = cliEnv(s.c.socket, os.Environ())
+		}
 		pr, pw := io.Pipe()
 		cmd.Stdout, cmd.Stderr = pw, pw
 		if err := cmd.Start(); err != nil {

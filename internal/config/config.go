@@ -135,6 +135,11 @@ func DefaultListen() string {
 	return "127.0.0.1:2207"
 }
 
+func userHome() string {
+	h, _ := os.UserHomeDir()
+	return h
+}
+
 // Default returns a configuration suitable for a fresh install.
 func Default() Config {
 	c := Config{
@@ -147,7 +152,7 @@ func Default() Config {
 			SessionRememberMax: Duration{90 * 24 * time.Hour},
 			RequireTOTP:        true,
 		},
-		Docker:  Docker{Socket: "/var/run/docker.sock", UpdateCheckInterval: Duration{6 * time.Hour}},
+		Docker:  Docker{Socket: DefaultDockerSocket(os.Getenv, userHome()), UpdateCheckInterval: Duration{6 * time.Hour}},
 		Metrics: Metrics{Interval: Duration{time.Second}, History: Duration{10 * time.Minute}},
 		Files:   Files{MaxEditSize: 4 << 20, ShowMounts: true},
 	}

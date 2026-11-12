@@ -44,6 +44,8 @@ type Service struct {
 	tools tools
 	env   []string // Wargo's environ, filtered per session
 
+	dockerSocket string // the socket Wargo's own Docker client uses
+
 	mu       sync.Mutex
 	sessions map[string]*Session
 
@@ -61,7 +63,10 @@ func termEnviron() []string {
 }
 
 // New builds the service. origins are WebSocket origin patterns.
-func New(a Auditor, origins []string) *Service {
+//
+// dockerSocket is the Docker socket Wargo itself uses; container shells are
+// pinned to it so the docker CLI targets the same engine.
+func New(a Auditor, origins []string, dockerSocket string) *Service {
 	return &Service{
 		audit:    a,
 		origins:  origins,
@@ -71,7 +76,25 @@ func New(a Auditor, origins []string) *Service {
 		tools:    lookTools(host.LookPath),
 		env:      termEnviron(),
 		sessions: map[string]*Session{},
+
+		dockerSocket: dockerSocket,
 	}
+}
+
+// extraEnv is the docker environment a session of this kind gets on top of
+// the allow-listed base. Container shells (outside container mode) are pinned
+// to Wargo's socket; DOCKER_CONTEXT is never passed, since it would override
+// DOCKER_HOST. In container mode docker runs through nsenter on the host and
+// the socket path here is the container's view, so it stays unpinned.
+func (s *Service) extraEnv(kind string) []string {
+	if kind != KindContainer || host.Container() || s.dockerSocket == "" {
+		return nil
+	}
+	out := []string{"DOCKER_HOST=unix://" + s.dockerSocket}
+	if v := os.Getenv("DOCKER_CONFIG"); v != "" {
+		out = append(out, "DOCKER_CONFIG="+v)
+	}
+	return out
 }
 
 func (s *Service) Register(mux *http.ServeMux) {
@@ -232,15 +255,7 @@ func (s *Service) open(req createReq) (*Session, error) {
 	if s.testArgv != nil {
 		sp.Argv = s.testArgv
 	}
-	var extra []string
-	if req.Kind == KindContainer && !host.Container() {
-		for _, k := range []string{"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG"} {
-			if v := os.Getenv(k); v != "" {
-				extra = append(extra, k+"="+v)
-			}
-		}
-	}
-	se, err := startSession(req.Kind, req.Target, sp, buildEnv(s.env, s.acct, extra...), cols, rows)
+	se, err := startSession(req.Kind, req.Target, sp, buildEnv(s.env, s.acct, s.extraEnv(req.Kind)...), cols, rows)
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err

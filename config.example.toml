@@ -57,7 +57,12 @@ path = "/home/alice"
 # max_edit_size = 4194304       # bytes; larger files open read-only
 
 [docker]
-socket = "/var/run/docker.sock"
+# Default: /var/run/docker.sock on Linux. On macOS the first match of:
+# DOCKER_HOST (unix:// only), the active docker context (DOCKER_CONTEXT or
+# currentContext in ~/.docker/config.json), ~/.colima/default/docker.sock,
+# then /var/run/docker.sock. Container shells and compose runs are pinned
+# to this socket.
+# socket = "/var/run/docker.sock"
 # Check container images for newer versions in the background (read-only
 # registry lookups; nothing is pulled). "0" disables. A value chosen in
 # Settings → General takes precedence.

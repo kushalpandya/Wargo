@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -185,7 +186,11 @@ func (s *Service) detectCompose() bool {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.composeOK = host.UserCommand(ctx, "docker", "compose", "version").Run() == nil
+		cmd := host.UserCommand(ctx, "docker", "compose", "version")
+		if !host.Container() {
+			cmd.Env = cliEnv(s.c.socket, os.Environ())
+		}
+		s.composeOK = cmd.Run() == nil
 	})
 	return s.composeOK
 }
@@ -711,4 +716,18 @@ func (s *Service) followEvents(ctx context.Context, path string) error {
 		}
 	}
 	return sc.Err()
+}
+
+// cliEnv pins the docker CLI to the socket Wargo's own client uses, so a
+// compose run can't target a different engine through DOCKER_HOST or a
+// docker context.
+func cliEnv(socket string, environ []string) []string {
+	out := make([]string, 0, len(environ)+1)
+	for _, kv := range environ {
+		if strings.HasPrefix(kv, "DOCKER_HOST=") || strings.HasPrefix(kv, "DOCKER_CONTEXT=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "DOCKER_HOST=unix://"+socket)
 }

@@ -175,7 +175,7 @@ func (n *nopAudit) Record(r *http.Request, action, target string, err error, det
 func testService(t *testing.T, script string) (*Service, *nopAudit) {
 	t.Helper()
 	au := &nopAudit{}
-	s := New(au, nil)
+	s := New(au, nil, "")
 	s.acct = account{User: "test", Home: t.TempDir(), Shell: "/bin/sh"}
 	s.tools = tools{}
 	s.env = []string{"PATH=/usr/bin:/bin", "WARGO_SECRET=nope"}
@@ -370,5 +370,22 @@ func TestHTTPAndWebSocket(t *testing.T) {
 	}
 	if !slices.Contains(au.actions, "term.open host") || !slices.Contains(au.actions, "term.close host") {
 		t.Fatalf("audit %q", au.actions)
+	}
+}
+
+func TestContainerEnvPinsDockerHost(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://elsewhere:2375")
+	t.Setenv("DOCKER_CONTEXT", "other")
+	t.Setenv("DOCKER_CONFIG", "")
+	s := New(nil, nil, "/tmp/x.sock")
+	if got := s.extraEnv(KindContainer); !slices.Equal(got, []string{"DOCKER_HOST=unix:///tmp/x.sock"}) {
+		t.Fatal(got)
+	}
+	if s.extraEnv(KindHost) != nil || s.extraEnv(KindRoot) != nil {
+		t.Fatal("host and root shells get no docker env")
+	}
+	t.Setenv("DOCKER_CONFIG", "/cfg")
+	if got := s.extraEnv(KindContainer); !slices.Equal(got, []string{"DOCKER_HOST=unix:///tmp/x.sock", "DOCKER_CONFIG=/cfg"}) {
+		t.Fatal(got)
 	}
 }
