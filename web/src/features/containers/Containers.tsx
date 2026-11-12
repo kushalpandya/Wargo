@@ -8,7 +8,6 @@ import {
   FileText,
   SquareTerminal,
   Info,
-  Layers,
   MoreHorizontal,
   Network as NetworkIcon,
   Play,
@@ -22,7 +21,8 @@ import { cn } from "@/lib/cn";
 import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
-import { SearchInput, Segmented } from "@/components/ui/form";
+import { SearchInput } from "@/components/ui/form";
+import { FilterMenu, radioGroup } from "@/components/ui/filter-menu";
 import { Menu, MenuItem, MenuSeparator, Tooltip } from "@/components/ui/menu";
 import {
   Badge,
@@ -412,24 +412,25 @@ export default function Page() {
             className="min-w-0 flex-1 basis-56"
             label="Filter containers"
           />
-          <Segmented<Filter>
-            label="Show"
-            value={filter}
-            onChange={setFilter}
-            options={[
-              { value: "all", label: "All" },
-              { value: "running", label: "Running" },
-              { value: "stopped", label: "Stopped" },
+          <FilterMenu
+            active={filter !== "all" ? 1 : 0}
+            onClear={() => setFilter("all")}
+            groups={[
+              radioGroup<Filter>("Show only", filter, setFilter, [
+                { value: "all", label: "All" },
+                { value: "running", label: "Running" },
+                { value: "stopped", label: "Stopped" },
+                { value: "attention", label: "Attention", title: "Unhealthy, restarting or with updates" },
+              ]),
               {
-                value: "attention",
-                label: "Attention",
-                title: "Unhealthy, restarting or with updates",
+                ...radioGroup<"none" | "project">("Group by", group ? "project" : "none", (v) => setGroupPersist(v === "project"), [
+                  { value: "none", label: "None" },
+                  { value: "project", label: "Project" },
+                ]),
+                view: true,
               },
             ]}
           />
-          <Button size="sm" variant={group ? "primary" : "secondary"} aria-pressed={group} icon={<Layers />} onClick={() => setGroupPersist(!group)} className="max-md:h-8">
-            Group by project
-          </Button>
         </div>
         {list.error ? (
           <div className="p-4">

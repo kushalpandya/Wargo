@@ -11,11 +11,12 @@ import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { Select, SearchInput } from "@/components/ui/form";
-import { Chip, ChipRow, StatusBar, StatusItem, toolbarClass, torrentCardClass } from "./parts";
+import { StatusBar, StatusItem, toolbarClass, torrentCardClass } from "./parts";
+import { FilterMenu } from "@/components/ui/filter-menu";
 import { EmptyState, ErrorNote, PageHeader, Spinner } from "@/components/ui/misc";
 import { SortTh, Table, Td, Th, THead, Tr, useSort } from "@/components/ui/table";
 import { CATEGORIES, type IndexerRef, type SearchResponse, type SearchResult } from "./api";
-import { IndexerPicker, useResultActions, WithReason, type RowAction } from "./actions";
+import { useResultActions, WithReason, type RowAction } from "./actions";
 
 type SortKey = "seeders" | "size" | "age" | "name";
 const PAGE = 100;
@@ -162,6 +163,15 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
   const indexerList = indexers.data?.indexers ?? search.data?.indexers ?? [];
   const indexerCount = idx.length || indexerList.length;
 
+  // Same rules as the old indexer picker: all selected means "all" (empty),
+  // and the last one can't be unticked.
+  const toggleIndexer = (id: number, on: boolean) => {
+    const base = idx.length ? idx : indexerList.map((i) => i.id);
+    let next = on ? [...new Set([...base, id])] : base.filter((x) => x !== id);
+    if (next.length === indexerList.length) next = [];
+    if (next.length === 0 && !on) return;
+    update({ idx: next.join(",") || null });
+  };
   const toggleCat = (id: number) => {
     const next = cats.includes(id) ? cats.filter((c) => c !== id) : [...cats, id];
     update({ cat: next.join(",") || null });
@@ -198,17 +208,32 @@ export default function SearchPage({ embedded }: { embedded?: boolean } = {}) {
               {search.isFetching ? <Spinner className="size-4" /> : <ArrowRight className="size-4" />}
             </button>
           </div>
-          <IndexerPicker indexers={indexerList} value={idx} onChange={(v) => update({ idx: v.join(",") || null })} />
-          <ChipRow label="Category">
-            <Chip active={cats.length === 0} onClick={() => update({ cat: null })}>
-              All
-            </Chip>
-            {CATEGORIES.map((c) => (
-              <Chip key={c.id} active={cats.includes(c.id)} onClick={() => toggleCat(c.id)}>
-                {c.label}
-              </Chip>
-            ))}
-          </ChipRow>
+          <FilterMenu
+            active={(idx.length ? 1 : 0) + (cats.length ? 1 : 0)}
+            onClear={() => update({ idx: null, cat: null })}
+            groups={[
+              ...(indexerList.length
+                ? [
+                    {
+                      kind: "check" as const,
+                      title: "Indexers",
+                      items: [
+                        { label: "All indexers", checked: idx.length === 0, onChange: () => update({ idx: null }) },
+                        ...indexerList.map((i) => ({ label: i.name, checked: idx.length === 0 || idx.includes(i.id), onChange: (on: boolean) => toggleIndexer(i.id, on) })),
+                      ],
+                    },
+                  ]
+                : []),
+              {
+                kind: "check" as const,
+                title: "Categories",
+                items: [
+                  { label: "All", checked: cats.length === 0, onChange: () => update({ cat: null }) },
+                  ...CATEGORIES.map((c) => ({ label: c.label, checked: cats.includes(c.id), onChange: () => toggleCat(c.id) })),
+                ],
+              },
+            ]}
+          />
         </form>
 
         {!q ? (

@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Popover } from "radix-ui";
-import { Check, ChevronDown } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/form";
 import { Tooltip } from "@/components/ui/menu";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { downloadBlob } from "@/lib/download";
-import { errorMessage, type IndexerRef } from "./api";
+import { errorMessage } from "./api";
 
 /** Readonly, pre-selected magnet for manual copying on insecure origins. */
 export function MagnetDialog({ magnet, title, onClose }: { magnet: string | null; title?: string; onClose: () => void }) {
@@ -153,53 +150,5 @@ export function WithReason({ reason, children, className }: { reason?: string; c
         {children}
       </span>
     </Tooltip>
-  );
-}
-
-/** Indexer multi-select; empty selection means "all". */
-export function IndexerPicker({ indexers, value, onChange }: { indexers: IndexerRef[]; value: number[]; onChange: (v: number[]) => void }) {
-  const all = value.length === 0;
-  const label = all ? "All indexers" : value.length === 1 ? (indexers.find((i) => i.id === value[0])?.name ?? "1 indexer") : `${value.length} indexers`;
-  const toggle = (id: number, on: boolean) => {
-    const base = all ? indexers.map((i) => i.id) : value;
-    let next = on ? [...new Set([...base, id])] : base.filter((x) => x !== id);
-    if (next.length === indexers.length) next = [];
-    if (next.length === 0 && !on) return; // keep at least one
-    onChange(next);
-  };
-  return (
-    <Popover.Root>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          aria-label={`Indexers: ${label}`}
-          className="inline-flex h-9 min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 text-ui text-fg hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/25"
-        >
-          <span className="truncate">{label}</span>
-          <ChevronDown className="size-3.5 shrink-0 text-subtle" />
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content align="end" sideOffset={4} className="z-50 w-64 rounded-md border border-border-strong bg-surface p-1 shadow-xl focus:outline-none">
-          <button
-            type="button"
-            onClick={() => onChange([])}
-            className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-ui hover:bg-surface-3"
-          >
-            <Check className={cn("size-3.5", all ? "text-accent" : "invisible")} />
-            All enabled indexers
-          </button>
-          <div className="my-1 h-px bg-border" />
-          <div className="max-h-72 overflow-y-auto">
-            {indexers.map((i) => (
-              <div key={i.id} className="flex h-8 items-center rounded px-2 hover:bg-surface-3">
-                <Checkbox checked={all || value.includes(i.id)} onCheckedChange={(on) => toggle(i.id, on)} label={i.name} className="w-full" />
-              </div>
-            ))}
-            {indexers.length === 0 && <p className="px-2 py-1.5 text-xs text-muted">No enabled torrent indexers.</p>}
-          </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
   );
 }

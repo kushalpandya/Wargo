@@ -9,7 +9,8 @@ import { cn } from "@/lib/cn";
 import { useFillViewport } from "@/lib/hooks";
 import { Card } from "@/components/ui/card";
 import { IconButton } from "@/components/ui/button";
-import { SearchInput, Segmented, Select } from "@/components/ui/form";
+import { SearchInput } from "@/components/ui/form";
+import { FilterMenu, radioGroup } from "@/components/ui/filter-menu";
 import { Badge, EmptyState, ErrorNote, Notice, Skeleton } from "@/components/ui/misc";
 
 type Source = "system" | "kernel" | "containers" | "wargo";
@@ -176,34 +177,27 @@ export const EventsPanel = memo(function EventsPanel() {
       <Card>
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
           <SearchInput value={q} onChange={setQ} placeholder="Filter messages…" label="Filter events" className="min-w-0 flex-1 basis-40" />
-          <label htmlFor="events-source" className="sr-only">
-            Source
-          </label>
-          <Select id="events-source" className="w-auto" title="Source" value={source} onChange={(e) => set("source", e.target.value === "all" ? null : e.target.value)}>
-            <option value="all">All sources ({counts.all})</option>
-            {SOURCES.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label} ({counts[s.value] ?? 0})
-              </option>
-            ))}
-          </Select>
-          <Segmented<Range>
-            label="Time range"
-            value={range}
-            onChange={(v) => set("range", v === "24h" ? null : v)}
-            options={[
-              { value: "1h", label: "1 hour", title: "Last hour" },
-              { value: "24h", label: "24 hours", title: "Last 24 hours" },
-              { value: "7d", label: "7 days", title: "Last 7 days" },
-            ]}
-          />
-          <Segmented<Level>
-            label="Levels"
-            value={level}
-            onChange={(v) => set("level", v === "warning" ? null : v)}
-            options={[
-              { value: "error", label: "Errors" },
-              { value: "warning", label: "Errors & warnings" },
+          <FilterMenu
+            active={(source !== "all" ? 1 : 0) + (range !== "24h" ? 1 : 0) + (level !== "warning" ? 1 : 0)}
+            onClear={() => {
+              const next = new URLSearchParams(params);
+              for (const k of ["source", "range", "level"]) next.delete(k);
+              setParams(next, { replace: true });
+            }}
+            groups={[
+              radioGroup("Source", source, (v) => set("source", v === "all" ? null : v), [
+                { value: "all", label: "All sources", hint: counts.all },
+                ...SOURCES.map((s) => ({ value: s.value, label: s.label, hint: counts[s.value] ?? 0 })),
+              ]),
+              radioGroup<Range>("Time range", range, (v) => set("range", v === "24h" ? null : v), [
+                { value: "1h", label: "Last hour" },
+                { value: "24h", label: "Last 24 hours" },
+                { value: "7d", label: "Last 7 days" },
+              ]),
+              radioGroup<Level>("Levels", level, (v) => set("level", v === "warning" ? null : v), [
+                { value: "error", label: "Errors" },
+                { value: "warning", label: "Errors and warnings" },
+              ]),
             ]}
           />
           <IconButton

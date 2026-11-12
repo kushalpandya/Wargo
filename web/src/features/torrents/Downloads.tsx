@@ -11,8 +11,9 @@ import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { SearchInput, Select } from "@/components/ui/form";
-import { Chip, ChipRow, StatusBar, StatusItem, toolbarClass, torrentCardClass } from "./parts";
+import { SearchInput } from "@/components/ui/form";
+import { FilterMenu, radioGroup } from "@/components/ui/filter-menu";
+import { StatusBar, StatusItem, toolbarClass, torrentCardClass } from "./parts";
 import { Badge, EmptyState, ErrorNote, Meter, PageHeader, Skeleton, Spinner, type Tone } from "@/components/ui/misc";
 import { SortTh, Table, Td, Th, THead, Tr, useSort } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
@@ -199,37 +200,18 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
             {/* Same shape as the Search card: input and controls, then chips. */}
             <div className={toolbarClass}>
               <SearchInput value={q} onChange={setQ} placeholder="Filter by name…" label="Filter torrents by name" className="min-w-0 flex-1 basis-48" />
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5">
-                  <label htmlFor="sort-torrents" className="text-2xs font-semibold uppercase tracking-wider text-subtle @max-3xl:sr-only">
-                    Sort
-                  </label>
-                  <Select
-                    id="sort-torrents"
-                    className="w-auto"
-                    title="Sort"
-                    value={sort.key}
-                    // Picks the column; its header still flips the direction.
-                    onChange={(e) => {
-                      const key = e.target.value as SortKey;
-                      setSort({ key, dir: SORT_OPTIONS.find(([k]) => k === key)![2] });
-                    }}
-                  >
-                    {SORT_OPTIONS.map(([k, l]) => (
-                      <option key={k} value={k}>
-                        {l}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              </div>
-              <ChipRow label="Show">
-                {FILTERS.map(([v, l]) => (
-                  <Chip key={v} active={filter === v} onClick={() => setFilter(v)}>
-                    {l} <span className="num opacity-70">{counts[v]}</span>
-                  </Chip>
-                ))}
-              </ChipRow>
+              <FilterMenu
+                active={filter !== "all" ? 1 : 0}
+                onClear={() => setFilter("all")}
+                groups={[
+                  radioGroup<Filter>("Show only", filter, setFilter, FILTERS.map(([v, l]) => ({ value: v, label: l, hint: counts[v] }))),
+                  {
+                    // Picks the column with its usual direction; its header still flips it.
+                    ...radioGroup<SortKey>("Sort by", sort.key, (key) => setSort({ key, dir: SORT_OPTIONS.find(([k]) => k === key)![2] }), SORT_OPTIONS.map(([k, l]) => ({ value: k, label: l }))),
+                    view: true,
+                  },
+                ]}
+              />
             </div>
 
             {initial.isLoading && !live ? (

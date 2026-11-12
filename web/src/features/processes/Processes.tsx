@@ -10,6 +10,7 @@ import { cn } from "@/lib/cn";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { SearchInput, Segmented } from "@/components/ui/form";
+import { FilterMenu, radioGroup } from "@/components/ui/filter-menu";
 import { EmptyState, ErrorNote, Meter, PageHeader, Skeleton } from "@/components/ui/misc";
 import { SortTh, Table, Td, Th, THead, Tr, type SortDir, type SortState } from "@/components/ui/table";
 import { ProcessSheet } from "./ProcessSheet";
@@ -324,13 +325,18 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
       <Card>
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
           <SearchInput value={q} onChange={(v) => (setQ(v), setLimit(PAGE))} placeholder="Filter by name, PID, user or command…" className="min-w-0 flex-1 basis-56" label="Filter processes" />
-          <Segmented
-            label="Owner"
-            value={scope}
-            onChange={setScope}
-            options={[
-              { value: "mine", label: "Mine" },
-              { value: "all", label: "All users" },
+          <FilterMenu
+            active={(scope !== "all" ? 1 : 0) + (kernel ? 1 : 0)}
+            onClear={() => {
+              setScope("all");
+              setKernel(false);
+            }}
+            groups={[
+              radioGroup<"mine" | "all">("Owner", scope, setScope, [
+                { value: "all", label: "All users" },
+                { value: "mine", label: "Mine" },
+              ]),
+              { kind: "check", title: "Include", items: [{ label: "Kernel threads", checked: kernel, onChange: setKernel }] },
             ]}
           />
           <Segmented
@@ -342,9 +348,6 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
               { value: "tree", label: <><ListTree /> Tree</>, title: "Tree view" },
             ]}
           />
-          <Button size="sm" variant={kernel ? "primary" : "secondary"} aria-pressed={kernel} onClick={() => setKernel((k) => !k)} className="max-md:h-8">
-            Kernel threads
-          </Button>
           {!live && <span className="text-xs font-medium text-warn" role="status">Paused</span>}
         </div>
         {query.error ? (
