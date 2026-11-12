@@ -99,6 +99,7 @@ func computeStatic() Specs {
 	}
 	_, s.Logo = logoPath()
 	s.LogoColor = osReleaseColor()
+	applyPlatformSpecs(&s)
 	return s
 }
 
@@ -315,6 +316,7 @@ func packageCounts() []PackageCount {
 	if n := countDirs("/var/lib/snapd/snaps"); n > 0 {
 		out = append(out, PackageCount{"snap", n})
 	}
+	out = append(out, platformPackages()...)
 	pkgCache, pkgAt = out, time.Now()
 	return out
 }

@@ -390,14 +390,24 @@ func GetInfo(ctx context.Context) Info {
 			i.Virtualization = h.VirtualizationSystem
 		}
 	}
-	i.OS, i.OSID = osRelease()
+	if pretty, id, ok := platformOSRelease(); ok {
+		i.OS, i.OSID = pretty, id
+	} else {
+		i.OS, i.OSID = osRelease()
+	}
 	if ci, err := cpu.InfoWithContext(ctx); err == nil && len(ci) > 0 {
 		i.CPUModel = strings.TrimSpace(ci[0].ModelName)
+		// Apple silicon reports a bogus 4 MHz, so ignore implausible values.
+		if runtime.GOOS == "darwin" && ci[0].Mhz >= 100 {
+			i.CPUMaxMHz = ci[0].Mhz
+		}
 	}
 	if i.CPUModel == "" {
 		i.CPUModel = fallbackCPUModel()
 	}
-	i.CPUMaxMHz = cpuMaxMHz()
+	if i.CPUMaxMHz == 0 {
+		i.CPUMaxMHz = cpuMaxMHz()
+	}
 	i.Threads, _ = cpu.CountsWithContext(ctx, true)
 	i.Cores, _ = cpu.CountsWithContext(ctx, false)
 	if vm, err := mem.VirtualMemoryWithContext(ctx); err == nil {
