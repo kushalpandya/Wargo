@@ -36,6 +36,10 @@ type Progress func(done int64, current string)
 // ErrIntoSelf is returned when copying or moving a folder into itself.
 var ErrIntoSelf = errors.New("cannot copy or move a folder into itself")
 
+// ErrSymlinkInPath is returned when a root file operation meets a symbolic
+// link in a folder of the path, or as the item itself where that matters.
+var ErrSymlinkInPath = errors.New("path contains a symbolic link")
+
 // Inside reports whether p equals dir or lies below it (both cleaned).
 func Inside(p, dir string) bool {
 	return dir == "." || p == dir || strings.HasPrefix(p, dir+"/")
@@ -59,16 +63,49 @@ func CopyContext(ctx context.Context, root *os.Root, src, dst string, prog Progr
 // the same root). Each side stays confined to its own root. The caller must
 // rule out copying a folder into itself; as a safety net, folders created
 // by this copy are never descended into again.
+//
+// Only the folders holding src and dst are found by path (os.Root rules).
+// Below them the copy walks by descriptor: every folder is opened
+// O_NOFOLLOW relative to its parent and kept open while its entries are
+// copied, files are opened O_NOFOLLOW and checked to be the inode that was
+// examined, new files are created O_EXCL|O_NOFOLLOW, and modes and times
+// are set on descriptors. Nothing swapped in during the copy (a symlink in
+// place of a folder or file) is ever followed, on either side.
 func CopyBetween(ctx context.Context, srcRoot *os.Root, src string, dstRoot *os.Root, dst string, prog Progress) error {
 	src, dst = Clean(src), Clean(dst)
 	if src == "." || dst == "." {
 		return ErrIntoSelf
 	}
-	if _, err := dstRoot.Lstat(dst); err == nil {
+	sp, sbase, err := parentRoot(srcRoot, src)
+	if err != nil {
+		return err
+	}
+	defer sp.Close()
+	dp, dbase, err := parentRoot(dstRoot, dst)
+	if err != nil {
+		return err
+	}
+	defer dp.Close()
+	if _, err := dp.Lstat(dbase); err == nil {
 		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
 	}
-	c := &copier{ctx: ctx, src: srcRoot, dst: dstRoot, prog: prog, made: map[fileID]bool{}}
-	return c.tree(src, dst)
+	c := &copier{ctx: ctx, prog: prog, made: map[fileID]bool{}}
+	return c.tree(sp, sbase, dp, dbase, src)
+}
+
+// parentRoot opens the folder holding rel inside root as its own root and
+// returns it with rel's last component (not resolved).
+func parentRoot(root *os.Root, rel string) (*os.Root, string, error) {
+	d, base, err := openParent(root, rel)
+	if err != nil {
+		return nil, "", err
+	}
+	defer d.Close()
+	r, err := rootOf(d)
+	if err != nil {
+		return nil, "", err
+	}
+	return r, base, nil
 }
 
 type fileID struct{ dev, ino uint64 }
@@ -81,86 +118,126 @@ func idOf(fi fs.FileInfo) (fileID, bool) {
 }
 
 type copier struct {
-	ctx      context.Context
-	src, dst *os.Root
-	done     int64
-	prog     Progress
-	made     map[fileID]bool
+	ctx  context.Context
+	done int64
+	prog Progress
+	made map[fileID]bool
 }
 
-func (c *copier) tree(src, dst string) error {
+// copyHook, when set by tests, runs between the steps of a copy (step is
+// "lstat" after an entry was examined, "mkdir" after a folder was created)
+// so that tests can swap entries in at the worst moment.
+var copyHook func(step, name string)
+
+func hook(step, name string) {
+	if copyHook != nil {
+		copyHook(step, name)
+	}
+}
+
+// tree copies the entry sname inside the pinned folder sdir to dname inside
+// the pinned folder ddir. show is the entry's path for progress and errors.
+func (c *copier) tree(sdir *os.Root, sname string, ddir *os.Root, dname, show string) error {
 	if err := c.ctx.Err(); err != nil {
 		return err
 	}
-	st, err := c.src.Lstat(src)
+	st, err := sdir.Lstat(sname)
 	if err != nil {
 		return err
 	}
+	hook("lstat", show)
 	switch {
 	case st.Mode()&fs.ModeSymlink != 0:
-		t, err := c.src.Readlink(src)
+		t, err := sdir.Readlink(sname)
 		if err != nil {
 			return err
 		}
-		return c.dst.Symlink(t, dst)
+		return ddir.Symlink(t, dname)
 	case st.IsDir():
-		if id, ok := idOf(st); ok && c.made[id] {
-			return ErrIntoSelf
-		}
-		if err := c.dst.Mkdir(dst, st.Mode().Perm()|0o700); err != nil {
-			return err
-		}
-		if ds, err := c.dst.Lstat(dst); err == nil {
-			if id, ok := idOf(ds); ok {
-				c.made[id] = true
-			}
-		}
-		d, err := OpenNonblock(c.src, src)
-		if err != nil {
-			return err
-		}
-		if dst, err := d.Stat(); err != nil || !dst.IsDir() {
-			d.Close()
-			return errChanged(src, err)
-		}
-		ents, err := d.ReadDir(-1)
-		d.Close()
-		if err != nil {
-			return err
-		}
-		for _, e := range ents {
-			if err := c.tree(path.Join(src, e.Name()), path.Join(dst, e.Name())); err != nil {
-				return err
-			}
-		}
-		return c.dst.Chmod(dst, st.Mode().Perm())
+		return c.dir(sdir, sname, st, ddir, dname, show)
 	case st.Mode().IsRegular():
-		in, err := OpenNonblock(c.src, src)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		// Re-check on the descriptor: the entry may have been replaced (e.g.
-		// by a FIFO or a symlink to a device) since the Lstat above.
-		if ist, err := in.Stat(); err != nil || !ist.Mode().IsRegular() {
-			return errChanged(src, err)
-		}
-		out, err := c.dst.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, st.Mode().Perm())
-		if err != nil {
-			return err
-		}
-		w := &countWriter{ctx: c.ctx, w: out, done: &c.done, prog: c.prog, name: src}
-		if _, err := io.Copy(w, in); err != nil {
-			out.Close()
-			return err
-		}
-		if err := out.Close(); err != nil {
-			return err
-		}
-		return c.dst.Chtimes(dst, st.ModTime(), st.ModTime())
+		return c.file(sdir, sname, st, ddir, dname, show)
 	default:
 		return nil // skip devices, sockets, fifos
 	}
+}
+
+func (c *copier) dir(sdir *os.Root, sname string, st fs.FileInfo, ddir *os.Root, dname, show string) error {
+	if id, ok := idOf(st); ok && c.made[id] {
+		return ErrIntoSelf
+	}
+	sf, err := openNoFollow(sdir, sname, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
+	if err != nil {
+		return err
+	}
+	ents, sub, err := func() ([]fs.DirEntry, *os.Root, error) {
+		defer sf.Close()
+		if fst, err := sf.Stat(); err != nil || !os.SameFile(fst, st) {
+			return nil, nil, errChanged(show, err)
+		}
+		ents, err := sf.ReadDir(-1)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub, err := rootOf(sf)
+		return ents, sub, err
+	}()
+	if err != nil {
+		return err
+	}
+	defer sub.Close()
+	if err := ddir.Mkdir(dname, st.Mode().Perm()|0o700); err != nil {
+		return err
+	}
+	hook("mkdir", show)
+	df, err := openNoFollow(ddir, dname, os.O_RDONLY|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return err
+	}
+	defer df.Close()
+	if dst, err := df.Stat(); err == nil {
+		if id, ok := idOf(dst); ok {
+			c.made[id] = true
+		}
+	}
+	dsub, err := rootOf(df)
+	if err != nil {
+		return err
+	}
+	defer dsub.Close()
+	for _, e := range ents {
+		if err := c.tree(sub, e.Name(), dsub, e.Name(), path.Join(show, e.Name())); err != nil {
+			return err
+		}
+	}
+	return df.Chmod(st.Mode().Perm())
+}
+
+func (c *copier) file(sdir *os.Root, sname string, st fs.FileInfo, ddir *os.Root, dname, show string) error {
+	in, err := openNoFollow(sdir, sname, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	// The entry may have been replaced (by a FIFO, or another file) since
+	// the Lstat above: copy only the inode that was examined.
+	if ist, err := in.Stat(); err != nil || !ist.Mode().IsRegular() || !os.SameFile(ist, st) {
+		return errChanged(show, err)
+	}
+	out, err := openNoFollow(ddir, dname, os.O_WRONLY|os.O_CREATE|os.O_EXCL, st.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	w := &countWriter{ctx: c.ctx, w: out, done: &c.done, prog: c.prog, name: show}
+	if _, err := io.Copy(w, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := chtimesFile(out, st.ModTime()); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // OpenNonblock opens name inside root read-only with O_NONBLOCK (and
@@ -234,16 +311,27 @@ func Move(root *os.Root, src, dst string) error {
 	if Inside(dst, src) {
 		return ErrIntoSelf
 	}
-	if _, err := root.Lstat(dst); err == nil {
+	return MoveBetween(root, src, root, dst)
+}
+
+// MoveBetween moves src inside srcRoot to dst inside dstRoot without
+// replacing anything at dst. Across devices it copies and then deletes
+// src. The caller must rule out moving a folder into itself.
+func MoveBetween(srcRoot *os.Root, src string, dstRoot *os.Root, dst string) error {
+	src, dst = Clean(src), Clean(dst)
+	if src == "." {
+		return errors.New("cannot move the root")
+	}
+	if _, err := dstRoot.Lstat(dst); err == nil {
 		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
 	}
 	// No-replace: something created at dst since the check above is kept.
-	err := RenameBetweenNoReplace(root, src, root, dst)
+	err := RenameBetweenNoReplace(srcRoot, src, dstRoot, dst)
 	if errors.Is(err, syscall.EXDEV) {
-		if err := Copy(root, src, dst, nil); err != nil {
+		if err := CopyBetween(context.Background(), srcRoot, src, dstRoot, dst, nil); err != nil {
 			return err
 		}
-		return root.RemoveAll(src)
+		return srcRoot.RemoveAll(src)
 	}
 	return err
 }

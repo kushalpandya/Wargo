@@ -642,6 +642,14 @@ func TestChmodAndElevation(t *testing.T) {
 		t.Fatalf("mode = %v", st.Mode())
 	}
 	expectErr(t, e.do("POST", "/api/files/chmod", map[string]any{"paths": []string{"docs"}, "mode": "999"}), 400, "")
+	// Symlinks are never followed: not as the item, not as a folder on the way.
+	must(t, os.Symlink("docs", filepath.Join(e.dir, "docs-link")))
+	for _, p := range []string{"inside-link", "docs-link/a.txt"} {
+		expectErr(t, e.do("POST", "/api/files/chmod", map[string]any{"paths": []string{p}, "mode": "600"}), 400, "symlink_in_path")
+	}
+	if st, _ := os.Stat(filepath.Join(e.dir, "docs/a.txt")); st.Mode().Perm() != 0o750 {
+		t.Fatalf("chmod followed a symlink: %v", st.Mode())
+	}
 
 	// Permission errors on single-path ops go through the helper.
 	locked := filepath.Join(e.dir, "locked")

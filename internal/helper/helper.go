@@ -8,6 +8,7 @@ package helper
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -162,43 +163,73 @@ func fsOp(args []string, stdin io.Reader, stdout io.Writer) error {
 	}
 	p = fsops.Clean(p)
 	switch op {
+	case "mkdir", "remove", "move", "copy", "chmod", "chown", "write", "read":
+	default:
+		return fmt.Errorf("unknown fs op %q", op)
+	}
+	// os.Root follows relative symlinks that stay inside it, and on the
+	// System drive ("/") a link planted by another local user would point
+	// root at any file. Every op runs on the pinned, symlink-free folder
+	// holding p and touches only its last component.
+	parent, base, err := fsops.PinParent(root, p)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	switch op {
 	case "mkdir":
-		return root.Mkdir(p, 0o755)
+		return parent.Mkdir(base, 0o755)
 	case "remove":
-		return fsops.Remove(root, p)
-	case "move":
-		return fsops.Move(root, p, arg)
-	case "copy":
-		return fsops.Copy(root, p, arg, nil)
+		return parent.RemoveAll(base)
+	case "move", "copy":
+		return transfer(op, root, parent, p, base, arg)
 	case "chmod":
 		m, err := fsops.ParseMode(arg)
 		if err != nil {
 			return err
 		}
-		return root.Chmod(p, m)
+		return fsops.ChmodNoFollow(parent, base, m)
 	case "chown":
 		uid, gid, err := fsops.ParseOwner(arg)
 		if err != nil {
 			return err
 		}
-		return root.Lchown(p, uid, gid)
+		return parent.Lchown(base, uid, gid)
 	case "write":
 		data, err := io.ReadAll(io.LimitReader(stdin, 32<<20))
 		if err != nil {
 			return err
 		}
-		return writeReplace(root, p, data)
-	case "read":
-		return readRegular(root, p, stdout)
+		return writeReplace(parent, base, data)
+	default: // "read"
+		return readRegular(parent, base, stdout)
 	}
-	return fmt.Errorf("unknown fs op %q", op)
 }
 
-// readRegular copies a regular file to w. The open never blocks (a FIFO
-// swapped in would otherwise hang the root helper) and what was opened
-// must be a regular file (not a device, FIFO or socket).
-func readRegular(root *os.Root, p string, w io.Writer) error {
-	f, err := fsops.OpenNonblock(root, p)
+// transfer moves or copies src (base inside the pinned srcParent) to dst,
+// whose folder is pinned the same way.
+func transfer(op string, root, srcParent *os.Root, src, srcBase, dst string) error {
+	dst = fsops.Clean(dst)
+	if fsops.Inside(dst, src) {
+		return fsops.ErrIntoSelf
+	}
+	dstParent, dstBase, err := fsops.PinParent(root, dst)
+	if err != nil {
+		return err
+	}
+	defer dstParent.Close()
+	if op == "move" {
+		return fsops.MoveBetween(srcParent, srcBase, dstParent, dstBase)
+	}
+	return fsops.CopyBetween(context.Background(), srcParent, srcBase, dstParent, dstBase, nil)
+}
+
+// readRegular copies the regular file base (a single name inside dir) to
+// w. The open never blocks (a FIFO swapped in would otherwise hang the
+// root helper), never follows a symlink, and what was opened must be a
+// regular file (not a device, FIFO or socket).
+func readRegular(dir *os.Root, base string, w io.Writer) error {
+	f, err := fsops.OpenNoFollow(dir, base, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY)
 	if err != nil {
 		return err
 	}
@@ -208,7 +239,7 @@ func readRegular(root *os.Root, p string, w io.Writer) error {
 		return err
 	}
 	if !st.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file", p)
+		return fmt.Errorf("%s is not a regular file", base)
 	}
 	_, err = io.Copy(w, io.LimitReader(f, 32<<20))
 	return err

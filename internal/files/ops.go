@@ -643,7 +643,7 @@ func (s *Service) handleChmod(w http.ResponseWriter, r *http.Request) error {
 			if st, err := root.Lstat(q); err == nil && st.IsDir() {
 				m = dirMode
 			}
-			return root.Chmod(q, m)
+			return chmodNoFollow(root, q, m)
 		})
 		if err != nil && isPerm(err) && len(paths) == 1 && !req.Recursive {
 			err = s.elevated(r, ref, "chmod", p, strings.TrimSpace(req.Mode), nil)
@@ -655,6 +655,17 @@ func (s *Service) handleChmod(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.OK(w, map[string]any{"changed": len(paths)})
 	return nil
+}
+
+// chmodNoFollow changes q's mode like the root helper does: no symlink is
+// followed, neither in a folder of the path nor as q itself.
+func chmodNoFollow(root *os.Root, q string, m os.FileMode) error {
+	parent, base, err := fsops.PinParent(root, q)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return fsops.ChmodNoFollow(parent, base, m)
 }
 
 func (s *Service) handleChown(w http.ResponseWriter, r *http.Request) error {

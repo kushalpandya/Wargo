@@ -395,6 +395,8 @@ func fsErr(err error, rel string) error {
 	switch {
 	case errors.Is(err, fsops.ErrIntoSelf):
 		return httpx.Errorf(http.StatusBadRequest, "into_self", "Cannot copy or move a folder into itself")
+	case errors.Is(err, fsops.ErrSymlinkInPath):
+		return httpx.Errorf(http.StatusBadRequest, "symlink_in_path", msg("Path contains a symbolic link"))
 	case strings.Contains(err.Error(), "path escapes from parent"):
 		return httpx.Errorf(http.StatusForbidden, "outside_root", msg("Path leads outside the root"))
 	case errors.Is(err, fs.ErrNotExist):

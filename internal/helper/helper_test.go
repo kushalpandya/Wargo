@@ -177,3 +177,112 @@ func TestFsReadRefusesFIFOWithoutBlocking(t *testing.T) {
 		t.Fatalf("regular read: %q %v", buf.String(), err)
 	}
 }
+
+// symlinkTree builds root/target (0600), root/d/link -> ../target and
+// root/sd -> d2 where d2/f is 0600: every link stays inside the root, so
+// os.Root alone would follow them.
+func symlinkTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "target"), []byte("secret"), 0o600)
+	os.Mkdir(filepath.Join(root, "d"), 0o755)
+	os.Symlink("../target", filepath.Join(root, "d", "link"))
+	os.Symlink("target", filepath.Join(root, "link"))
+	os.Mkdir(filepath.Join(root, "d2"), 0o755)
+	os.WriteFile(filepath.Join(root, "d2", "f"), []byte("secret"), 0o600)
+	os.Symlink("d2", filepath.Join(root, "sd"))
+	return root
+}
+
+func modeOf(t *testing.T, p string) os.FileMode {
+	t.Helper()
+	st, err := os.Lstat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.Mode().Perm()
+}
+
+func TestHelperFsChmodRefusesSymlink(t *testing.T) {
+	root := symlinkTree(t)
+	for _, p := range []string{"d/link", "link", "sd/f"} {
+		if _, err := Exec([]string{"fs", "chmod", root, p, "644"}, nil, io.Discard, io.Discard); err == nil {
+			t.Errorf("chmod %s through a symlink accepted", p)
+		}
+	}
+	if m := modeOf(t, filepath.Join(root, "target")); m != 0o600 {
+		t.Fatalf("target mode changed to %v", m)
+	}
+	if m := modeOf(t, filepath.Join(root, "d2", "f")); m != 0o600 {
+		t.Fatalf("d2/f mode changed to %v", m)
+	}
+	if _, err := Exec([]string{"fs", "chmod", root, "d2/f", "640"}, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if m := modeOf(t, filepath.Join(root, "d2", "f")); m != 0o640 {
+		t.Fatalf("plain chmod gave %v", m)
+	}
+}
+
+func TestHelperFsReadRefusesSymlink(t *testing.T) {
+	root := symlinkTree(t)
+	for _, p := range []string{"link", "d/link", "sd/f"} {
+		var out strings.Builder
+		if _, err := Exec([]string{"fs", "read", root, p}, nil, &out, io.Discard); err == nil {
+			t.Errorf("read %s through a symlink accepted", p)
+		}
+		if out.Len() != 0 {
+			t.Errorf("read %s wrote %q", p, out.String())
+		}
+	}
+	var out strings.Builder
+	if _, err := Exec([]string{"fs", "read", root, "d2/f"}, nil, &out, io.Discard); err != nil || out.String() != "secret" {
+		t.Fatalf("plain read: %q %v", out.String(), err)
+	}
+}
+
+func TestHelperFsOpsRefuseSymlinkedParent(t *testing.T) {
+	root := symlinkTree(t)
+	run := func(args ...string) error {
+		_, err := Exec(append([]string{"fs"}, args...), strings.NewReader("pwned"), io.Discard, io.Discard)
+		return err
+	}
+	for _, c := range [][]string{
+		{"mkdir", root, "sd/new"},
+		{"remove", root, "sd/f"},
+		{"move", root, "sd/f", "moved"},
+		{"move", root, "target", "sd/moved"},
+		{"copy", root, "sd/f", "copied"},
+		{"copy", root, "target", "sd/copied"},
+		{"chown", root, "sd/f", strconv.Itoa(os.Getuid())},
+		{"write", root, "sd/f"},
+	} {
+		if err := run(c...); err == nil {
+			t.Errorf("%v through a symlinked folder accepted", c)
+		}
+	}
+	for _, p := range []string{"d2/new", "d2/moved", "copied", "d2/copied", "moved"} {
+		if _, err := os.Lstat(filepath.Join(root, p)); err == nil {
+			t.Errorf("%s was created", p)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "d2", "f")); string(b) != "secret" {
+		t.Fatal("d2/f changed")
+	}
+	// The same operations on plain paths still work.
+	for _, c := range [][]string{
+		{"mkdir", root, "d2/new"},
+		{"copy", root, "d2/f", "d2/new/c"},
+		{"move", root, "d2/new/c", "d/m"},
+		{"chown", root, "d/m", strconv.Itoa(os.Getuid())},
+		{"write", root, "d/m"},
+		{"remove", root, "d2/new"},
+	} {
+		if err := run(c...); err != nil {
+			t.Fatalf("%v: %v", c, err)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "d", "m")); string(b) != "pwned" {
+		t.Fatalf("d/m = %q", b)
+	}
+}
