@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { forwardRef, useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import { cloneElement, forwardRef, Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { ArrowDown, ArrowUp, MoreHorizontal } from "lucide-react";
 import { ago, bytes, datetime } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Checkbox } from "@/components/ui/form";
+import { ContextMenu as CM } from "radix-ui";
+import { useColumns } from "@/lib/useColumns";
+import { gridTemplate, type ColumnDef } from "@/lib/columns";
 import { downloadUrl, joinPath, type Entry, type RootId } from "./api";
 import { FileIcon, kindOf } from "./kinds";
 
@@ -78,13 +81,35 @@ function useLongPress(onLong: () => void, enabled: boolean) {
   };
 }
 
-function SortHeader({ k, sort, onSort, children, className, align }: { k: SortKey; sort: Sort; onSort: (k: SortKey) => void; children: React.ReactNode; className?: string; align?: "right" }) {
+function SortHeader({
+  k,
+  sort,
+  onSort,
+  children,
+  className,
+  align,
+  cell,
+  description,
+  extra,
+}: {
+  k: SortKey;
+  sort: Sort;
+  onSort: (k: SortKey) => void;
+  children: React.ReactNode;
+  className?: string;
+  align?: "right";
+  /** Column drag handlers, data-col and style from useColumns. */
+  cell?: React.HTMLAttributes<HTMLDivElement>;
+  description?: string;
+  extra?: React.ReactNode;
+}) {
   const active = sort.key === k;
   return (
-    <div role="columnheader" aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className={cn("flex self-stretch", className)}>
+    <div {...cell} role="columnheader" aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className={cn("relative flex self-stretch", className)}>
       {/* The whole cell (and half the gap on each side) is the button. */}
       <button
         type="button"
+        aria-description={description}
         onClick={() => onSort(k)}
         className={cn(
           "-mx-1.5 flex h-full w-[calc(100%+0.75rem)] items-center gap-1 rounded px-1.5 uppercase tracking-wider hover:bg-surface-3/60 hover:text-fg",
@@ -95,24 +120,48 @@ function SortHeader({ k, sort, onSort, children, className, align }: { k: SortKe
         {children}
         {active ? sort.dir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" /> : <span className="size-3" />}
       </button>
+      {extra}
     </div>
   );
 }
 
-// Columns follow the pane's width (container queries), not the viewport.
-const listCols =
-  "grid-cols-[1.75rem_minmax(0,1fr)_5.5rem_2rem] @lg:grid-cols-[1.75rem_minmax(0,1fr)_6rem_9.5rem_2rem] @2xl:grid-cols-[1.75rem_minmax(0,1fr)_6rem_10rem_7rem_2rem] @4xl:grid-cols-[1.75rem_minmax(0,1fr)_6rem_10rem_7rem_8rem_2rem]";
+// List view columns. The checkbox and actions columns never move or resize;
+// Name stays second and takes the leftover width. Which columns show
+// follows the pane's width, not the viewport.
+export const FILE_COLUMNS: ColumnDef[] = [
+  { id: "select", width: 28, pinned: "start", fixed: true },
+  { id: "name", elastic: true, pinned: "start", min: 160 },
+  { id: "size", width: 96 },
+  { id: "mtime", width: 160 },
+  { id: "mode", width: 112 },
+  { id: "owner", width: 128 },
+  { id: "actions", width: 32, pinned: "end", fixed: true },
+];
+const HEADER: Record<string, { k: SortKey; label: string; align?: "right" }> = {
+  name: { k: "name", label: "Name" },
+  size: { k: "size", label: "Size", align: "right" },
+  mtime: { k: "mtime", label: "Modified" },
+  mode: { k: "mode", label: "Permissions" },
+  owner: { k: "owner", label: "Owner" },
+};
+/** Pane width (px) a column needs before it shows (Tailwind @lg, @2xl, @4xl). */
+const SHOW_AT: Record<string, number> = { mtime: 512, mode: 672, owner: 896 };
+const GAP = 12; // gap-x-3
+const PAD = 16; // px-2 on both sides
 
 function Row({
   e,
   i,
   props,
   thumb,
+  cols,
 }: {
   e: Entry;
   i: number;
   props: ListingProps;
   thumb: boolean;
+  /** List view: the shown columns in the saved order. */
+  cols: string[];
 }) {
   const sel = props.selected.has(e.name);
   const focused = props.focus === i;
@@ -248,38 +297,56 @@ function Row({
     );
   }
 
-  return (
-    <div
-      {...common}
-      className={cn(
-        "group grid h-10 cursor-default select-none items-center gap-x-3 border-b border-border px-2 text-ui",
-        listCols,
-        sel ? "bg-accent-soft" : "hover:bg-surface-2",
-        focused && "outline outline-2 -outline-offset-2 outline-focus/60",
-        dragged && "opacity-60",
-        dropCls,
-      )}
-    >
-      {check}
-      <div role="gridcell" className="flex min-w-0 items-center gap-2.5">
+  // Cells in DOM order = the saved column order, so screen readers pair each
+  // cell with the header above it.
+  const cells: Record<string, ReactNode> = {
+    select: cloneElement(check, { "data-col": "select" } as Record<string, string>),
+    name: (
+      <div role="gridcell" data-col="name" className="flex min-w-0 items-center gap-2.5">
         <FileIcon entry={e} className="size-[1.375rem]" strokeWidth={1.6} />
         <span className={cn("truncate", e.name.startsWith(".") && "text-muted")} title={e.name}>
           {e.name}
         </span>
         {linkNote}
       </div>
-      <span role="gridcell" className="num text-right text-muted">{sizeText}</span>
-      <span role="gridcell" className="num truncate text-muted @max-lg:hidden" title={datetime(e.mtime)}>
+    ),
+    size: (
+      <span role="gridcell" data-col="size" className="num truncate text-right text-muted">
+        {sizeText}
+      </span>
+    ),
+    mtime: (
+      <span role="gridcell" data-col="mtime" className="num truncate text-muted" title={datetime(e.mtime)}>
         {datetime(e.mtime)}
       </span>
-      <span role="gridcell" className="num text-muted @max-2xl:hidden" title={e.octal}>
+    ),
+    mode: (
+      <span role="gridcell" data-col="mode" className="num truncate text-muted" title={e.octal}>
         {e.mode}
       </span>
-      <span role="gridcell" className="truncate text-muted @max-4xl:hidden">
+    ),
+    owner: (
+      <span role="gridcell" data-col="owner" className="truncate text-muted">
         {e.owner}
         <span className="text-subtle">:{e.group}</span>
       </span>
-      {more}
+    ),
+    actions: cloneElement(more, { "data-col": "actions" } as Record<string, string>),
+  };
+  return (
+    <div
+      {...common}
+      className={cn(
+        "group grid h-10 cursor-default select-none items-center gap-x-3 border-b border-border px-2 text-ui grid-cols-[var(--cols)]",
+        sel ? "bg-accent-soft" : "hover:bg-surface-2",
+        focused && "outline outline-2 -outline-offset-2 outline-focus/60",
+        dragged && "opacity-60",
+        dropCls,
+      )}
+    >
+      {cols.map((id) => (
+        <Fragment key={id}>{cells[id]}</Fragment>
+      ))}
     </div>
   );
 }
@@ -311,9 +378,34 @@ export const Listing = forwardRef<HTMLDivElement, ListingProps>(function Listing
   const shown = entries.slice(0, limit);
   const all = entries.length > 0 && selected.size === entries.length;
 
+  // Pane width drives which columns show (as the container queries did).
+  const [paneW, setPaneW] = useState(0);
+  const [rootEl, setRootEl] = useState<HTMLDivElement | null>(null);
+  const setRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      setRootEl(el);
+      if (typeof ref === "function") ref(el);
+      else if (ref) ref.current = el;
+    },
+    [ref],
+  );
+  useEffect(() => {
+    if (!rootEl) return;
+    const ro = new ResizeObserver(([en]) => setPaneW(en.contentRect.width));
+    ro.observe(rootEl);
+    return () => ro.disconnect();
+  }, [rootEl]);
+  const columns = useColumns("wargo.columns.files", FILE_COLUMNS);
+  const { order: orderOf } = columns;
+  const colOrder = useMemo(() => orderOf(new Set(FILE_COLUMNS.map((c) => c.id).filter((id) => !(id in SHOW_AT) || paneW >= SHOW_AT[id]))), [orderOf, paneW]);
+  const { layout } = columns;
+  const template = useMemo(() => gridTemplate(colOrder, FILE_COLUMNS, layout.widths, paneW, { pad: PAD, gap: GAP }), [colOrder, layout.widths, paneW]);
+
   return (
     <div
-      ref={ref}
+      ref={setRef}
+      data-columns-root=""
+      style={view === "list" && !props.compact ? ({ "--cols": template } as React.CSSProperties) : undefined}
       role="grid"
       aria-multiselectable="true"
       aria-rowcount={entries.length + (view === "list" && !props.compact ? 1 : 0)}
@@ -324,36 +416,57 @@ export const Listing = forwardRef<HTMLDivElement, ListingProps>(function Listing
       className="@container min-h-full outline-none"
     >
       {view === "list" && !props.compact && (
-        <div role="row" className={cn("sticky top-0 z-10 grid h-8 items-center gap-x-3 border-b border-border bg-surface-2 px-2 text-2xs font-semibold text-subtle", listCols)}>
-          <span role="columnheader" className="flex items-center justify-center">
-            <Checkbox checked={all ? true : selected.size > 0 ? "indeterminate" : false} onCheckedChange={(v) => props.onSelectAll(v)} aria-label="Select all" />
-          </span>
-          <SortHeader k="name" sort={props.sort} onSort={props.onSort}>
-            Name
-          </SortHeader>
-          <SortHeader k="size" sort={props.sort} onSort={props.onSort} align="right">
-            Size
-          </SortHeader>
-          <SortHeader k="mtime" sort={props.sort} onSort={props.onSort} className="@max-lg:hidden">
-            Modified
-          </SortHeader>
-          <SortHeader k="mode" sort={props.sort} onSort={props.onSort} className="@max-2xl:hidden">
-            Permissions
-          </SortHeader>
-          <SortHeader k="owner" sort={props.sort} onSort={props.onSort} className="@max-4xl:hidden">
-            Owner
-          </SortHeader>
-          <span role="columnheader" aria-label="Actions" />
-        </div>
+        <CM.Root>
+          <CM.Trigger asChild>
+            <div role="row" className="sticky top-0 z-10 grid h-8 grid-cols-[var(--cols)] items-center gap-x-3 border-b border-border bg-surface-2 px-2 text-2xs font-semibold text-subtle">
+              {colOrder.map((id) => {
+                if (id === "select")
+                  return (
+                    <span key={id} role="columnheader" data-col="select" className="flex items-center justify-center">
+                      <Checkbox checked={all ? true : selected.size > 0 ? "indeterminate" : false} onCheckedChange={(v) => props.onSelectAll(v)} aria-label="Select all" />
+                    </span>
+                  );
+                if (id === "actions") return <span key={id} role="columnheader" aria-label="Actions" data-col="actions" />;
+                const hp = columns.headerProps(id);
+                return (
+                  <SortHeader
+                    key={id}
+                    k={HEADER[id].k}
+                    sort={props.sort}
+                    onSort={props.onSort}
+                    align={HEADER[id].align}
+                    cell={hp}
+                    description={columns.describe(id)}
+                    extra={
+                      <>
+                        {columns.drop?.id === id && <span aria-hidden="true" className={cn("absolute inset-y-1 z-20 w-0.5 rounded bg-accent", columns.drop.side === "before" ? "-left-2" : "-right-2")} />}
+                        <span {...columns.gripProps(id)} />
+                      </>
+                    }
+                  >
+                    {HEADER[id].label}
+                  </SortHeader>
+                );
+              })}
+            </div>
+          </CM.Trigger>
+          <CM.Portal>
+            <CM.Content className="z-50 min-w-44 rounded-md border border-border-strong bg-surface p-1 shadow-xl focus:outline-none">
+              <CM.Item onSelect={columns.reset} className="flex h-7 cursor-default select-none items-center rounded px-2 text-ui outline-none data-[highlighted]:bg-surface-3">
+                Reset columns
+              </CM.Item>
+            </CM.Content>
+          </CM.Portal>
+        </CM.Root>
       )}
       {view === "grid" ? (
         <div ref={gridRef} role="rowgroup" className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2 p-2 @lg:grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] @lg:gap-3 @lg:p-3">
           {shown.map((e, i) => (
-            <Row key={e.name} e={e} i={i} props={props} thumb={kindOf(e) === "image" && e.readable} />
+            <Row key={e.name} e={e} i={i} props={props} thumb={kindOf(e) === "image" && e.readable} cols={colOrder} />
           ))}
         </div>
       ) : (
-        shown.map((e, i) => <Row key={e.name} e={e} i={i} props={props} thumb={false} />)
+        shown.map((e, i) => <Row key={e.name} e={e} i={i} props={props} thumb={false} cols={colOrder} />)
       )}
       {limit < entries.length && (
         <div ref={sentinel} className="py-4 text-center text-xs text-muted">

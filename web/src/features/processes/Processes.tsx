@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { memo, useDeferredValue, useMemo, useState } from "react";
-import { useFillViewport } from "@/lib/hooks";
+import { Fragment, memo, useDeferredValue, useMemo, useState, type ReactNode } from "react";
+import { useFillViewport, useMedia } from "@/lib/hooks";
+import { useColumns } from "@/lib/useColumns";
+import type { ColumnDef } from "@/lib/columns";
+import { ContextMenu as CM } from "radix-ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ListTree, Pause, Play, RefreshCw, Rows3 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -141,6 +144,7 @@ const ProcRow = memo(function ProcRow({
   onOpen,
   selected,
   self,
+  cols,
 }: {
   row: Row;
   tree: boolean;
@@ -148,10 +152,64 @@ const ProcRow = memo(function ProcRow({
   onOpen: (pid: number) => void;
   selected: boolean;
   self: boolean;
+  cols: string[];
 }) {
   const { p, depth } = row;
   const ct = cpuTone(p.cpu);
   const mt = memTone(p.memPct);
+  const cells: Record<string, ReactNode> = {
+    name: (
+      <Td data-col="name">
+        <div className="flex min-w-0 items-center" style={tree ? { paddingLeft: depth * 14 } : undefined}>
+          {tree && depth > 0 && <span className="mr-1 shrink-0 text-subtle" aria-hidden="true">{row.last ? "└" : "├"}</span>}
+          <span className={cn("truncate font-medium", p.kernel && "text-muted")} title={p.name}>
+            {p.kernel ? `[${p.name}]` : p.name}
+          </span>
+          {self && <span className="ml-1.5 shrink-0 rounded border border-accent/30 bg-accent-soft px-1 text-2xs text-accent">wargo</span>}
+        </div>
+      </Td>
+    ),
+    pid: (
+      <Td data-col="pid" className="num text-right text-muted">{p.pid}</Td>
+    ),
+    user: (
+      <Td data-col="user" className="max-w-28 truncate text-muted max-lg:hidden">{p.user}</Td>
+    ),
+    cpu: (
+      <Td data-col="cpu" className="text-right">
+        <div className="flex items-center justify-end gap-2">
+          <Meter value={Math.min(100, p.cpu)} tone={ct ?? "accent"} className="w-10 max-xl:hidden" label={`CPU ${p.cpu.toFixed(1)}%`} />
+          <span className={cn("num w-12", ct ? toneText[ct] : p.cpu < 0.05 && "text-subtle")}>{p.cpu.toFixed(1)}</span>
+        </div>
+      </Td>
+    ),
+    mem: (
+      <Td data-col="mem" className={cn("num text-right", mt ? toneText[mt] : "")}>
+        {bytes(p.memRSS)}
+        <span className="ml-1.5 text-2xs text-subtle max-xl:hidden">{p.memPct.toFixed(1)}%</span>
+      </Td>
+    ),
+    threads: (
+      <Td data-col="threads" className="num text-right text-muted max-lg:hidden">{p.threads}</Td>
+    ),
+    state: (
+      <Td data-col="state" className="max-xl:hidden">
+        <span className={cn("text-xs", p.state === "R" ? "text-ok" : p.state === "Z" || p.state === "D" ? "text-warn" : "text-muted")}>
+          {stateNames[p.state] ?? p.state}
+        </span>
+      </Td>
+    ),
+    start: (
+      <Td data-col="start" className="num whitespace-nowrap text-right text-xs text-muted max-lg:hidden" title={new Date(p.startTime).toLocaleString()}>
+        {duration((now - p.startTime) / 1000)}
+      </Td>
+    ),
+    command: (
+      <Td data-col="command" className="num max-w-0 truncate text-xs text-muted max-md:hidden" title={p.command}>
+        {p.command || <span className="text-subtle">—</span>}
+      </Td>
+    ),
+  };
   return (
     <Tr
       onClick={() => onOpen(p.pid)}
@@ -165,39 +223,9 @@ const ProcRow = memo(function ProcRow({
       }}
       className="focus-visible:bg-surface-2 focus-visible:outline-none aria-selected:[&_.text-subtle]:text-muted"
     >
-      <Td className="max-w-64">
-        <div className="flex min-w-0 items-center" style={tree ? { paddingLeft: depth * 14 } : undefined}>
-          {tree && depth > 0 && <span className="mr-1 shrink-0 text-subtle" aria-hidden="true">{row.last ? "└" : "├"}</span>}
-          <span className={cn("truncate font-medium", p.kernel && "text-muted")} title={p.name}>
-            {p.kernel ? `[${p.name}]` : p.name}
-          </span>
-          {self && <span className="ml-1.5 shrink-0 rounded border border-accent/30 bg-accent-soft px-1 text-2xs text-accent">wargo</span>}
-        </div>
-      </Td>
-      <Td className="num text-right text-muted">{p.pid}</Td>
-      <Td className="max-w-28 truncate text-muted max-lg:hidden">{p.user}</Td>
-      <Td className="text-right">
-        <div className="flex items-center justify-end gap-2">
-          <Meter value={Math.min(100, p.cpu)} tone={ct ?? "accent"} className="w-10 max-xl:hidden" label={`CPU ${p.cpu.toFixed(1)}%`} />
-          <span className={cn("num w-12", ct ? toneText[ct] : p.cpu < 0.05 && "text-subtle")}>{p.cpu.toFixed(1)}</span>
-        </div>
-      </Td>
-      <Td className={cn("num text-right", mt ? toneText[mt] : "")}>
-        {bytes(p.memRSS)}
-        <span className="ml-1.5 text-2xs text-subtle max-xl:hidden">{p.memPct.toFixed(1)}%</span>
-      </Td>
-      <Td className="num text-right text-muted max-lg:hidden">{p.threads}</Td>
-      <Td className="max-xl:hidden">
-        <span className={cn("text-xs", p.state === "R" ? "text-ok" : p.state === "Z" || p.state === "D" ? "text-warn" : "text-muted")}>
-          {stateNames[p.state] ?? p.state}
-        </span>
-      </Td>
-      <Td className="num whitespace-nowrap text-right text-xs text-muted max-lg:hidden" title={new Date(p.startTime).toLocaleString()}>
-        {duration((now - p.startTime) / 1000)}
-      </Td>
-      <Td className="num max-w-0 truncate text-xs text-muted max-md:hidden" title={p.command}>
-        {p.command || <span className="text-subtle">—</span>}
-      </Td>
+      {cols.map((id) => (
+        <Fragment key={id}>{cells[id]}</Fragment>
+      ))}
     </Tr>
   );
 });
@@ -229,6 +257,33 @@ function MobileRow({ row, tree, onOpen }: { row: Row; tree: boolean; onOpen: (pi
   );
 }
 
+// Desktop table columns (phones use the card list). Name stays first;
+// Command takes the leftover width. Visibility follows the viewport.
+const COLUMNS: ColumnDef[] = [
+  { id: "name", width: 220, min: 120, pinned: "start" },
+  { id: "pid", width: 80 },
+  { id: "user", width: 112 },
+  { id: "cpu", width: 120 },
+  { id: "mem", width: 120 },
+  { id: "threads", width: 64 },
+  { id: "state", width: 96 },
+  { id: "start", width: 96 },
+  { id: "command", elastic: true },
+];
+const HEADERS: Record<string, { label: string; className?: string; align?: "right"; dir?: SortDir }> = {
+  name: { label: "Name", dir: "asc" },
+  pid: { label: "PID", align: "right", dir: "asc" },
+  user: { label: "User", className: "max-lg:hidden", dir: "asc" },
+  cpu: { label: "CPU %", align: "right" },
+  mem: { label: "Memory", align: "right" },
+  threads: { label: "Thr", align: "right", className: "max-lg:hidden" },
+  state: { label: "State", className: "max-xl:hidden", dir: "asc" },
+  start: { label: "Uptime", align: "right", className: "max-lg:hidden" },
+  command: { label: "Command", className: "max-md:hidden" },
+};
+/** Narrowest the Command column gets before the table scrolls sideways. */
+const COMMAND_MIN = 240;
+
 const PAGE = 200;
 
 export default function Page() {
@@ -247,6 +302,17 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
   const [limit, setLimit] = useState(PAGE);
   const [sort, setSort] = useState<SortState<SortKey>>({ key: "cpu", dir: "desc" });
   const [open, setOpen] = useState<number | null>(null);
+  const columns = useColumns("wargo.columns.processes", COLUMNS);
+  const { order } = columns;
+  const lg = useMedia("(min-width: 64rem)");
+  const xl = useMedia("(min-width: 80rem)");
+  const cols = useMemo(() => {
+    const vis = new Set(COLUMNS.map((c) => c.id));
+    if (!lg) for (const id of ["user", "threads", "start"]) vis.delete(id);
+    if (!xl) vis.delete("state");
+    return order(vis);
+  }, [order, lg, xl]);
+  const tableMin = cols.reduce((sum, id) => sum + (columns.width(id) ?? COMMAND_MIN), 0);
   const query = useQuery({
     queryKey: ["procs"],
     queryFn: () => api.get<ProcList>("/api/procs"),
@@ -368,23 +434,48 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
           <>
             {/* Scrollable list sized to the viewport (with a minimum), so the page itself doesn't grow. */}
             <div ref={setTableEl} style={{ height: tableH }} className="scroll-area min-h-80 max-md:hidden" tabIndex={0} role="region" aria-label="Process table">
-              <Table className="table-fixed">
+              <Table className="table-fixed" data-columns-root="" style={{ minWidth: tableMin }}>
                 <THead>
-                  <tr>
-                    <SortTh k="name" sort={sort} onSort={onSort} defaultDir="asc" className="w-[22%] xl:w-[18%]">Name</SortTh>
-                    <SortTh k="pid" sort={sort} onSort={onSort} defaultDir="asc" align="right" className="w-20">PID</SortTh>
-                    <SortTh k="user" sort={sort} onSort={onSort} defaultDir="asc" className="w-28 max-lg:hidden">User</SortTh>
-                    <SortTh k="cpu" sort={sort} onSort={onSort} align="right" className="w-24 xl:w-32">CPU %</SortTh>
-                    <SortTh k="mem" sort={sort} onSort={onSort} align="right" className="w-24 xl:w-32">Memory</SortTh>
-                    <SortTh k="threads" sort={sort} onSort={onSort} align="right" className="w-16 max-lg:hidden">Thr</SortTh>
-                    <SortTh k="state" sort={sort} onSort={onSort} defaultDir="asc" className="w-24 max-xl:hidden">State</SortTh>
-                    <SortTh k="start" sort={sort} onSort={onSort} align="right" className="w-24 max-lg:hidden">Uptime</SortTh>
-                    <Th className="max-md:hidden">Command</Th>
-                  </tr>
+                  <CM.Root>
+                    <CM.Trigger asChild>
+                      <tr>
+                        {cols.map((id) => {
+                          const h = HEADERS[id];
+                          const w = columns.width(id);
+                          const extra = (
+                            <>
+                              {columns.drop?.id === id && <span aria-hidden="true" className={cn("absolute inset-y-1 z-20 w-0.5 rounded bg-accent", columns.drop.side === "before" ? "-left-px" : "-right-px")} />}
+                              <span {...columns.gripProps(id)} />
+                            </>
+                          );
+                          const hp = columns.headerProps(id);
+                          if (id === "command")
+                            return (
+                              <Th key={id} {...hp} className={cn("relative", h.className)} aria-description={columns.describe(id)} tabIndex={0}>
+                                {h.label}
+                                {extra}
+                              </Th>
+                            );
+                          return (
+                            <SortTh key={id} k={id as SortKey} sort={sort} onSort={onSort} defaultDir={h.dir} align={h.align} className={h.className} thProps={{ ...hp, style: { ...hp.style, width: w } }} description={columns.describe(id)} extra={extra}>
+                              {h.label}
+                            </SortTh>
+                          );
+                        })}
+                      </tr>
+                    </CM.Trigger>
+                    <CM.Portal>
+                      <CM.Content className="z-50 min-w-44 rounded-md border border-border-strong bg-surface p-1 shadow-xl focus:outline-none">
+                        <CM.Item onSelect={columns.reset} className="flex h-7 cursor-default select-none items-center rounded px-2 text-ui outline-none data-[highlighted]:bg-surface-3">
+                          Reset columns
+                        </CM.Item>
+                      </CM.Content>
+                    </CM.Portal>
+                  </CM.Root>
                 </THead>
                 <tbody>
                   {shown.map((r) => (
-                    <ProcRow key={r.p.pid} row={r} tree={tree} now={now} onOpen={setOpen} selected={open === r.p.pid} self={r.p.pid === data.self} />
+                    <ProcRow key={r.p.pid} row={r} tree={tree} now={now} onOpen={setOpen} selected={open === r.p.pid} self={r.p.pid === data.self} cols={cols} />
                   ))}
                 </tbody>
               </Table>

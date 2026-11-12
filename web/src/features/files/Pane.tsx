@@ -31,6 +31,7 @@ import {
   PackageOpen,
   Pencil,
   RefreshCw,
+  Columns3,
   ShieldAlert,
   ShieldCheck,
   SquareCheck,
@@ -789,6 +790,11 @@ export function Pane(props: PaneProps) {
               <MenuItem icon={hidden ? <EyeOff /> : <Eye />} onSelect={() => setHidden(!hidden)}>
                 {hidden ? "Hide hidden files" : "Show hidden files"}
               </MenuItem>
+              {view === "list" && (
+                <MenuItem icon={<Columns3 />} onSelect={() => setPref("wargo.columns.files", null)}>
+                  Reset columns
+                </MenuItem>
+              )}
               <MenuItem icon={<RefreshCw />} onSelect={() => refresh()}>
                 Refresh
               </MenuItem>

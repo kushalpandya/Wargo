@@ -87,6 +87,9 @@ export function SortTh<K extends string>({
   className,
   defaultDir,
   align,
+  thProps,
+  description,
+  extra,
 }: {
   k: K;
   sort: SortState<K>;
@@ -95,16 +98,24 @@ export function SortTh<K extends string>({
   className?: string;
   defaultDir?: SortDir;
   align?: "right";
+  /** Extra attributes for the cell (column drag handlers, data-col, style). */
+  thProps?: ThHTMLAttributes<HTMLTableCellElement>;
+  /** aria-description for the header button (keyboard help). */
+  description?: string;
+  /** Rendered after the button inside the cell (resize grip, drop marker). */
+  extra?: ReactNode;
 }) {
   const active = sort.key === k;
   // The whole header cell is the button, not just its text.
   return (
     <th
-      className={cn("h-8 whitespace-nowrap border-b border-border p-0 text-2xs font-semibold uppercase tracking-wider text-subtle", className)}
+      {...thProps}
+      className={cn("h-8 whitespace-nowrap border-b border-border p-0 text-2xs font-semibold uppercase tracking-wider text-subtle", extra !== undefined && "relative", className)}
       aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
     >
       <button
         type="button"
+        aria-description={description}
         onClick={() => onSort(k, defaultDir)}
         className={cn(
           "flex h-full min-h-8 w-full items-center gap-1 px-3 uppercase tracking-wider hover:bg-surface-3/50 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/25",
@@ -115,6 +126,7 @@ export function SortTh<K extends string>({
         <span className="truncate">{children}</span>
         {active ? sort.dir === "asc" ? <ArrowUp className="size-3 shrink-0" /> : <ArrowDown className="size-3 shrink-0" /> : <span className="size-3 shrink-0" />}
       </button>
+      {extra}
     </th>
   );
 }
