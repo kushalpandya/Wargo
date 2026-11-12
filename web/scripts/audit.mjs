@@ -25,7 +25,9 @@ const SIZES = {
 const sizes = (opt.sizes ?? "desktop,phone").split(",");
 const schemes = (opt.schemes ?? "dark,light").split(",");
 
-const browser = await chromium.launch({ executablePath: "/usr/bin/google-chrome-stable", headless: true });
+// Installed Chrome: CHROME overrides, else the usual path on macOS or Linux.
+const chrome = process.env.CHROME ?? (process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "/usr/bin/google-chrome-stable");
+const browser = await chromium.launch({ executablePath: chrome, headless: true });
 let problems = 0;
 for (const size of sizes) {
   for (const scheme of schemes) {
