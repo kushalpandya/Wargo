@@ -407,6 +407,9 @@ func GetInfo(ctx context.Context) Info {
 	if ci, err := cpu.InfoWithContext(ctx); err == nil && len(ci) > 0 {
 		i.CPUModel = strings.TrimSpace(ci[0].ModelName)
 	}
+	if i.CPUModel == "" {
+		i.CPUModel = fallbackCPUModel()
+	}
 	i.CPUMaxMHz = cpuMaxMHz()
 	i.Threads, _ = cpu.CountsWithContext(ctx, true)
 	i.Cores, _ = cpu.CountsWithContext(ctx, false)
