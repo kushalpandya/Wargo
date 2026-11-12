@@ -55,7 +55,7 @@ func (s *Service) handleDownload(w http.ResponseWriter, r *http.Request) error {
 	p := fsops.Clean(q.Get("path"))
 	info, err := root.Stat(p)
 	if err != nil {
-		return fsErr(err, p)
+		return ref.readErr(err, p)
 	}
 	if info.IsDir() {
 		name := baseName(p)
@@ -69,7 +69,7 @@ func (s *Service) handleDownload(w http.ResponseWriter, r *http.Request) error {
 	}
 	f, info, err := openRegular(root, p)
 	if err != nil {
-		return fsErr(err, p)
+		return ref.readErr(err, p)
 	}
 	defer f.Close()
 	name := baseName(p)
@@ -144,7 +144,7 @@ func (s *Service) handleDownloadZip(w http.ResponseWriter, r *http.Request) erro
 		}
 		seen[p] = true
 		if _, err := root.Lstat(p); err != nil {
-			return fsErr(err, p)
+			return ref.readErr(err, p)
 		}
 		paths = append(paths, p)
 	}

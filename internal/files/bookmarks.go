@@ -371,7 +371,7 @@ func (s *Service) handleBookmarkAdd(w http.ResponseWriter, r *http.Request) erro
 	st, err := root.Stat(rel)
 	root.Close()
 	if err != nil {
-		return fsErr(err, rel)
+		return ref.readErr(err, rel)
 	}
 	if !st.IsDir() {
 		return httpx.Errorf(http.StatusBadRequest, "not_dir", "Only folders can be bookmarked")

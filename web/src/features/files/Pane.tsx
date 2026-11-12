@@ -31,6 +31,7 @@ import {
   PackageOpen,
   Pencil,
   RefreshCw,
+  ShieldAlert,
   ShieldCheck,
   SquareCheck,
   Star,
@@ -48,9 +49,9 @@ import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/form";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/menu";
-import { EmptyState, ErrorNote, Skeleton } from "@/components/ui/misc";
+import { EmptyState, ErrorNote, Notice, Skeleton } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { absPath, baseName, downloadUrl, joinPath, parentPath, segments, startDownload, useListing, useRefreshFiles, zipUrl, type Entry, type Loc, type Root, type RootId } from "./api";
+import { absPath, baseName, downloadUrl, joinPath, parentPath, segments, startDownload, useMacHint, useListing, useRefreshFiles, zipUrl, type Entry, type Loc, type Root, type RootId } from "./api";
 import { fileApi } from "./api";
 import { isExtractable, kindOf } from "./kinds";
 import { ActionMenu, ActionSheet, ContextMenuContent, type Action, type ActionGroups } from "./actions";
@@ -159,6 +160,7 @@ export function Pane(props: PaneProps) {
   const { root, path } = loc;
   const { view, sort, hidden } = meta;
   const rootInfo = roots.find((r) => r.id === root);
+  const macHint = useMacHint();
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [focus, setFocus] = useState(-1);
@@ -264,7 +266,7 @@ export function Pane(props: PaneProps) {
   };
   const transferSafe = (kind: TransferKind, paths: string[], to: Loc) =>
     void transfer(kind, paths, to).catch((e) => {
-      if (!(e instanceof ApiError && e.code === "elevation_canceled")) toast.error(kind === "copy" ? "Copy failed" : "Move failed", e);
+      if (!(e instanceof ApiError && e.code === "elevation_canceled")) toast.error(kind === "copy" ? "Copy failed" : "Move failed", macHint(e));
     });
 
   const copyPath = (p: string) => void copyWithToast(p, "Path copied");
@@ -580,7 +582,7 @@ export function Pane(props: PaneProps) {
           { root, path: t.dest },
         )
         .catch((err) => {
-          if (!(err instanceof ApiError && err.code === "elevation_canceled")) toast.error("Drop failed", err);
+          if (!(err instanceof ApiError && err.code === "elevation_canceled")) toast.error("Drop failed", macHint(err));
         });
     },
   };
@@ -864,6 +866,10 @@ export function Pane(props: PaneProps) {
                     <EmptyState icon={<ShieldCheck />} title="Outside this root" action={<Button onClick={() => go(parentPath(path))}>Go back</Button>}>
                       This link points outside {rootInfo?.name} and can't be opened here.
                     </EmptyState>
+                  ) : err.code === "full_disk_access" ? (
+                    <Notice tone="warn" icon={<ShieldAlert />}>
+                      {err.message}
+                    </Notice>
                   ) : (
                     <ErrorNote error={err} />
                   )}

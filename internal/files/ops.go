@@ -122,7 +122,7 @@ func (s *Service) handleMkdir(w http.ResponseWriter, r *http.Request) error {
 	err = s.tryElevated(r, ref, "mkdir", p, "", func() error { return root.Mkdir(p, 0o755) })
 	s.record(r, "files.mkdir", ref, p, err, nil)
 	if err != nil {
-		return fsErr(err, p)
+		return ref.err(err, p)
 	}
 	httpx.OK(w, map[string]string{"path": p})
 	return nil
@@ -155,12 +155,12 @@ func (s *Service) handleRename(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	if _, err := root.Lstat(p); err != nil {
-		return fsErr(err, p)
+		return ref.err(err, p)
 	}
 	err = s.tryElevated(r, ref, "move", p, dst, func() error { return fsops.Move(root, p, dst) })
 	s.record(r, "files.rename", ref, p, err, map[string]string{"to": dst})
 	if err != nil {
-		return fsErr(err, dst)
+		return ref.err(err, dst)
 	}
 	httpx.OK(w, map[string]string{"path": dst})
 	return nil
@@ -234,7 +234,7 @@ func plan(t *transferRoots, req transferReq, isCopy bool) ([]pair, []string, err
 	dest := fsops.Clean(req.Dest)
 	st, err := t.dst.Stat(dest)
 	if err != nil {
-		return nil, nil, fsErr(err, dest)
+		return nil, nil, t.dref.err(err, dest)
 	}
 	if !st.IsDir() {
 		return nil, nil, httpx.Errorf(http.StatusBadRequest, "not_dir", "Destination is not a folder")
@@ -249,7 +249,7 @@ func plan(t *transferRoots, req transferReq, isCopy bool) ([]pair, []string, err
 	var conflicts []string
 	for _, p := range paths {
 		if _, err := t.src.Lstat(p); err != nil {
-			return nil, nil, fsErr(err, p)
+			return nil, nil, t.sref.err(err, p)
 		}
 		name := baseName(p)
 		dst := join(dest, name)
@@ -258,14 +258,14 @@ func plan(t *transferRoots, req transferReq, isCopy bool) ([]pair, []string, err
 			if realDest != "" {
 				if rs, err := fsops.RealPath(t.src, p); err == nil {
 					if inside(realDest, rs) {
-						return nil, nil, fsErr(fsops.ErrIntoSelf, p)
+						return nil, nil, t.sref.err(fsops.ErrIntoSelf, p)
 					}
 					same = filepath.Dir(rs) == realDest
 				}
 			}
 		} else {
 			if fsops.Inside(dest, p) {
-				return nil, nil, fsErr(fsops.ErrIntoSelf, p)
+				return nil, nil, t.sref.err(fsops.ErrIntoSelf, p)
 			}
 			same = dst == p
 		}
@@ -300,12 +300,9 @@ func plan(t *transferRoots, req transferReq, isCopy bool) ([]pair, []string, err
 
 // elevatedTransfer retries a single failed move/copy through the helper.
 // Across roots the helper works on the real host paths below "/".
-func (s *Service) elevatedTransfer(r *http.Request, t *transferRoots, op string, x pair) error {
+func (s *Service) elevatedTransfer(r *http.Request, t *transferRoots, cause error, op string, x pair) error {
 	if !t.cross {
-		return s.elevated(r, t.sref, op, x.src, x.dst, nil)
-	}
-	if s.elev == nil {
-		return httpx.Errorf(http.StatusForbidden, "permission_denied", "Permission denied: "+x.src)
+		return s.elevated(r, t.sref, cause, op, x.src, x.dst, nil)
 	}
 	from, err := fsops.RealPath(t.src, x.src)
 	if err != nil {
@@ -315,8 +312,17 @@ func (s *Service) elevatedTransfer(r *http.Request, t *transferRoots, op string,
 	if err != nil {
 		return err
 	}
+	if e := privacyDenied(cause, from); e != nil {
+		return e
+	}
+	if e := privacyDenied(cause, to); e != nil {
+		return e
+	}
+	if s.elev == nil {
+		return httpx.Errorf(http.StatusForbidden, "permission_denied", "Permission denied: "+x.src)
+	}
 	_, err = s.elev.Run(r, "files.op", op+" "+from+" → "+to, s.elev.Helper("fs", op, "/", from, to), nil)
-	return err
+	return withAbs(err, from)
 }
 
 func (s *Service) handleMove(w http.ResponseWriter, r *http.Request) error {
@@ -345,15 +351,15 @@ func (s *Service) handleMove(w http.ResponseWriter, r *http.Request) error {
 		case errors.Is(err, syscall.EXDEV):
 			cross = append(cross, x)
 		case isPerm(err) && len(pairs) == 1:
-			err = s.elevatedTransfer(r, t, "move", x)
+			err = s.elevatedTransfer(r, t, err, "move", x)
 			s.record(r, "files.move", t.sref, x.src, err, map[string]string{"to": t.destAbs(x.dst)})
 			if err != nil {
-				return fsErr(err, x.src)
+				return t.pairErr(err, x)
 			}
 			moved++
 		default:
 			s.record(r, "files.move", t.sref, x.src, err, map[string]string{"to": t.destAbs(x.dst)})
-			return fsErr(err, x.src)
+			return t.pairErr(err, x)
 		}
 	}
 	dest := fsops.Clean(req.Dest)
@@ -488,11 +494,11 @@ func (s *Service) handleCopy(w http.ResponseWriter, r *http.Request) error {
 		_, err := fsops.CopyBetween(r.Context(), t.src, x.src, t.dst, x.dst, nil)
 		if err != nil && isPerm(err) && len(pairs) == 1 {
 			t.dst.RemoveAll(x.dst)
-			err = s.elevatedTransfer(r, t, "copy", x)
+			err = s.elevatedTransfer(r, t, err, "copy", x)
 		}
 		s.record(r, "files.copy", t.sref, x.src, err, map[string]string{"to": t.destAbs(x.dst)})
 		if err != nil {
-			return fsErr(err, x.src)
+			return t.pairErr(err, x)
 		}
 		copied = append(copied, x.dst)
 	}
@@ -522,7 +528,7 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) error {
 	}
 	for _, p := range paths {
 		if _, err := root.Lstat(p); err != nil {
-			return fsErr(err, p)
+			return ref.err(err, p)
 		}
 	}
 	if req.Trash {
@@ -532,11 +538,11 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) error {
 	for _, p := range paths {
 		err := fsops.Remove(root, p)
 		if err != nil && isPerm(err) && len(paths) == 1 {
-			err = s.elevated(r, ref, "remove", p, "", nil)
+			err = s.elevated(r, ref, err, "remove", p, "", nil)
 		}
 		s.record(r, "files.delete", ref, p, err, nil)
 		if err != nil {
-			return fsErr(err, p)
+			return ref.err(err, p)
 		}
 		n++
 	}
@@ -582,7 +588,7 @@ func (s *Service) trash(w http.ResponseWriter, r *http.Request, root *os.Root, r
 		}
 		s.record(r, "files.trash", ref, p, err, map[string]string{"to": filepath.Join(s.trashDir, filepath.Base(dst))})
 		if err != nil {
-			return fsErr(err, p)
+			return ref.err(err, p)
 		}
 		moved = append(moved, filepath.Base(dst))
 	}
@@ -669,11 +675,11 @@ func (s *Service) handleChmod(w http.ResponseWriter, r *http.Request) error {
 			return chmodNoFollow(root, q, m)
 		})
 		if err != nil && isPerm(err) && len(paths) == 1 && !req.Recursive {
-			err = s.elevated(r, ref, "chmod", p, strings.TrimSpace(req.Mode), nil)
+			err = s.elevated(r, ref, err, "chmod", p, strings.TrimSpace(req.Mode), nil)
 		}
 		s.record(r, "files.chmod", ref, p, err, map[string]any{"mode": req.Mode, "recursive": req.Recursive})
 		if err != nil {
-			return fsErr(err, p)
+			return ref.err(err, p)
 		}
 	}
 	httpx.OK(w, map[string]any{"changed": len(paths)})
@@ -725,14 +731,35 @@ func (s *Service) handleChown(w http.ResponseWriter, r *http.Request) error {
 				err = httpx.Errorf(http.StatusForbidden, "permission_denied",
 					"Changing ownership recursively needs root; change one item at a time or use a root terminal")
 			} else {
-				err = s.elevated(r, ref, "chown", p, owner, nil)
+				err = s.elevated(r, ref, err, "chown", p, owner, nil)
 			}
 		}
 		s.record(r, "files.chown", ref, p, err, map[string]any{"owner": owner, "recursive": req.Recursive})
 		if err != nil {
-			return fsErr(err, p)
+			return ref.err(err, p)
 		}
 	}
 	httpx.OK(w, map[string]any{"changed": len(paths)})
 	return nil
+}
+
+// pairErr is fsErr for a move or copy. A symlink_in_path refusal carries the
+// path of the side (source or destination) that has the link.
+func (t *transferRoots) pairErr(err error, x pair) error {
+	if isSymlinkRefusal(err) && !hasLinkInPath(filepath.Join(t.sref.Path, x.src)) {
+		if hasLinkInPath(filepath.Join(t.dref.Path, x.dst)) {
+			return t.dref.err(err, x.dst)
+		}
+	}
+	return t.sref.err(err, x.src)
+}
+
+// hasLinkInPath reports whether a folder leading to abs is a symbolic link.
+func hasLinkInPath(abs string) bool {
+	for p := filepath.Dir(abs); p != "/" && p != "."; p = filepath.Dir(p) {
+		if st, err := os.Lstat(p); err == nil && st.Mode()&fs.ModeSymlink != 0 {
+			return true
+		}
+	}
+	return false
 }

@@ -220,9 +220,9 @@ func (s *Service) handleUploadInit(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	if st, err := root.Stat(dir); err != nil {
-		return fsErr(err, dir)
+		return ref.err(err, dir)
 	} else if !st.IsDir() {
-		return fsErr(syscall.ENOTDIR, dir)
+		return ref.err(syscall.ENOTDIR, dir)
 	}
 	if st, err := root.Lstat(target); err == nil {
 		if st.IsDir() {
@@ -395,7 +395,7 @@ func (s *Service) handleUploadComplete(w http.ResponseWriter, r *http.Request) e
 	err = s.placeUpload(root, up, target)
 	s.record(r, "files.upload", ref, target, err, map[string]any{"size": up.Size, "overwrite": up.Overwrite})
 	if err != nil {
-		return fsErr(err, target)
+		return ref.err(err, target)
 	}
 	s.uploads.remove(up.ID)
 	httpx.OK(w, map[string]any{"path": target, "size": up.Size})

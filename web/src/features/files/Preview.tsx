@@ -12,7 +12,7 @@ import { Button, IconButton } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { EmptyState, ErrorNote, Spinner } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { downloadUrl, fileApi, joinPath, startDownload, type Entry, type RootId } from "./api";
+import { downloadUrl, fileApi, joinPath, startDownload, useMacHint, type Entry, type RootId } from "./api";
 import { FileIcon, isEditable, kindOf, typeLabel } from "./kinds";
 import type { EditorHandle } from "./Editor";
 
@@ -85,6 +85,7 @@ function TextView({
   wrap: boolean;
 }) {
   const dark = useIsDark();
+  const macHint = useMacHint();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["files", "content", root, path], queryFn: () => fileApi.content(root, path), staleTime: Infinity, gcTime: 0, retry: false });
   const mtime = useRef<string | null>(null);
@@ -106,12 +107,12 @@ function TextView({
         qc.invalidateQueries({ queryKey: ["files", "list"] });
       } catch (e) {
         if (e instanceof ApiError && e.code === "conflict") setConflict(e.data as { mtime: string });
-        else if (!(e instanceof ApiError && e.code === "elevation_canceled")) toast.error("Save failed", e);
+        else if (!(e instanceof ApiError && e.code === "elevation_canceled")) toast.error("Save failed", macHint(e));
       } finally {
         onState({ saving: false });
       }
     },
-    [editorRef, q.data, root, path, name, onState, qc],
+    [editorRef, q.data, root, path, name, onState, qc, macHint],
   );
 
   useEffect(() => {

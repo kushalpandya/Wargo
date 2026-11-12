@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, qs } from "@/lib/api";
+import { ApiError, api, qs } from "@/lib/api";
 
 /** Root ids: "0", "1"… for configured places, "m-<base64url>" for drives. */
 export type RootId = string;
@@ -253,3 +254,30 @@ export const fileApi = {
   save: (root: RootId, path: string, content: string, mtime: string | null, encoding?: string, create?: boolean) =>
     api.put<{ mtime: string; size: number }>("/api/files/content", { root, path, content, mtime, encoding, create }),
 };
+
+const MAC_LINKED = /^\/(etc|tmp|var)(\/|$)/;
+
+/** True when the server host is macOS (from the cached system info, no new endpoint). */
+export function useIsMac(): boolean {
+  const info = useQuery({ queryKey: ["system", "info"], queryFn: () => api.get<{ osId: string }>("/api/system/info"), staleTime: Infinity });
+  return info.data?.osId === "macos";
+}
+
+/**
+ * On macOS /etc, /tmp and /var are links into /private, which file actions
+ * refuse to follow. Returns a (stable) function that adds a short pointer to
+ * such errors, using the absolute path the server attaches as `abs`.
+ */
+export function useMacHint(): (err: unknown) => unknown {
+  const isMac = useIsMac();
+  return useCallback(
+    (err) => {
+      if (!isMac || !(err instanceof ApiError) || err.code !== "symlink_in_path") return err;
+      const abs = (err.data as { abs?: string } | undefined)?.abs;
+      if (!abs || !MAC_LINKED.test(abs)) return err;
+      const top = abs.split("/")[1];
+      return new ApiError(err.status, err.code, `${err.message}. On macOS, /etc, /tmp and /var are links into /private. Open /private/${top} instead.`, err.data);
+    },
+    [isMac],
+  );
+}

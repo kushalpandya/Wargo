@@ -438,9 +438,14 @@ func isPerm(err error) bool { return errors.Is(err, fs.ErrPermission) }
 // ---- helpers ---------------------------------------------------------------
 
 // elevated retries a failed single-path operation through the root helper.
+// cause is the unprivileged failure: a macOS privacy denial is reported
+// as such, because root is blocked too and a password prompt would not help.
 // Without a credential on the request the client receives
 // elevation_required, prompts the user and repeats the request.
-func (s *Service) elevated(r *http.Request, ref rootRef, op, rel, arg string, stdin io.Reader) error {
+func (s *Service) elevated(r *http.Request, ref rootRef, cause error, op, rel, arg string, stdin io.Reader) error {
+	if e := privacyDenied(cause, filepath.Join(ref.Path, rel)); e != nil {
+		return e
+	}
 	if s.elev == nil {
 		return httpx.Errorf(http.StatusForbidden, "permission_denied", "Permission denied: "+rel)
 	}
@@ -449,6 +454,16 @@ func (s *Service) elevated(r *http.Request, ref rootRef, op, rel, arg string, st
 		args = append(args, arg)
 	}
 	_, err := s.elev.Run(r, "files.op", op+" "+filepath.Join(ref.Path, rel), s.elev.Helper(args...), stdin)
+	return withAbs(err, filepath.Join(ref.Path, rel))
+}
+
+// withAbs tells the client which path a symlink_in_path refusal was about, so
+// it can explain macOS's /etc, /tmp and /var links.
+func withAbs(err error, abs string) error {
+	var he *httpx.Error
+	if errors.As(err, &he) && he.Code == "symlink_in_path" {
+		return he.With(map[string]string{"abs": abs})
+	}
 	return err
 }
 
@@ -456,7 +471,7 @@ func (s *Service) elevated(r *http.Request, ref rootRef, op, rel, arg string, st
 func (s *Service) tryElevated(r *http.Request, ref rootRef, op, rel, arg string, fn func() error) error {
 	err := fn()
 	if err != nil && isPerm(err) {
-		return s.elevated(r, ref, op, rel, arg, nil)
+		return s.elevated(r, ref, err, op, rel, arg, nil)
 	}
 	return err
 }
@@ -566,4 +581,26 @@ func splitExt(name string) (string, string) {
 		return name, ""
 	}
 	return strings.TrimSuffix(name, ext), ext
+}
+
+// readErr is err for read-only operations: a macOS privacy denial is reported
+// as full_disk_access first.
+func (ref rootRef) readErr(err error, rel string) error {
+	if e := privacyDeniedRead(err, filepath.Join(ref.Path, rel)); e != nil {
+		return e
+	}
+	return ref.err(err, rel)
+}
+
+// isSymlinkRefusal matches a symlink refusal, whether it is still the raw
+// fsops error or already the API error (elevated refusals arrive as that).
+func isSymlinkRefusal(err error) bool {
+	var he *httpx.Error
+	return errors.Is(err, fsops.ErrSymlinkInPath) || (errors.As(err, &he) && he.Code == "symlink_in_path")
+}
+
+// err is fsErr for a path inside the root; a symlink_in_path refusal also
+// carries the absolute path so the client can explain macOS's /etc links.
+func (ref rootRef) err(err error, rel string) error {
+	return withAbs(fsErr(err, rel), filepath.Join(ref.Path, rel))
 }

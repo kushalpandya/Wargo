@@ -54,7 +54,7 @@ func (s *Service) handleArchive(w http.ResponseWriter, r *http.Request) error {
 	}
 	for _, p := range paths {
 		if _, err := root.Lstat(p); err != nil {
-			return fsErr(err, p)
+			return ref.readErr(err, p)
 		}
 	}
 	dest := fsops.Clean(req.Dest)

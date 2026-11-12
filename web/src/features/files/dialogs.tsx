@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox, FormField, Input, Segmented, Switch } from "@/components/ui/form";
 import { ErrorNote, Notice, Spinner } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { absPath, baseName, fileApi, joinPath, parentPath, segments, type Entry, type Listing, type Root, type RootId } from "./api";
+import { absPath, baseName, fileApi, joinPath, parentPath, segments, useMacHint, type Entry, type Listing, type Root, type RootId } from "./api";
 import { FileIcon, typeLabel } from "./kinds";
 
 function errMsg(e: unknown) {
@@ -42,6 +42,7 @@ export function NameDialog({
   const [name, setName] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const macHint = useMacHint();
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -96,7 +97,7 @@ export function NameDialog({
         <FormField label={label} htmlFor="files-name" error={name.includes("/") ? 'Names cannot contain "/"' : undefined}>
           <Input id="files-name" ref={ref} value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" spellCheck={false} className="num" />
         </FormField>
-        <ErrorNote error={error} />
+        <ErrorNote error={macHint(error)} />
       </form>
     </Dialog>
   );
@@ -122,6 +123,7 @@ export function DeleteDialog({
   const [trash, setTrash] = useState(trashAvailable);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const macHint = useMacHint();
   const [noTrash, setNoTrash] = useState<string | null>(null);
   useEffect(() => {
     if (open) {
@@ -181,7 +183,7 @@ export function DeleteDialog({
         ) : (
           trashAvailable && <Checkbox checked={trash} onCheckedChange={setTrash} label="Move to trash instead of deleting" />
         )}
-        <ErrorNote error={error} />
+        <ErrorNote error={macHint(error)} />
       </div>
     </Dialog>
   );
@@ -208,6 +210,7 @@ export function ChmodDialog({ open, onOpenChange, root, entries, dir, onDone }: 
   const [dirText, setDirText] = useState("0755");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const macHint = useMacHint();
   const hasDir = entries.some((e) => e.type === "dir");
   useEffect(() => {
     if (open && first) {
@@ -305,7 +308,7 @@ export function ChmodDialog({ open, onOpenChange, root, entries, dir, onDone }: 
             <Input id="chmod-dir" value={dirText} onChange={(e) => setDirText(e.target.value.trim())} className="num" maxLength={4} />
           </FormField>
         )}
-        <ErrorNote error={error} />
+        <ErrorNote error={macHint(error)} />
       </div>
     </Dialog>
   );
@@ -324,6 +327,7 @@ export function ChownDialog({ open, onOpenChange, root, entries, dir, onDone }: 
   const [recursive, setRecursive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const macHint = useMacHint();
   useEffect(() => {
     if (open && first) {
       setOwner(`${first.owner}:${first.group}`);
@@ -379,7 +383,7 @@ export function ChownDialog({ open, onOpenChange, root, entries, dir, onDone }: 
         </FormField>
         {entries.some((e) => e.type === "dir") && <Switch checked={recursive} onCheckedChange={setRecursive} label="Apply to everything inside" />}
         <Notice tone="frost">Changing ownership usually requires administrator approval.</Notice>
-        <ErrorNote error={error} />
+        <ErrorNote error={macHint(error)} />
       </form>
     </Dialog>
   );
@@ -406,6 +410,7 @@ export function CompressDialog({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const macHint = useMacHint();
   const stem = entries.length === 1 ? entries[0].name : dir === "." ? "Archive" : baseName(dir);
   useEffect(() => {
     if (open) {
@@ -473,7 +478,7 @@ export function CompressDialog({
             <span className="num shrink-0 text-sm text-muted">{suffix}</span>
           </div>
         </FormField>
-        <ErrorNote error={error} />
+        <ErrorNote error={macHint(error)} />
       </form>
     </Dialog>
   );
@@ -484,6 +489,7 @@ export function ExtractDialog({ open, onOpenChange, root, dir, entry, onJob }: {
   const [here, setHere] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const macHint = useMacHint();
   const stem = entry ? entry.name.replace(/(\.tar\.gz|\.tgz|\.tar|\.zip)$/i, "") : "";
   useEffect(() => {
     if (open) {
@@ -536,7 +542,7 @@ export function ExtractDialog({ open, onOpenChange, root, dir, entry, onJob }: {
           </FormField>
         )}
         <p className="text-xs text-muted">Links and unsafe paths inside the archive are skipped. Extraction stops at 20 GB.</p>
-        <ErrorNote error={error} />
+        <ErrorNote error={macHint(error)} />
       </form>
     </Dialog>
   );

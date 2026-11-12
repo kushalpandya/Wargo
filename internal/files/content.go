@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -52,7 +53,7 @@ func (s *Service) handleGetContent(w http.ResponseWriter, r *http.Request) error
 	p := fsops.Clean(q.Get("path"))
 	st, err := root.Stat(p)
 	if err != nil {
-		return fsErr(err, p)
+		return ref.readErr(err, p)
 	}
 	if !st.Mode().IsRegular() {
 		return httpx.BadRequest("not a regular file")
@@ -63,13 +64,13 @@ func (s *Service) handleGetContent(w http.ResponseWriter, r *http.Request) error
 	}
 	data, err := readRegular(root, p, s.maxEdit)
 	if err != nil && isPerm(err) {
-		data, err = s.elevatedOut(r, ref, "read", p)
+		data, err = s.elevatedOut(r, ref, err, "read", p)
 		if err == nil && int64(len(data)) > s.maxEdit {
 			err = errTooLargeToEdit
 		}
 	}
 	if err != nil {
-		return fsErr(err, p)
+		return ref.err(err, p)
 	}
 	if isBinary(data) {
 		return httpx.Errorf(http.StatusUnsupportedMediaType, "binary", "This looks like a binary file")
@@ -95,7 +96,10 @@ func mustLstat(root *os.Root, p string, fallback fs.FileInfo) fs.FileInfo {
 	return fallback
 }
 
-func (s *Service) elevatedOut(r *http.Request, ref rootRef, op, rel string) ([]byte, error) {
+func (s *Service) elevatedOut(r *http.Request, ref rootRef, cause error, op, rel string) ([]byte, error) {
+	if e := privacyDeniedRead(cause, filepath.Join(ref.Path, rel)); e != nil {
+		return nil, e
+	}
 	if s.elev == nil {
 		return nil, fs.ErrPermission
 	}
@@ -143,7 +147,7 @@ func (s *Service) handlePutContent(w http.ResponseWriter, r *http.Request) error
 	st, err := root.Stat(p)
 	switch {
 	case err == nil && req.Create:
-		return fsErr(fs.ErrExist, p)
+		return ref.err(fs.ErrExist, p)
 	case err == nil:
 		if !st.Mode().IsRegular() {
 			return httpx.BadRequest("not a regular file")
@@ -155,11 +159,11 @@ func (s *Service) handlePutContent(w http.ResponseWriter, r *http.Request) error
 	case errors.Is(err, fs.ErrNotExist) && req.Create:
 		st = nil
 	default:
-		return fsErr(err, p)
+		return ref.err(err, p)
 	}
 	err = writeAtomic(root, p, data, st)
 	if err != nil && isPerm(err) {
-		err = s.elevated(r, ref, "write", p, "", bytes.NewReader(data))
+		err = s.elevated(r, ref, err, "write", p, "", bytes.NewReader(data))
 	}
 	action := "files.write"
 	if st == nil {
@@ -167,11 +171,11 @@ func (s *Service) handlePutContent(w http.ResponseWriter, r *http.Request) error
 	}
 	s.record(r, action, ref, p, err, map[string]any{"size": len(data)})
 	if err != nil {
-		return fsErr(err, p)
+		return ref.err(err, p)
 	}
 	nst, err := root.Stat(p)
 	if err != nil {
-		return fsErr(err, p)
+		return ref.err(err, p)
 	}
 	httpx.OK(w, map[string]any{"mtime": nst.ModTime(), "size": nst.Size()})
 	return nil

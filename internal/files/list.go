@@ -263,7 +263,7 @@ func (s *Service) entry(root *os.Root, rel string, info fs.FileInfo) Entry {
 
 func (s *Service) handleList(w http.ResponseWriter, r *http.Request) error {
 	q := r.URL.Query()
-	root, _, err := s.open(q.Get("root"))
+	root, ref, err := s.open(q.Get("root"))
 	if err != nil {
 		return err
 	}
@@ -273,7 +273,10 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) error {
 	dirsOnly := q.Get("dirsOnly") == "1"
 	entries, truncated, err := s.list(root, p, hidden, dirsOnly)
 	if err != nil {
-		return fsErr(err, p)
+		if e := privacyDeniedRead(err, filepath.Join(ref.Path, p)); e != nil {
+			return e
+		}
+		return ref.err(err, p)
 	}
 	var parent any
 	if p != "." {
@@ -360,7 +363,10 @@ func (s *Service) handleStat(w http.ResponseWriter, r *http.Request) error {
 	p := fsops.Clean(q.Get("path"))
 	info, err := root.Lstat(p)
 	if err != nil {
-		return fsErr(err, p)
+		if e := privacyDeniedRead(err, filepath.Join(ref.Path, p)); e != nil {
+			return e
+		}
+		return ref.err(err, p)
 	}
 	e := s.entry(root, p, info)
 	if p == "." {
@@ -372,21 +378,21 @@ func (s *Service) handleStat(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Service) handleSize(w http.ResponseWriter, r *http.Request) error {
 	q := r.URL.Query()
-	root, _, err := s.open(q.Get("root"))
+	root, ref, err := s.open(q.Get("root"))
 	if err != nil {
 		return err
 	}
 	defer root.Close()
 	p := fsops.Clean(q.Get("path"))
 	if _, err := root.Lstat(p); err != nil {
-		return fsErr(err, p)
+		return ref.readErr(err, p)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), sizeTimeout)
 	defer cancel()
 	size, n, err := fsops.SizeContext(ctx, root, p)
 	partial := err != nil
 	if err != nil && ctx.Err() == nil {
-		return fsErr(err, p)
+		return ref.err(err, p)
 	}
 	httpx.OK(w, map[string]any{"size": size, "files": n, "partial": partial})
 	return nil
