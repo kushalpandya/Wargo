@@ -6,6 +6,8 @@ package fsops
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
+	"unicode/utf8"
 
 	"github.com/kushalpandya/wargo/internal/host"
 )
@@ -56,7 +60,8 @@ func CopyContext(ctx context.Context, root *os.Root, src, dst string, prog Progr
 	if src == "." || Inside(dst, src) {
 		return ErrIntoSelf
 	}
-	return CopyBetween(ctx, root, src, root, dst, prog)
+	_, err := CopyBetween(ctx, root, src, root, dst, prog)
+	return err
 }
 
 // CopyBetween copies src inside srcRoot to dst inside dstRoot (which may be
@@ -71,26 +76,61 @@ func CopyContext(ctx context.Context, root *os.Root, src, dst string, prog Progr
 // examined, new files are created O_EXCL|O_NOFOLLOW, and modes and times
 // are set on descriptors. Nothing swapped in during the copy (a symlink in
 // place of a folder or file) is ever followed, on either side.
-func CopyBetween(ctx context.Context, srcRoot *os.Root, src string, dstRoot *os.Root, dst string, prog Progress) error {
+//
+// Special files (devices, sockets, FIFOs) are not copied; their paths are
+// returned in skipped.
+func CopyBetween(ctx context.Context, srcRoot *os.Root, src string, dstRoot *os.Root, dst string, prog Progress) (skipped []string, err error) {
+	c, err := copyBetween(ctx, srcRoot, src, dstRoot, dst, prog, false)
+	return c.Skipped, err
+}
+
+// Copied describes what a copy for a move made: the special files it
+// skipped and, per source path, what it copied, so that RemoveCopied
+// removes nothing else.
+type Copied struct {
+	Skipped []string
+	recs    map[string]copyRec
+}
+
+// copyRec is the state of a source entry when it was copied. Size and
+// modification time are compared for regular files only.
+type copyRec struct {
+	id      fileID
+	regular bool
+	size    int64
+	mtime   time.Time
+}
+
+// CopyForMove is CopyBetween that also records what it copied, for
+// RemoveCopied once the copy is complete.
+func CopyForMove(ctx context.Context, srcRoot *os.Root, src string, dstRoot *os.Root, dst string, prog Progress) (*Copied, error) {
+	return copyBetween(ctx, srcRoot, src, dstRoot, dst, prog, true)
+}
+
+func copyBetween(ctx context.Context, srcRoot *os.Root, src string, dstRoot *os.Root, dst string, prog Progress, record bool) (*Copied, error) {
+	c := &copier{ctx: ctx, prog: prog, made: map[fileID]bool{}}
+	if record {
+		c.recs = map[string]copyRec{}
+	}
 	src, dst = Clean(src), Clean(dst)
 	if src == "." || dst == "." {
-		return ErrIntoSelf
+		return c.result(), ErrIntoSelf
 	}
 	sp, sbase, err := parentRoot(srcRoot, src)
 	if err != nil {
-		return err
+		return c.result(), err
 	}
 	defer sp.Close()
 	dp, dbase, err := parentRoot(dstRoot, dst)
 	if err != nil {
-		return err
+		return c.result(), err
 	}
 	defer dp.Close()
 	if _, err := dp.Lstat(dbase); err == nil {
-		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
+		return c.result(), fmt.Errorf("%s: %w", dst, fs.ErrExist)
 	}
-	c := &copier{ctx: ctx, prog: prog, made: map[fileID]bool{}}
-	return c.tree(sp, sbase, dp, dbase, src)
+	err = c.tree(sp, sbase, dp, dbase, src)
+	return c.result(), err
 }
 
 // parentRoot opens the folder holding rel inside root as its own root and
@@ -122,6 +162,28 @@ type copier struct {
 	done int64
 	prog Progress
 	made map[fileID]bool
+	// skipped lists the special files (devices, sockets, FIFOs) met.
+	skipped []string
+	// recs, when set, records every entry copied (see Copied).
+	recs map[string]copyRec
+}
+
+func (c *copier) result() *Copied { return &Copied{Skipped: c.skipped, recs: c.recs} }
+
+// note records that show (examined as st) was copied.
+func (c *copier) note(show string, st fs.FileInfo) {
+	if c.recs == nil {
+		return
+	}
+	id, ok := idOf(st)
+	if !ok {
+		return // nothing to check against later: never removed
+	}
+	r := copyRec{id: id}
+	if st.Mode().IsRegular() {
+		r.regular, r.size, r.mtime = true, st.Size(), st.ModTime()
+	}
+	c.recs[show] = r
 }
 
 // copyHook, when set by tests, runs between the steps of a copy (step is
@@ -149,16 +211,30 @@ func (c *copier) tree(sdir *os.Root, sname string, ddir *os.Root, dname, show st
 	switch {
 	case st.Mode()&fs.ModeSymlink != 0:
 		t, err := sdir.Readlink(sname)
-		if err != nil {
-			return err
+		if err == nil {
+			err = ddir.Symlink(t, dname)
 		}
-		return ddir.Symlink(t, dname)
+		if err == nil {
+			c.note(show, st)
+		}
+		return err
 	case st.IsDir():
-		return c.dir(sdir, sname, st, ddir, dname, show)
+		err = c.dir(sdir, sname, st, ddir, dname, show)
+		if err == nil {
+			c.note(show, st)
+		}
+		return err
 	case st.Mode().IsRegular():
-		return c.file(sdir, sname, st, ddir, dname, show)
+		err = c.file(sdir, sname, st, ddir, dname, show)
+		if err == nil {
+			c.note(show, st)
+		}
+		return err
 	default:
-		return nil // skip devices, sockets, fifos
+		// Devices, sockets and FIFOs are not copied; the caller decides
+		// what to tell the user (and a move leaves them in place).
+		c.skipped = append(c.skipped, show)
+		return nil
 	}
 }
 
@@ -316,25 +392,187 @@ func Move(root *os.Root, src, dst string) error {
 
 // MoveBetween moves src inside srcRoot to dst inside dstRoot without
 // replacing anything at dst. Across devices it copies and then deletes
-// src. The caller must rule out moving a folder into itself.
+// what was copied: special files (which are never copied) stay in src,
+// together with the folders holding them. The caller must rule out moving
+// a folder into itself.
 func MoveBetween(srcRoot *os.Root, src string, dstRoot *os.Root, dst string) error {
 	src, dst = Clean(src), Clean(dst)
 	if src == "." {
 		return errors.New("cannot move the root")
 	}
-	if _, err := dstRoot.Lstat(dst); err == nil {
+	if dfi, err := dstRoot.Lstat(dst); err == nil {
+		// On a case-insensitive drive "Photo.jpg" and "photo.jpg" name the
+		// same entry: renaming one to the other is not a clash.
+		if sfi, err := srcRoot.Lstat(src); err == nil && os.SameFile(sfi, dfi) {
+			return renameSameFile(srcRoot, src, dstRoot, dst, sfi)
+		}
 		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
 	}
 	// No-replace: something created at dst since the check above is kept.
-	err := RenameBetweenNoReplace(srcRoot, src, dstRoot, dst)
+	err := renameBetween(srcRoot, src, dstRoot, dst)
 	if errors.Is(err, syscall.EXDEV) {
-		if err := CopyBetween(context.Background(), srcRoot, src, dstRoot, dst, nil); err != nil {
+		c, err := CopyForMove(context.Background(), srcRoot, src, dstRoot, dst, nil)
+		if err != nil {
 			return err
 		}
-		return srcRoot.RemoveAll(src)
+		_, err = RemoveCopied(srcRoot, src, c)
+		return err
 	}
 	return err
 }
+
+// renameSameFile renames src to dst when both already name the inode st:
+// either one entry under two spellings (a case-insensitive drive) or two
+// hard links. A plain rename between two names of one inode does nothing,
+// and a no-replace rename fails because dst "exists", so src is first
+// moved to a temporary name next to it. If dst then no longer exists it
+// was src under another spelling and the rename completes; if it still
+// does it is another link to the same file, so src's name is dropped.
+func renameSameFile(srcRoot *os.Root, src string, dstRoot *os.Root, dst string, st fs.FileInfo) error {
+	if srcRoot == dstRoot && src == dst {
+		return nil
+	}
+	b := make([]byte, 6)
+	rand.Read(b)
+	tmp := path.Join(path.Dir(src), sideName(".wargo-rename-"+hex.EncodeToString(b)+"-", path.Base(src)))
+	if err := RenameBetweenNoReplace(srcRoot, src, srcRoot, tmp); err != nil {
+		return err
+	}
+	err := RenameBetweenNoReplace(srcRoot, tmp, dstRoot, dst)
+	if errors.Is(err, fs.ErrExist) && !st.IsDir() {
+		tfi, terr := srcRoot.Lstat(tmp)
+		dfi, derr := dstRoot.Lstat(dst)
+		if terr == nil && derr == nil && os.SameFile(tfi, st) && os.SameFile(dfi, st) {
+			return srcRoot.Remove(tmp)
+		}
+	}
+	if err != nil {
+		// Put src back under its own name.
+		if rerr := RenameBetweenNoReplace(srcRoot, tmp, srcRoot, src); rerr != nil {
+			return fmt.Errorf("%w (the item was left as %s)", err, tmp)
+		}
+	}
+	return err
+}
+
+// sideName prefixes base, shortened so the result stays a valid name.
+func sideName(prefix, base string) string {
+	const maxName = 255
+	if room := maxName - len(prefix); len(base) > room {
+		base = base[:max(room, 0)]
+		for len(base) > 0 && !utf8.ValidString(base) {
+			base = base[:len(base)-1]
+		}
+	}
+	return prefix + base
+}
+
+// RemoveCopied deletes p inside root after CopyForMove copied it, but only
+// the entries that are still what was copied: same inode and, for regular
+// files, same size and modification time. Anything else (special files,
+// entries created or changed during the copy) stays, with the folders
+// holding it; the paths kept for a reason other than being skipped special
+// files are returned in changed.
+//
+// The walk goes by descriptor like the copy: every folder is opened
+// O_NOFOLLOW relative to its parent and checked to be the one examined,
+// and entries are removed by single names inside it, so a symlink swapped
+// in for a folder is never followed.
+func RemoveCopied(root *os.Root, p string, c *Copied) (changed []string, err error) {
+	p = Clean(p)
+	if p == "." {
+		return nil, errors.New("cannot delete the root")
+	}
+	r := &remover{c: c, skipped: make(map[string]bool, len(c.Skipped))}
+	for _, k := range c.Skipped {
+		r.skipped[k] = true
+	}
+	parent, base, err := parentRoot(root, p)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	err = r.prune(parent, base, p)
+	return r.changed, err
+}
+
+type remover struct {
+	c       *Copied
+	skipped map[string]bool
+	changed []string
+}
+
+// copied reports whether show, now st, is still the entry that was copied.
+func (r *remover) copied(show string, st fs.FileInfo) bool {
+	rec, ok := r.c.recs[show]
+	if !ok {
+		return false
+	}
+	if id, ok := idOf(st); !ok || id != rec.id {
+		return false
+	}
+	if rec.regular {
+		return st.Mode().IsRegular() && st.Size() == rec.size && st.ModTime().Equal(rec.mtime)
+	}
+	return true
+}
+
+// prune removes name inside the pinned folder dir (show is its path) if it
+// is what was copied; folders are emptied first and stay when something
+// inside them stays.
+func (r *remover) prune(dir *os.Root, name, show string) error {
+	st, err := dir.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !r.copied(show, st) {
+		if !r.skipped[show] {
+			r.changed = append(r.changed, show)
+		}
+		return nil
+	}
+	if !st.IsDir() {
+		return dir.Remove(name)
+	}
+	f, err := openNoFollow(dir, name, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
+	if err != nil {
+		return err
+	}
+	ents, sub, err := func() ([]fs.DirEntry, *os.Root, error) {
+		defer f.Close()
+		if fst, err := f.Stat(); err != nil || !os.SameFile(fst, st) {
+			return nil, nil, errChanged(show, err)
+		}
+		ents, err := f.ReadDir(-1)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub, err := rootOf(f)
+		return ents, sub, err
+	}()
+	if err != nil {
+		return err
+	}
+	for _, e := range ents {
+		if err := r.prune(sub, e.Name(), path.Join(show, e.Name())); err != nil {
+			sub.Close()
+			return err
+		}
+	}
+	sub.Close()
+	err = dir.Remove(name)
+	if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
+		return nil // something inside stays
+	}
+	return err
+}
+
+// renameBetween is the rename MoveBetween tries first (tests replace it
+// to simulate a move across devices).
+var renameBetween = RenameBetweenNoReplace
 
 // Remove deletes p recursively. The root itself cannot be removed.
 func Remove(root *os.Root, p string) error {

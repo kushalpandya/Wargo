@@ -5,8 +5,11 @@
 package fsops
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -161,5 +164,49 @@ func TestCopyTreeIntact(t *testing.T) {
 	d, _ := os.Stat(filepath.Join(dir, "dst", "f"))
 	if !s.ModTime().Equal(d.ModTime()) {
 		t.Errorf("mtime %v, want %v", d.ModTime(), s.ModTime())
+	}
+}
+
+// A move removes only what it copied. Entries created in the source after
+// their folder was read, replaced by a new file, or written to after they
+// were copied all stay in the source and are reported; the rest goes.
+func TestMoveKeepsWhatChangedDuringCopy(t *testing.T) {
+	dir, root := raceTree(t)
+	must(t, os.WriteFile(filepath.Join(dir, "src", "h"), []byte("data"), 0o644))
+	// src/sub was read before its copy was made: this file is not copied.
+	setHook(t, "mkdir", "src/sub", func() {
+		must(t, os.WriteFile(filepath.Join(dir, "src", "sub", "new"), []byte("new"), 0o644))
+	})
+	c, err := CopyForMove(context.Background(), root, "src", root, "dst", nil)
+	must(t, err)
+	if _, err := os.Lstat(filepath.Join(dir, "dst", "sub", "new")); err == nil {
+		t.Fatal("dst/sub/new was copied; the test does not exercise a late file")
+	}
+	// After it was copied, f is replaced by a new file (renamed over it, so
+	// the old inode is still in use and cannot be reused) and h grows.
+	must(t, os.WriteFile(filepath.Join(dir, "f.new"), []byte("DATA"), 0o644))
+	must(t, os.Rename(filepath.Join(dir, "f.new"), filepath.Join(dir, "src", "f")))
+	h, err := os.OpenFile(filepath.Join(dir, "src", "h"), os.O_WRONLY|os.O_APPEND, 0)
+	must(t, err)
+	_, err = h.Write([]byte("more"))
+	must(t, err)
+	must(t, h.Close())
+
+	changed, err := RemoveCopied(root, "src", c)
+	must(t, err)
+	sort.Strings(changed)
+	if strings.Join(changed, ",") != "src/f,src/h,src/sub/new" {
+		t.Errorf("changed = %v", changed)
+	}
+	for p, want := range map[string]string{"src/f": "DATA", "src/h": "datamore", "src/sub/new": "new"} {
+		if b, err := os.ReadFile(filepath.Join(dir, p)); err != nil || string(b) != want {
+			t.Errorf("%s = %q, %v", p, b, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "src", "sub", "g")); err == nil {
+		t.Error("unchanged src/sub/g was not removed")
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "dst", "sub", "g")); string(b) != "data" {
+		t.Errorf("dst/sub/g = %q", b)
 	}
 }

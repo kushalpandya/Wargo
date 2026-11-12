@@ -304,7 +304,8 @@ func transfer(op string, root, srcParent *os.Root, src, srcBase, dst string) err
 	if op == "move" {
 		return fsops.MoveBetween(srcParent, srcBase, dstParent, dstBase)
 	}
-	return fsops.CopyBetween(context.Background(), srcParent, srcBase, dstParent, dstBase, nil)
+	_, err = fsops.CopyBetween(context.Background(), srcParent, srcBase, dstParent, dstBase, nil)
+	return err
 }
 
 // readRegular copies the regular file base (a single name inside dir) to

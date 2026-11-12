@@ -502,6 +502,99 @@ func TestArchiveRoundTrip(t *testing.T) {
 	expectErr(t, e.do("POST", "/api/files/archive", map[string]any{"paths": []string{"docs"}, "dest": "docs/x.zip"}), 400, "")
 }
 
+// A file that appears at the archive's name while it is being written is
+// kept: the finished archive never replaces it.
+func TestArchiveCreateDoesNotReplace(t *testing.T) {
+	e := newEnv(t)
+	old := archiveRename
+	archiveRename = func(sr *os.Root, src string, dr *os.Root, dst string) error {
+		must(t, os.WriteFile(filepath.Join(e.dir, dst), []byte("mine"), 0o644))
+		return old(sr, src, dr, dst)
+	}
+	defer func() { archiveRename = old }()
+	w := e.do("POST", "/api/files/archive", map[string]any{"paths": []string{"docs"}, "format": "zip"})
+	res := decodeJSON[struct{ JobID, Path string }](t, w)
+	s := waitJob(t, e.svc.jobs, res.JobID)
+	if s.State != jobs.Failed || !strings.Contains(s.Error, "exists") {
+		t.Fatalf("job = %+v", s)
+	}
+	if b, _ := os.ReadFile(filepath.Join(e.dir, res.Path)); string(b) != "mine" {
+		t.Fatalf("%s replaced: %q", res.Path, b)
+	}
+	ents, _ := os.ReadDir(e.dir)
+	for _, d := range ents {
+		if strings.HasSuffix(d.Name(), ".partial") {
+			t.Errorf("temporary archive left behind: %s", d.Name())
+		}
+	}
+}
+
+// Extraction stops before it would leave less than extractReserve free,
+// and removes the folder it created.
+func TestTarExtractStopsBeforeReserve(t *testing.T) {
+	e := newEnv(t)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	tw.WriteHeader(&tar.Header{Name: "big.bin", Mode: 0o644, Size: 1 << 20, Typeflag: tar.TypeReg})
+	tw.Write(make([]byte, 1<<20))
+	tw.Close()
+	must(t, os.WriteFile(filepath.Join(e.dir, "a.tar"), buf.Bytes(), 0o644))
+	old := freeSpaceIn
+	freeSpaceIn = func(*os.Root, string) (uint64, bool) { return extractReserve + 10, true }
+	defer func() { freeSpaceIn = old }()
+
+	w := e.do("POST", "/api/files/extract", map[string]string{"path": "a.tar", "dest": "out"})
+	res := decodeJSON[struct{ JobID string }](t, w)
+	if s := waitJob(t, e.svc.jobs, res.JobID); s.State != jobs.Failed || !strings.Contains(s.Error, "free space") {
+		t.Fatalf("job = %+v", s)
+	}
+	if _, err := os.Lstat(filepath.Join(e.dir, "out")); err == nil {
+		t.Fatal("destination folder left behind")
+	}
+	// A folder that existed before the job is kept.
+	must(t, os.Mkdir(filepath.Join(e.dir, "mine"), 0o755))
+	w = e.do("POST", "/api/files/extract", map[string]string{"path": "a.tar", "dest": "mine"})
+	res = decodeJSON[struct{ JobID string }](t, w)
+	if s := waitJob(t, e.svc.jobs, res.JobID); s.State != jobs.Failed {
+		t.Fatalf("job = %+v", s)
+	}
+	if _, err := os.Stat(filepath.Join(e.dir, "mine")); err != nil {
+		t.Fatal("existing destination folder removed")
+	}
+}
+
+// A background move (the cross-device path) removes only what it copied
+// and lists the special files it left behind.
+func TestTransferMoveKeepsSpecialFiles(t *testing.T) {
+	e := newEnv(t)
+	if err := syscall.Mkfifo(filepath.Join(e.dir, "docs/sub/p"), 0o644); err != nil {
+		t.Skip(err)
+	}
+	root, err := os.OpenRoot(e.dir)
+	must(t, err)
+	defer root.Close()
+	job := e.svc.jobs.Start("files.move", "Move docs", func() {})
+	res, err := transfer(t.Context(), root, root, job, []pair{{"docs", "moved"}}, true)
+	must(t, err)
+	if res["skipped"] != 1 {
+		t.Errorf("skipped = %v", res["skipped"])
+	}
+	if b, _ := os.ReadFile(filepath.Join(e.dir, "moved/sub/b.txt")); string(b) != "world" {
+		t.Error("moved/sub/b.txt missing")
+	}
+	if _, err := os.Lstat(filepath.Join(e.dir, "docs/sub/p")); err != nil {
+		t.Error("FIFO removed from the source")
+	}
+	for _, p := range []string{"docs/a.txt", "docs/sub/b.txt"} {
+		if _, err := os.Lstat(filepath.Join(e.dir, p)); err == nil {
+			t.Errorf("%s not removed", p)
+		}
+	}
+	if !strings.Contains(strings.Join(job.Lines(), "\n"), "Not moved (special file): docs/sub/p") {
+		t.Errorf("log = %v", job.Lines())
+	}
+}
+
 // ---- editor ----------------------------------------------------------------
 
 func TestContentConflict(t *testing.T) {

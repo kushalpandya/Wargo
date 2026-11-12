@@ -411,10 +411,18 @@ func transfer(ctx context.Context, src, dst *os.Root, job *jobs.Job, pairs []pai
 		stage = "Moving"
 	}
 	var base int64
+	kept := 0
 	for _, x := range pairs {
-		err := fsops.CopyBetween(ctx, src, x.src, dst, x.dst, func(done int64, cur string) {
-			job.Progress(stage, frac(base+done, total), cur)
-		})
+		prog := func(done int64, cur string) { job.Progress(stage, frac(base+done, total), cur) }
+		var skipped []string
+		var copied *fsops.Copied
+		var err error
+		if move {
+			copied, err = fsops.CopyForMove(ctx, src, x.src, dst, x.dst, prog)
+			skipped = copied.Skipped
+		} else {
+			skipped, err = fsops.CopyBetween(ctx, src, x.src, dst, x.dst, prog)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				dst.RemoveAll(x.dst) // don't leave a half copy behind
@@ -423,14 +431,29 @@ func transfer(ctx context.Context, src, dst *os.Root, job *jobs.Job, pairs []pai
 		}
 		n, _, _ := fsops.Size(dst, x.dst)
 		base += n
+		for _, p := range skipped {
+			if move {
+				job.Log("Not moved (special file): " + p)
+			} else {
+				job.Log("Not copied (special file): " + p)
+			}
+		}
+		kept += len(skipped)
 		if move {
-			if err := src.RemoveAll(x.src); err != nil {
+			// Only what was copied goes: special files and anything
+			// created or changed during the copy stay in the source.
+			changed, err := fsops.RemoveCopied(src, x.src, copied)
+			for _, p := range changed {
+				job.Log("Not moved (changed during the move): " + p)
+			}
+			kept += len(changed)
+			if err != nil {
 				return nil, err
 			}
 		}
 		job.Log(x.src + " → " + x.dst)
 	}
-	return map[string]any{"bytes": total, "files": files}, nil
+	return map[string]any{"bytes": total, "files": files, "skipped": kept}, nil
 }
 
 func (s *Service) handleCopy(w http.ResponseWriter, r *http.Request) error {
@@ -462,7 +485,7 @@ func (s *Service) handleCopy(w http.ResponseWriter, r *http.Request) error {
 	}
 	copied := []string{}
 	for _, x := range pairs {
-		err := fsops.CopyBetween(r.Context(), t.src, x.src, t.dst, x.dst, nil)
+		_, err := fsops.CopyBetween(r.Context(), t.src, x.src, t.dst, x.dst, nil)
 		if err != nil && isPerm(err) && len(pairs) == 1 {
 			t.dst.RemoveAll(x.dst)
 			err = s.elevatedTransfer(r, t, "copy", x)

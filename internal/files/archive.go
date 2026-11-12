@@ -138,10 +138,11 @@ func createArchive(ctx context.Context, root *os.Root, job *jobs.Job, paths []st
 	if err := f.Close(); err != nil {
 		return nil, err
 	}
-	if _, err := root.Lstat(dest); err == nil {
-		return nil, fmt.Errorf("%s: %w", dest, fs.ErrExist)
-	}
-	if err := root.Rename(tmp, dest); err != nil {
+	// No-replace: a file that appeared at dest meanwhile is kept.
+	if err := archiveRename(root, tmp, root, dest); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			err = fmt.Errorf("%s: %w", dest, fs.ErrExist)
+		}
 		return nil, err
 	}
 	ok = true
@@ -306,13 +307,22 @@ type extractor struct {
 
 var errTooBig = errors.New("archive exceeds the extraction size limit")
 
-func (x *extractor) entry() error {
+// errNoRoom stops an extraction that would leave less than extractReserve
+// free on the drive.
+var errNoRoom = httpx.Errorf(http.StatusInsufficientStorage, "insufficient_space",
+	"Not enough free space to extract this archive (at least 1 GiB must stay free)")
+
+// entry is called before each archive entry of size bytes.
+func (x *extractor) entry(size int64) error {
 	if err := x.ctx.Err(); err != nil {
 		return err
 	}
 	x.entries++
 	if x.entries > maxExtractFiles {
 		return fmt.Errorf("archive has more than %d entries", maxExtractFiles)
+	}
+	if free, ok := freeSpaceIn(x.root, x.dest); ok && free < uint64(max(size, 0))+extractReserve {
+		return errNoRoom
 	}
 	return nil
 }
@@ -372,9 +382,19 @@ func (x *extractor) file(name string, mode fs.FileMode, mtime time.Time, r io.Re
 	return nil
 }
 
-func extract(ctx context.Context, root *os.Root, job *jobs.Job, p, dest, format string) (map[string]any, error) {
-	if err := root.MkdirAll(dest, 0o755); err != nil {
-		return nil, err
+func extract(ctx context.Context, root *os.Root, job *jobs.Job, p, dest, format string) (res map[string]any, err error) {
+	// The parent folder was checked to exist; a folder made here is the
+	// job's own and goes again if the job fails.
+	if merr := root.Mkdir(dest, 0o755); merr == nil {
+		defer func() {
+			if err != nil {
+				root.RemoveAll(dest)
+			}
+		}()
+	} else if !errors.Is(merr, fs.ErrExist) {
+		return nil, merr
+	} else if st, serr := root.Stat(dest); serr != nil || !st.IsDir() {
+		return nil, merr
 	}
 	f, st, err := openRegular(root, p)
 	if err != nil {
@@ -409,7 +429,7 @@ func extract(ctx context.Context, root *os.Root, job *jobs.Job, p, dest, format 
 		}
 		err = extractTar(x, rd)
 	}
-	res := map[string]any{"dest": dest, "files": x.files, "bytes": x.written, "skipped": x.skipped}
+	res = map[string]any{"dest": dest, "files": x.files, "bytes": x.written, "skipped": x.skipped}
 	return res, err
 }
 
@@ -429,11 +449,11 @@ func extractZip(x *extractor, ra io.ReaderAt, size int64) error {
 	}
 	// The declared sizes are known up front (and enforced by archive/zip
 	// while reading), so refuse early instead of filling the disk.
-	if free, ok := freeSpaceIn(x.root, x.dest); ok && uint64(x.total) > free {
-		return fmt.Errorf("not enough free space: the archive expands to %d bytes, %d available: %w", x.total, free, syscall.ENOSPC)
+	if free, ok := freeSpaceIn(x.root, x.dest); ok && free < uint64(x.total)+extractReserve {
+		return errNoRoom
 	}
 	for _, zf := range zr.File {
-		if err := x.entry(); err != nil {
+		if err := x.entry(int64(min(zf.UncompressedSize64, 1<<62))); err != nil {
 			return err
 		}
 		m := zf.Mode()
@@ -469,7 +489,11 @@ func extractTar(x *extractor, r io.Reader) error {
 		if err != nil {
 			return err
 		}
-		if err := x.entry(); err != nil {
+		size := int64(0)
+		if hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeRegA {
+			size = hdr.Size
+		}
+		if err := x.entry(size); err != nil {
 			return err
 		}
 		switch hdr.Typeflag {
@@ -489,9 +513,18 @@ func extractTar(x *extractor, r io.Reader) error {
 	}
 }
 
+// extractReserve is the free space extraction always leaves on the drive.
+const extractReserve = 1 << 30
+
+// archiveRename moves a finished archive into place without replacing
+// anything (tests replace it to create the name at the last moment).
+var archiveRename = fsops.RenameBetweenNoReplace
+
 // freeSpaceIn reports the space available to unprivileged users on the
-// filesystem holding dir inside root.
-func freeSpaceIn(root *os.Root, dir string) (uint64, bool) {
+// filesystem holding dir inside root (tests replace it).
+var freeSpaceIn = freeSpaceInDir
+
+func freeSpaceInDir(root *os.Root, dir string) (uint64, bool) {
 	d, err := openDir(root, dir)
 	if err != nil {
 		return 0, false

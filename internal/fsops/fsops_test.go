@@ -3,8 +3,14 @@
 package fsops
 
 import (
+	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -68,5 +74,101 @@ func TestParseMode(t *testing.T) {
 		if _, err := ParseMode(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+// A move across devices copies what it can and removes only that from the
+// source: special files (which are never copied) stay where they were,
+// together with the folders holding them.
+func TestMoveCrossDeviceKeepsSpecialFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, d := range []string{"src/sub", "src/empty"} {
+		must(t, os.MkdirAll(filepath.Join(dir, d), 0o755))
+	}
+	must(t, os.WriteFile(filepath.Join(dir, "src", "f"), []byte("data"), 0o644))
+	must(t, os.WriteFile(filepath.Join(dir, "src", "sub", "g"), []byte("data"), 0o644))
+	if err := syscall.Mkfifo(filepath.Join(dir, "src", "sub", "p"), 0o644); err != nil {
+		t.Skip(err)
+	}
+	root := openTestRoot(t, dir)
+	old := renameBetween
+	renameBetween = func(*os.Root, string, *os.Root, string) error {
+		return &os.LinkError{Op: "rename", Err: syscall.EXDEV}
+	}
+	t.Cleanup(func() { renameBetween = old })
+
+	if err := Move(root, "src", "dst"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"dst/f", "dst/sub/g"} {
+		if b, err := os.ReadFile(filepath.Join(dir, p)); err != nil || string(b) != "data" {
+			t.Errorf("%s = %q, %v", p, b, err)
+		}
+	}
+	if st, err := os.Lstat(filepath.Join(dir, "src", "sub", "p")); err != nil || st.Mode()&fs.ModeNamedPipe == 0 {
+		t.Fatalf("FIFO not kept in the source: %v", err)
+	}
+	for _, p := range []string{"src/f", "src/sub/g", "src/empty", "dst/sub/p"} {
+		if _, err := os.Lstat(filepath.Join(dir, p)); err == nil {
+			t.Errorf("%s still exists", p)
+		}
+	}
+
+	// The skipped paths are reported.
+	must(t, syscall.Mkfifo(filepath.Join(dir, "src", "q"), 0o644))
+	skipped, err := CopyBetween(context.Background(), root, "src", root, "dst2", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(skipped)
+	if strings.Join(skipped, ",") != "src/q,src/sub/p" {
+		t.Errorf("skipped = %v", skipped)
+	}
+}
+
+// On a case-insensitive drive "A" and "a" name the same entry, so renaming
+// one to the other must not fail as "already exists". Two hard links
+// stand in for that here.
+func TestMoveCaseOnlyRenameOnSameInode(t *testing.T) {
+	dir := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(dir, "A"), []byte("data"), 0o644))
+	must(t, os.Link(filepath.Join(dir, "A"), filepath.Join(dir, "a")))
+	must(t, os.WriteFile(filepath.Join(dir, "B"), []byte("other"), 0o644))
+	root := openTestRoot(t, dir)
+	if err := Move(root, "A", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "a")); string(b) != "data" {
+		t.Errorf("a = %q", b)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "A")); err == nil {
+		t.Error("A still exists")
+	}
+	ents, _ := os.ReadDir(dir)
+	if len(ents) != 2 {
+		t.Errorf("entries left: %v", ents)
+	}
+	// A different file at the destination is still refused.
+	if err := Move(root, "B", "a"); !errors.Is(err, fs.ErrExist) {
+		t.Errorf("move onto another file: %v", err)
+	}
+}
+
+// The case-insensitive path itself: src and dst resolve to one entry (two
+// roots on one folder stand in for two spellings), so the rename goes
+// through a temporary name and lands back on dst.
+func TestMoveSameEntryThroughTwoRoots(t *testing.T) {
+	dir := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(dir, "x"), []byte("data"), 0o644))
+	a, b := openTestRoot(t, dir), openTestRoot(t, dir)
+	if err := MoveBetween(a, "x", b, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "x")); string(got) != "data" {
+		t.Errorf("x = %q", got)
+	}
+	ents, _ := os.ReadDir(dir)
+	if len(ents) != 1 {
+		t.Errorf("entries left: %v", ents)
 	}
 }

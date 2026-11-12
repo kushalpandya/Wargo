@@ -91,7 +91,7 @@ func TestBetweenRoots(t *testing.T) {
 	defer ra.Close()
 	defer rb.Close()
 
-	if err := CopyBetween(context.Background(), ra, "d", rb, "d2", nil); err != nil {
+	if _, err := CopyBetween(context.Background(), ra, "d", rb, "d2", nil); err != nil {
 		t.Fatal(err)
 	}
 	if s, _ := os.ReadFile(filepath.Join(b, "d2/e/f")); string(s) != "data" {
@@ -100,14 +100,14 @@ func TestBetweenRoots(t *testing.T) {
 	if l, _ := os.Readlink(filepath.Join(b, "d2/link")); l != "/etc/passwd" {
 		t.Fatal("symlink not copied as a link")
 	}
-	if err := CopyBetween(context.Background(), ra, "d", rb, "d2", nil); !errors.Is(err, os.ErrExist) {
+	if _, err := CopyBetween(context.Background(), ra, "d", rb, "d2", nil); !errors.Is(err, os.ErrExist) {
 		t.Fatal("expected exists", err)
 	}
 	// The destination side stays confined.
-	if err := CopyBetween(context.Background(), ra, "d/e/f", rb, "esc/x", nil); err == nil {
+	if _, err := CopyBetween(context.Background(), ra, "d/e/f", rb, "esc/x", nil); err == nil {
 		t.Fatal("escaped through a symlinked destination")
 	}
-	if err := CopyBetween(context.Background(), ra, "d/e/f", rb, "../x", nil); err != nil {
+	if _, err := CopyBetween(context.Background(), ra, "d/e/f", rb, "../x", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(b, "x")); err != nil {
@@ -133,7 +133,7 @@ func TestBetweenRoots(t *testing.T) {
 	// of recursing forever.
 	inner, _ := os.OpenRoot(filepath.Join(a, "d"))
 	defer inner.Close()
-	if err := CopyBetween(context.Background(), ra, "d", inner, "e/copy", nil); !errors.Is(err, ErrIntoSelf) {
+	if _, err := CopyBetween(context.Background(), ra, "d", inner, "e/copy", nil); !errors.Is(err, ErrIntoSelf) {
 		t.Fatal("expected into-self", err)
 	}
 }
