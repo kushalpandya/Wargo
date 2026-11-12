@@ -82,6 +82,7 @@ export function FilterMenu({ active, onClear, groups }: { active: number; onClea
 function MenuForm({ trigger, onClear, groups }: { trigger: ReactNode; onClear?: () => void; groups: FilterGroup[] }) {
   // Picking a row keeps the menu open, so several filters can be set in one go.
   const keepOpen = (e: Event) => e.preventDefault();
+  const base = useId();
   return (
     <M.Root>
       <M.Trigger asChild>{trigger}</M.Trigger>
@@ -94,11 +95,13 @@ function MenuForm({ trigger, onClear, groups }: { trigger: ReactNode; onClear?: 
           className="z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-52 overflow-y-auto rounded-md border border-border-strong bg-surface p-1 shadow-xl focus:outline-none"
         >
           {groups.map((g, i) => (
-            <M.Group key={g.title}>
+            <M.Group key={g.title} aria-labelledby={`${base}-${i}`}>
               {i > 0 && <M.Separator className="my-1 h-px bg-border" />}
-              <M.Label className="px-2 pb-1 pt-1.5 text-2xs font-medium uppercase tracking-wider text-subtle">{g.title}</M.Label>
+              <M.Label id={`${base}-${i}`} className="px-2 pb-1 pt-1.5 text-2xs font-medium uppercase tracking-wider text-subtle">
+                {g.title}
+              </M.Label>
               {g.kind === "radio" ? (
-                <M.RadioGroup value={g.value} onValueChange={g.onChange}>
+                <M.RadioGroup value={g.value} onValueChange={g.onChange} aria-labelledby={`${base}-${i}`}>
                   {g.options.map((o) => (
                     <M.RadioItem key={o.value} value={o.value} onSelect={keepOpen} title={o.title} className={cn(rowBase, "h-7 data-[highlighted]:bg-surface-3 data-[state=checked]:font-medium")}>
                       <span className="grid size-3.5 shrink-0 place-items-center">
@@ -150,13 +153,14 @@ function SheetForm({ trigger, onClear, groups }: { trigger: ReactNode; onClear?:
         <D.Overlay className="fixed inset-0 z-50 bg-overlay" />
         <D.Content className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto rounded-t-xl border-t border-border-strong bg-surface px-3 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl focus:outline-none">
           <div aria-hidden="true" className="mx-auto mb-2 h-1 w-10 rounded-full bg-border-strong" />
-          <div className="flex items-center justify-between px-2 pb-1">
-            <D.Title className="text-md font-semibold">Filters</D.Title>
+          <div className="flex items-center gap-4 px-2 pb-1">
+            <D.Title className="flex-1 text-md font-semibold">Filters</D.Title>
             {onClear && (
               <button type="button" onClick={onClear} className="text-sm font-medium text-accent">
                 Clear filters
               </button>
             )}
+            <D.Close className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-accent-fg">Done</D.Close>
           </div>
           <D.Description className="sr-only">Narrow down the list. Changes apply right away.</D.Description>
           {groups.map((g, i) => (

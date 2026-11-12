@@ -80,10 +80,18 @@ export function useColumns(key: string, defs: ColumnDef[]) {
   const reset = useCallback(() => setPref(key, null), [key]);
   const defOf = useCallback((id: string) => defs.find((d) => d.id === id), [defs]);
 
-  const order = useCallback((visible: Set<string>) => visibleColumns(layout, visible), [layout]);
+  // Depends on the order alone, so a live resize (widths only) does not hand
+  // callers a new column list and re-render every row.
+  const columnOrder = layout.order;
+  const order = useCallback((visible: Set<string>) => visibleColumns({ order: columnOrder, widths: {} }, visible), [columnOrder]);
   const width = useCallback((id: string) => (defOf(id)?.elastic ? undefined : layout.widths[id]), [layout, defOf]);
 
-  const headerProps = (id: string) => {
+  /**
+   * `scale` is how much the view currently shrinks saved widths (Files does
+   * when a pane is too narrow); pointer and key steps are divided by it so
+   * the column moves exactly with the pointer.
+   */
+  const headerProps = (id: string, scale = 1) => {
     const def = defOf(id);
     const movable = !!def && !def.pinned;
     return {
@@ -142,10 +150,19 @@ export function useColumns(key: string, defs: ColumnDef[]) {
         addEventListener("pointercancel", onUp);
       },
       onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
+        // Column options from the keyboard: browsers on macOS never fire
+        // contextmenu for Shift+F10, so open the header's menu ourselves.
+        if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
+          e.preventDefault();
+          e.stopPropagation();
+          const r = e.currentTarget.getBoundingClientRect();
+          e.currentTarget.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 8, clientY: r.bottom }));
+          return;
+        }
         if (!e.shiftKey || e.ctrlKey || e.metaKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
         const dir = e.key === "ArrowLeft" ? -1 : 1;
         const l = layoutRef.current;
-        const next = e.altKey ? resizeColumn(l, defs, id, (l.widths[id] ?? 0) + dir * KEY_STEP) : shiftColumn(l, defs, id, dir);
+        const next = e.altKey ? resizeColumn(l, defs, id, (l.widths[id] ?? 0) + (dir * KEY_STEP) / scale) : shiftColumn(l, defs, id, dir);
         if (next !== l) {
           // Handled here: the Files grid must not also treat it as a selection key.
           e.preventDefault();
@@ -169,13 +186,14 @@ export function useColumns(key: string, defs: ColumnDef[]) {
     if (!def) return undefined;
     const move = !def.pinned;
     const size = !def.elastic && !def.fixed;
-    if (move && size) return "Shift and arrow keys move this column; Alt, Shift and arrow keys resize it.";
-    if (move) return "Shift and arrow keys move this column.";
-    if (size) return "Alt, Shift and arrow keys resize this column.";
-    return undefined;
+    const menu = "Shift and F10 for column options.";
+    if (move && size) return `Shift and arrow keys move this column; Alt, Shift and arrow keys resize it. ${menu}`;
+    if (move) return `Shift and arrow keys move this column. ${menu}`;
+    if (size) return `Alt, Shift and arrow keys resize this column. ${menu}`;
+    return menu;
   };
 
-  const gripProps = (id: string) => {
+  const gripProps = (id: string, scale = 1) => {
     const def = defOf(id);
     const can = !!def && !def.elastic && !def.fixed;
     return {
@@ -193,21 +211,25 @@ export function useColumns(key: string, defs: ColumnDef[]) {
         const header = grip.closest<HTMLElement>("[data-col-header]");
         const startX = e.clientX;
         const startW = layoutRef.current.widths[id] ?? header?.getBoundingClientRect().width ?? 0;
-        let last = layoutRef.current;
+        const start = layoutRef.current;
+        let last = start;
         const onMove = (ev: globalThis.PointerEvent) => {
-          last = resizeColumn(layoutRef.current, defs, id, startW + ev.clientX - startX);
+          last = resizeColumn(layoutRef.current, defs, id, startW + (ev.clientX - startX) / scale);
           setLive(last);
         };
         const onUp = () => {
-          grip.removeEventListener("pointermove", onMove);
-          grip.removeEventListener("pointerup", onUp);
-          grip.removeEventListener("pointercancel", onUp);
-          save(last);
+          for (const t of ["pointermove", "pointerup", "pointercancel", "lostpointercapture"] as const) grip.removeEventListener(t, t === "pointermove" ? onMove : onUp);
+          // A plain click changes nothing; saving would freeze today's
+          // defaults into storage.
+          if (last !== start) save(last);
           setLive(null);
         };
         grip.addEventListener("pointermove", onMove);
         grip.addEventListener("pointerup", onUp);
         grip.addEventListener("pointercancel", onUp);
+        // Also ends the resize if the grip goes away mid-drag (the table
+        // re-rendered into another state), so the live layout never sticks.
+        grip.addEventListener("lostpointercapture", onUp);
       },
       onDoubleClick: (e: MouseEvent<HTMLElement>) => {
         e.stopPropagation();
@@ -222,5 +244,5 @@ export function useColumns(key: string, defs: ColumnDef[]) {
     };
   };
 
-  return { layout, order, width, reset, headerProps, gripProps, describe, drop };
+  return { layout, order, width, reset, headerProps, gripProps, describe, drop, resizing: live !== null };
 }

@@ -2,7 +2,7 @@
 // Run: cd web && node --test src/lib/columns.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { defaultLayout, gridTemplate, moveColumn, normalizeLayout, resizeColumn, shiftColumn, visibleColumns, type ColumnDef } from "./columns.ts";
+import { defaultLayout, fitScale, gridTemplate, moveColumn, normalizeLayout, resizeColumn, shiftColumn, visibleColumns, type ColumnDef } from "./columns.ts";
 
 const defs: ColumnDef[] = [
   { id: "select", width: 28, pinned: "start", fixed: true },
@@ -107,4 +107,14 @@ test("gridTemplate keeps the elastic minimum when the pane allows it", () => {
 
 test("gridTemplate uses full widths before the pane is measured", () => {
   assert.equal(gridTemplate(order, filesDefs, { size: 400, mtime: 600, select: 28, actions: 32 }, 0, opts), "28px minmax(160px,1fr) 400px 600px 32px");
+});
+
+test("fitScale is 1 when saved widths fit and below 1 when they don't", () => {
+  assert.equal(fitScale(order, filesDefs, { size: 96, mtime: 160 }, 900, opts).k, 1);
+  const tight = fitScale(order, filesDefs, { size: 400, mtime: 600 }, 520, opts);
+  assert.ok(tight.k > 0 && tight.k < 1, `k ${tight.k}`);
+});
+
+test("gridTemplate honours a given scale (held while a resize is in progress)", () => {
+  assert.equal(gridTemplate(order, filesDefs, { size: 200, mtime: 100, select: 28, actions: 32 }, 520, opts, { k: 0.5, min: 160 }), "28px minmax(160px,1fr) 100px 50px 32px");
 });

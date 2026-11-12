@@ -97,35 +97,52 @@ export function visibleColumns(l: ColumnLayout, visible: Set<string>): string[] 
   return l.order.filter((id) => visible.has(id));
 }
 
+export interface Fit {
+  /** Factor applied to resizable widths (1 = as saved). */
+  k: number;
+  /** Minimum width for the elastic column. */
+  min: number;
+}
+
+interface GridOpts {
+  pad: number;
+  gap: number;
+}
+
 /**
- * CSS grid template for `order` (the shown columns) in a container `paneW`
- * px wide. Saved widths are used as they are when they fit; otherwise the
- * resizable ones scale down (for display only) so the row never overflows,
- * and the elastic column gives up its minimum only when nothing else is
- * left. `paneW` 0 means not measured yet: full widths.
+ * How much saved widths must shrink so the shown columns fit a container
+ * `paneW` px wide. Saved widths stay as they are when they fit; the elastic
+ * column gives up its minimum only when nothing else is left. `paneW` 0
+ * means not measured yet: no scaling.
  */
-export function gridTemplate(order: string[], defs: ColumnDef[], widths: Record<string, number>, paneW: number, { pad, gap }: { pad: number; gap: number }): string {
+export function fitScale(order: string[], defs: ColumnDef[], widths: Record<string, number>, paneW: number, { pad, gap }: GridOpts): Fit {
   const def = (id: string) => defs.find((d) => d.id === id);
-  const fixedW = (id: string) => widths[id] ?? def(id)?.width ?? FALLBACK;
+  const w = (id: string) => widths[id] ?? def(id)?.width ?? FALLBACK;
   const elastic = order.find((id) => def(id)?.elastic);
   const elasticMin = elastic ? (def(elastic)?.min ?? MIN) : 0;
-  const sized = order.filter((id) => id !== elastic && !def(id)?.fixed);
-  const fixed = order.filter((id) => def(id)?.fixed).reduce((t, id) => t + fixedW(id), 0);
-  const want = sized.reduce((t, id) => t + fixedW(id), 0);
+  const want = order.filter((id) => id !== elastic && !def(id)?.fixed).reduce((t, id) => t + w(id), 0);
+  const fixed = order.filter((id) => def(id)?.fixed).reduce((t, id) => t + w(id), 0);
   const avail = Math.max(0, paneW - pad - gap * (order.length - 1) - fixed);
+  if (paneW <= 0 || want + elasticMin <= avail) return { k: 1, min: elasticMin };
+  // Elastic keeps its minimum if at least half the room is left for it.
+  const min = Math.floor(Math.min(elasticMin, avail / 2));
+  return { k: want > 0 ? Math.max(0, avail - min) / want : 1, min };
+}
 
-  let k = 1;
-  let min = elasticMin;
-  if (paneW > 0 && want + elasticMin > avail) {
-    // Elastic keeps its minimum if at least half the room is left for it.
-    min = Math.floor(Math.min(elasticMin, avail / 2));
-    k = want > 0 ? Math.max(0, avail - min) / want : 1;
-  }
+/**
+ * CSS grid template for `order` (the shown columns): resizable columns at
+ * their saved width times `fit.k`, so the row never overflows the pane.
+ * Pass `fit` to hold a scale (during a resize); by default it is computed.
+ */
+export function gridTemplate(order: string[], defs: ColumnDef[], widths: Record<string, number>, paneW: number, opts: GridOpts, fit = fitScale(order, defs, widths, paneW, opts)): string {
+  const def = (id: string) => defs.find((d) => d.id === id);
+  const w = (id: string) => widths[id] ?? def(id)?.width ?? FALLBACK;
   return order
     .map((id) => {
-      if (id === elastic) return `minmax(${min}px,1fr)`;
-      if (def(id)?.fixed) return `${fixedW(id)}px`;
-      return `${Math.floor(fixedW(id) * k)}px`;
+      const d = def(id);
+      if (d?.elastic) return `minmax(${fit.min}px,1fr)`;
+      if (d?.fixed) return `${w(id)}px`;
+      return `${Math.floor(w(id) * fit.k)}px`;
     })
     .join(" ");
 }

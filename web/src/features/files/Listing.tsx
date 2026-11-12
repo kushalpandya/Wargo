@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { cloneElement, forwardRef, Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import { cloneElement, forwardRef, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { ArrowDown, ArrowUp, MoreHorizontal } from "lucide-react";
 import { ago, bytes, datetime } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Checkbox } from "@/components/ui/form";
 import { ContextMenu as CM } from "radix-ui";
 import { useColumns } from "@/lib/useColumns";
-import { gridTemplate, type ColumnDef } from "@/lib/columns";
+import { fitScale, gridTemplate, type ColumnDef, type Fit } from "@/lib/columns";
 import { downloadUrl, joinPath, type Entry, type RootId } from "./api";
 import { FileIcon, kindOf } from "./kinds";
 
@@ -389,8 +389,10 @@ export const Listing = forwardRef<HTMLDivElement, ListingProps>(function Listing
     },
     [ref],
   );
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!rootEl) return;
+    // Measure before the first paint so optional columns don't pop in.
+    setPaneW(rootEl.getBoundingClientRect().width);
     const ro = new ResizeObserver(([en]) => setPaneW(en.contentRect.width));
     ro.observe(rootEl);
     return () => ro.disconnect();
@@ -399,7 +401,13 @@ export const Listing = forwardRef<HTMLDivElement, ListingProps>(function Listing
   const { order: orderOf } = columns;
   const colOrder = useMemo(() => orderOf(new Set(FILE_COLUMNS.map((c) => c.id).filter((id) => !(id in SHOW_AT) || paneW >= SHOW_AT[id]))), [orderOf, paneW]);
   const { layout } = columns;
-  const template = useMemo(() => gridTemplate(colOrder, FILE_COLUMNS, layout.widths, paneW, { pad: PAD, gap: GAP }), [colOrder, layout.widths, paneW]);
+  // While a column is being resized, hold the scale from when it started so
+  // the edge follows the pointer exactly (the hook divides by it too).
+  const fitNow = useMemo(() => fitScale(colOrder, FILE_COLUMNS, layout.widths, paneW, { pad: PAD, gap: GAP }), [colOrder, layout.widths, paneW]);
+  const heldFit = useRef<Fit>(fitNow);
+  if (!columns.resizing) heldFit.current = fitNow;
+  const fit = heldFit.current;
+  const template = useMemo(() => gridTemplate(colOrder, FILE_COLUMNS, layout.widths, paneW, { pad: PAD, gap: GAP }, fit), [colOrder, layout.widths, paneW, fit]);
 
   return (
     <div
@@ -418,7 +426,12 @@ export const Listing = forwardRef<HTMLDivElement, ListingProps>(function Listing
       {view === "list" && !props.compact && (
         <CM.Root>
           <CM.Trigger asChild>
-            <div role="row" className="sticky top-0 z-10 grid h-8 grid-cols-[var(--cols)] items-center gap-x-3 border-b border-border bg-surface-2 px-2 text-2xs font-semibold text-subtle">
+            <div
+              role="row"
+              // The pane has its own context menu (and clears the selection
+              // for it); a right-click here is for the column menu only.
+              onContextMenu={(e) => e.stopPropagation()}
+              className="sticky top-0 z-10 grid h-8 grid-cols-[var(--cols)] items-center gap-x-3 border-b border-border bg-surface-2 px-2 text-2xs font-semibold text-subtle">
               {colOrder.map((id) => {
                 if (id === "select")
                   return (
@@ -427,7 +440,7 @@ export const Listing = forwardRef<HTMLDivElement, ListingProps>(function Listing
                     </span>
                   );
                 if (id === "actions") return <span key={id} role="columnheader" aria-label="Actions" data-col="actions" />;
-                const hp = columns.headerProps(id);
+                const hp = columns.headerProps(id, fit.k);
                 return (
                   <SortHeader
                     key={id}
@@ -440,7 +453,7 @@ export const Listing = forwardRef<HTMLDivElement, ListingProps>(function Listing
                     extra={
                       <>
                         {columns.drop?.id === id && <span aria-hidden="true" className={cn("absolute inset-y-1 z-20 w-0.5 rounded bg-accent", columns.drop.side === "before" ? "-left-2" : "-right-2")} />}
-                        <span {...columns.gripProps(id)} />
+                        <span {...columns.gripProps(id, fit.k)} />
                       </>
                     }
                   >
