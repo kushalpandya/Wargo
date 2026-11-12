@@ -56,7 +56,7 @@ function useNav(): NavItem[] {
     { to: "/files", label: "Files", icon: <FolderTree /> },
     { to: "/terminal", label: "Terminal", icon: <SquareTerminal /> },
     { to: "/torrents", label: "Torrents", icon: <Magnet />, show: torrents },
-    { to: "/updates", label: "Updates", icon: <PackageCheck />, badge: <UpdatesBadge />, show: caps?.pkg?.supported !== false || !!caps?.docker?.available },
+    { to: "/updates", label: "Updates", icon: <PackageCheck />, badge: <UpdatesBadge />, show: caps?.pkg?.supported !== false || !!caps?.docker?.available || !!caps?.brew?.available },
     { to: "/apps", label: "Apps", icon: <LayoutGrid />, show: caps?.launcher?.enabled && caps.launcher.placement === "page" },
   ];
   return items.filter((i) => i.show !== false);

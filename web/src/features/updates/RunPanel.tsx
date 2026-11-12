@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronRight, CircleAlert, CircleCheck, FileWarning, Power, RotateCw, ScrollText, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
@@ -11,9 +11,12 @@ import { Button, IconButton } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Badge, Meter, Notice, Spinner } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import type { JobSnapshot, PkgStatus, RunRecord } from "./api";
+import type { JobSnapshot, RunRecord } from "./api";
 
-export const STAGES = ["Preparing", "Downloading", "Installing", "Post-install hooks", "Done"] as const;
+/** Stepper stages of an OS package upgrade (the backend's stage names). */
+export const PKG_STAGES = ["Preparing", "Downloading", "Installing", "Post-install hooks", "Done"] as const;
+/** Stepper stages of a Homebrew update. */
+export const BREW_STAGES = ["Preparing", "Downloading", "Installing", "Cleaning up", "Done"] as const;
 const MAX_LINES = 2000;
 
 /** Reboot with a confirmation dialog (Cancel focused). Elevation is prompted by the API layer. */
@@ -49,11 +52,11 @@ export function RebootButton({ size = "sm", variant = "secondary" }: { size?: "x
   );
 }
 
-function Stepper({ stage, state }: { stage?: string; state: "running" | "ok" | "failed" }) {
-  const idx = state === "ok" ? STAGES.length - 1 : Math.max(0, STAGES.indexOf((stage ?? "Preparing") as (typeof STAGES)[number]));
+function Stepper({ stages, stage, state }: { stages: readonly string[]; stage?: string; state: "running" | "ok" | "failed" }) {
+  const idx = state === "ok" ? stages.length - 1 : Math.max(0, stages.indexOf(stage ?? stages[0]));
   return (
-    <ol className="grid grid-cols-5 gap-1.5" aria-label="Upgrade stages">
-      {STAGES.map((s, i) => {
+    <ol className="grid grid-cols-5 gap-1.5" aria-label="Update stages">
+      {stages.map((s, i) => {
         const done = i < idx || (state === "ok" && i === idx);
         const cur = i === idx && state !== "ok";
         const fail = cur && state === "failed";
@@ -91,7 +94,7 @@ function Stepper({ stage, state }: { stage?: string; state: "running" | "ok" | "
   );
 }
 
-function LogView({ lines, open, onToggle, live }: { lines: string[]; open: boolean; onToggle: () => void; live: boolean }) {
+function LogView({ id, lines, open, onToggle, live }: { id: string; lines: string[]; open: boolean; onToggle: () => void; live: boolean }) {
   const ref = useRef<HTMLPreElement>(null);
   const stick = useRef(true);
   useLayoutEffect(() => {
@@ -104,7 +107,7 @@ function LogView({ lines, open, onToggle, live }: { lines: string[]; open: boole
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        aria-controls="pkg-log"
+        aria-controls={id}
         className="flex min-h-10 w-full items-center gap-2 px-4 py-2 text-left text-ui font-medium hover:bg-surface-2"
       >
         <ChevronRight className={cn("size-3.5 text-subtle transition-transform", open && "rotate-90")} />
@@ -115,7 +118,7 @@ function LogView({ lines, open, onToggle, live }: { lines: string[]; open: boole
       </button>
       {open && (
         <pre
-          id="pkg-log"
+          id={id}
           ref={ref}
           tabIndex={0}
           aria-label="Package manager output"
@@ -143,17 +146,34 @@ function useElapsed(start?: string, end?: string) {
   return ((end ? new Date(end).getTime() : now) - new Date(start).getTime()) / 1000;
 }
 
+/** What RunPanel needs from a source's status (OS packages or Homebrew). */
+export interface RunSource {
+  /** Short id for element ids ("pkg", "brew"). */
+  id: string;
+  running?: JobSnapshot;
+  lastRun?: RunRecord;
+  backend: string;
+  fake?: boolean;
+  /** GET endpoint returning {lines} for a finished run (?id=). */
+  logPath: string;
+  stages: readonly string[];
+  /** Shown while the update runs. */
+  liveNotice: ReactNode;
+  /** OS upgrades report reboots and config files. */
+  system?: boolean;
+}
+
 /**
- * Live progress of a running upgrade, or the result of the last one.
- * Works after a page reload: the running job comes from GET /api/pkg/backend.
+ * Live progress of a running update, or the result of the last one.
+ * Works after a page reload: the running job comes from the source's status.
  */
-export function RunPanel({ status, onDismiss }: { status: PkgStatus; onDismiss?: () => void }) {
-  const running = status.running;
+export function RunPanel({ source, onDismiss }: { source: RunSource; onDismiss?: () => void }) {
+  const running = source.running;
   const [job, setJob] = useState<JobSnapshot | undefined>(running);
   const [lines, setLines] = useState<string[]>([]);
   const [logOpen, setLogOpen] = useState(!!running);
   const jobId = running?.id ?? job?.id;
-  const run: RunRecord | undefined = !running ? status.lastRun : undefined;
+  const run: RunRecord | undefined = !running ? source.lastRun : undefined;
 
   useEffect(() => {
     if (running) setJob((j) => (j?.id === running.id && j.logLines > running.logLines ? j : running));
@@ -167,9 +187,9 @@ export function RunPanel({ status, onDismiss }: { status: PkgStatus; onDismiss?:
     loadedFor.current = key;
     const p = running
       ? api.get<{ log: string[] }>(`/api/jobs/${running.id}`).then((r) => r.log ?? [])
-      : api.get<{ lines: string[] }>(`/api/pkg/log?id=${encodeURIComponent(run!.id)}`).then((r) => r.lines ?? []);
+      : api.get<{ lines: string[] }>(`${source.logPath}?id=${encodeURIComponent(run!.id)}`).then((r) => r.lines ?? []);
     p.then((l) => setLines((cur) => (l.length >= cur.length ? l.slice(-MAX_LINES) : cur))).catch(() => {});
-  }, [running, run]);
+  }, [running, run, source.logPath]);
 
   useTopic<JobSnapshot>(jobId ? "jobs" : null, (s) => {
     if (s.id === jobId) setJob(s);
@@ -185,7 +205,7 @@ export function RunPanel({ status, onDismiss }: { status: PkgStatus; onDismiss?:
   const live = !!running && job?.state !== "succeeded" && job?.state !== "failed";
   const finishedAt = run?.finishedAt ?? job?.finishedAt;
   const elapsed = useElapsed(running?.startedAt ?? run?.startedAt, live ? undefined : finishedAt);
-  const fake = status.fake || run?.fake || job?.title.includes("simulated");
+  const fake = source.fake || run?.fake || job?.title.includes("simulated");
 
   if (!running && !run) return null;
 
@@ -195,11 +215,11 @@ export function RunPanel({ status, onDismiss }: { status: PkgStatus; onDismiss?:
   const stage = live ? job?.stage : state === "ok" ? "Done" : (run?.stage ?? job?.stage);
 
   return (
-    <Card className="mb-4 overflow-hidden" aria-label="System upgrade">
+    <Card className="mb-4 overflow-hidden" aria-label={live ? "Update progress" : "Update result"}>
       <CardHeader
-        title={live ? "Installing updates" : ok ? "Upgrade complete" : "Upgrade failed"}
+        title={live ? "Installing updates" : ok ? "Updates installed" : "Update failed"}
         icon={live ? <Spinner className="text-accent" /> : ok ? <CircleCheck className="text-ok" /> : <CircleAlert className="text-crit" />}
-        meta={`${duration(elapsed)}${run?.backend || status.backend ? ` · ${run?.backend ?? status.backend}` : ""}`}
+        meta={`${duration(elapsed)}${run?.backend || source.backend ? ` · ${run?.backend ?? source.backend}` : ""}`}
         actions={
           <>
             {fake && <Badge tone="warn">simulated</Badge>}
@@ -212,13 +232,8 @@ export function RunPanel({ status, onDismiss }: { status: PkgStatus; onDismiss?:
         }
       />
       <div className="flex flex-col gap-4 p-4">
-        {live && (
-          <Notice tone="warn">
-            Don't reboot or power off the server until this finishes. The upgrade runs as a system service, so closing this page
-            or restarting Wargo is safe.
-          </Notice>
-        )}
-        <Stepper stage={stage} state={state} />
+        {live && <Notice tone="warn">{source.liveNotice}</Notice>}
+        <Stepper stages={source.stages} stage={stage} state={state} />
         <div>
           <div className="mb-1.5 flex items-baseline gap-3">
             <span className="num text-2xl font-medium leading-none">{Math.round(frac * 100)}%</span>
@@ -236,31 +251,31 @@ export function RunPanel({ status, onDismiss }: { status: PkgStatus; onDismiss?:
               ) : ok ? (
                 `Finished ${datetime(finishedAt)}`
               ) : (
-                run?.error ?? job?.error ?? "The upgrade did not finish"
+                run?.error ?? job?.error ?? "The update did not finish"
               )}
             </span>
           </div>
           <Meter value={frac * 100} tone={state === "failed" ? "crit" : state === "ok" ? "ok" : "accent"} label="Overall progress" className="h-2" />
         </div>
-        {!live && run && <ResultDetails run={run} elapsed={elapsed} />}
+        {!live && run && <ResultDetails run={run} elapsed={elapsed} system={!!source.system} />}
       </div>
-      <LogView lines={lines} open={logOpen} onToggle={() => setLogOpen((o) => !o)} live={live} />
+      <LogView id={`${source.id}-log`} lines={lines} open={logOpen} onToggle={() => setLogOpen((o) => !o)} live={live} />
     </Card>
   );
 }
 
-function ResultDetails({ run, elapsed }: { run: RunRecord; elapsed: number }) {
+function ResultDetails({ run, elapsed, system }: { run: RunRecord; elapsed: number; system: boolean }) {
   const files = run.configFiles ?? [];
   const fresh = files.filter((f) => f.new);
   const older = files.filter((f) => !f.new);
   const [showOlder, setShowOlder] = useState(false);
   return (
     <div className="flex flex-col gap-3">
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <dl className={cn("grid gap-3", system ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3")}>
         <Fact label="Duration" value={duration(elapsed)} />
         <Fact label="Packages" value={run.upgraded > 0 ? String(run.upgraded) : String(run.packages || "—")} />
-        <Fact label="Exit status" value={run.exitStatus === undefined ? "—" : String(run.exitStatus)} tone={run.exitStatus ? "crit" : undefined} />
-        <Fact label="Reboot" value={run.rebootRequired ? "Required" : "Not needed"} tone={run.rebootRequired ? "warn" : undefined} />
+        <Fact label="Exit status" value={run.exitStatus == null ? "—" : String(run.exitStatus)} tone={run.exitStatus ? "crit" : undefined} />
+        {system && <Fact label="Reboot" value={run.rebootRequired ? "Required" : "Not needed"} tone={run.rebootRequired ? "warn" : undefined} />}
       </dl>
       {run.rebootRequired && (
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-warn/30 bg-warn-soft px-3 py-2.5">

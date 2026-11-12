@@ -28,8 +28,11 @@ type Update struct {
 	Repo    string `json:"repo"`
 	// Size is the download size in bytes when known, else 0.
 	Size int64 `json:"size"`
-	// Source is "repo", "aur" or "flatpak". AUR and Flatpak are read-only.
+	// Source is "repo", "aur" or "flatpak" (AUR and Flatpak are read-only),
+	// or "formula", "cask" or "pinned" for Homebrew.
 	Source string `json:"source"`
+	// NeedsPassword marks a Homebrew cask whose installer may run sudo.
+	NeedsPassword bool `json:"needsPassword,omitempty"`
 }
 
 // Runner executes argv unprivileged and returns stdout and the exit code.

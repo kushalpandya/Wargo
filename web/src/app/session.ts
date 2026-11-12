@@ -57,6 +57,8 @@ export interface Capabilities {
   launcher?: { enabled: boolean; placement: "overview" | "page" };
   /** supported: false where OS updates don't exist (macOS). */
   pkg?: { backend?: string; available: boolean; distro?: string; supported?: boolean };
+  /** Homebrew updates; available when an installation was found (macOS and Linux, not in container mode). */
+  brew?: { available: boolean; supported?: boolean };
   /** System Events; supported: false where there is no journal (macOS). */
   events?: { available: boolean; supported?: boolean };
   /** sensors: false where there are no hwmon temperature or fan readings (macOS). */

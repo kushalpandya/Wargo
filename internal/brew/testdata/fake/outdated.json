@@ -1,0 +1,13 @@
+{
+  "formulae": [
+    { "name": "git", "installed_versions": ["2.51.0"], "current_version": "2.52.1", "pinned": false, "pinned_version": null },
+    { "name": "node", "installed_versions": ["24.9.0"], "current_version": "24.11.1", "pinned": false, "pinned_version": null },
+    { "name": "openssl@3", "installed_versions": ["3.5.3"], "current_version": "3.6.0", "pinned": false, "pinned_version": null },
+    { "name": "python@3.13", "installed_versions": ["3.13.7"], "current_version": "3.13.9_1", "pinned": true, "pinned_version": "3.13.7" },
+    { "name": "ripgrep", "installed_versions": ["14.1.1"], "current_version": "15.1.0", "pinned": false, "pinned_version": null }
+  ],
+  "casks": [
+    { "name": "iterm2", "installed_versions": ["3.7.1"], "current_version": "3.7.7" },
+    { "name": "nordvpn", "installed_versions": ["8.38.1"], "current_version": "10.15.1" }
+  ]
+}

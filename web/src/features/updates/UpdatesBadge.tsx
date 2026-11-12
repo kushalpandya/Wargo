@@ -1,28 +1,39 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { cn } from "@/lib/cn";
+import { plural } from "@/lib/format";
 import { useCapabilities } from "@/app/session";
 import { countAvailable, useContainerUpdatesStatus } from "@/features/containers/api";
-import { pendingCount, usePkgStatus } from "./api";
+import { pendingCount, useBrewStatus, usePkgStatus } from "./api";
 
 /**
- * Pending-update count for the sidebar: OS packages from the last check
- * plus containers whose image has a newer version. Renders nothing when
- * there is nothing to report. Never triggers a check.
+ * Pending-update count for the sidebar: OS packages and Homebrew from their
+ * last checks plus containers whose image has a newer version. Renders
+ * nothing when there is nothing to report. Never triggers a check.
  */
 export function UpdatesBadge({ className }: { className?: string }) {
   const caps = useCapabilities().data;
-  const { data } = usePkgStatus({ enabled: !!caps && caps.pkg?.supported !== false });
+  const pkg = usePkgStatus({
+    enabled: !!caps && caps.pkg?.supported !== false,
+  }).data;
+  const brew = useBrewStatus({ enabled: !!caps?.brew?.available }).data;
   const dockerOn = !!caps?.docker?.available;
   // Shares the Updates page's cache; light polling, no topic subscription.
   const ctr = useContainerUpdatesStatus({ enabled: dockerOn });
-  const running = !!data?.running;
-  const pkgN = pendingCount(data);
+  const running = !!pkg?.running || !!brew?.running;
+  const pkgN = pendingCount(pkg);
+  const brewN = pendingCount(brew);
   const ctrN = dockerOn ? countAvailable(ctr.data) : 0;
-  const n = pkgN + ctrN;
+  const n = pkgN + brewN + ctrN;
   if (!running && n === 0) return null;
   const label = running
-    ? "Upgrade in progress"
-    : [pkgN && `${pkgN} system update${pkgN === 1 ? "" : "s"}`, ctrN && `${ctrN} container update${ctrN === 1 ? "" : "s"}`].filter(Boolean).join(", ");
+    ? "Update in progress"
+    : [
+        ctrN && `${ctrN} container ${plural(ctrN, "update")}`,
+        pkgN && `${pkgN} system ${plural(pkgN, "update")}`,
+        brewN && `${brewN} Homebrew ${plural(brewN, "update")}`,
+      ]
+        .filter(Boolean)
+        .join(", ");
   return (
     <span
       className={cn(

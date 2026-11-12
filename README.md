@@ -20,7 +20,7 @@
 - **Containers:** status, logs and live usage. Start, stop or restart them, and update images in one click (rolled back if the update fails).
 - **Files:** a full file manager with split view, drives, bookmarks, uploads, previews and a code editor.
 - **Terminal:** real shells in your browser, including root and container shells, in tabs.
-- **Updates:** check for and install OS updates and newer container images, only when you choose.
+- **Updates:** check for and install newer container images, OS updates and Homebrew formulae and casks, only when you choose.
 - **Torrents:** search all your Prowlarr indexers and manage Transmission downloads.
 - **Apps:** shortcuts to your other self-hosted services, shown on Home or on their own page.
 

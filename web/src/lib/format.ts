@@ -89,3 +89,6 @@ export function compact(n: number | undefined): string {
 export function level(p: number, warn = 75, crit = 90): "ok" | "warn" | "crit" {
   return p >= crit ? "crit" : p >= warn ? "warn" : "ok";
 }
+
+/** "update" or "updates" for n. */
+export const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many);

@@ -23,13 +23,13 @@ import {
 } from "lucide-react";
 import { IconButton } from "@/components/ui/button";
 import { api, qs } from "@/lib/api";
-import { ago, rate } from "@/lib/format";
+import { ago, rate, plural } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { useCapabilities } from "@/app/session";
 import { Card, CardHeader, IconChip, type Tint } from "@/components/ui/card";
 import { Meter, Skeleton } from "@/components/ui/misc";
 import { countAvailable, useContainers, useContainerUpdatesStatus } from "@/features/containers/api";
-import { pendingCount, usePkgStatus } from "@/features/updates/api";
+import { pendingCount, useBrewStatus, usePkgStatus } from "@/features/updates/api";
 import { useTorrents } from "@/features/torrents/api";
 import { plexDecision, plexEpisode, plexLabel, plexThumb, usePlexActivity, type PlexItem, type PlexSession } from "@/features/plex/api";
 import type { AuditEntry } from "@/features/settings/Audit";
@@ -286,6 +286,7 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
   const containers = useContainers({ enabled: docker, refetchInterval: 60_000 });
   const ctrUpdates = useContainerUpdatesStatus({ enabled: docker });
   const pkg = usePkgStatus({ enabled: !!caps?.pkg?.available });
+  const brew = useBrewStatus({ enabled: !!caps?.brew?.available });
   const torrents = useTorrents({ enabled: torrentsOn, refetchInterval: 60_000 });
   const plex = usePlexActivity({ enabled: plexOn });
   const files = useQuery({
@@ -310,6 +311,7 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
     [containers.data],
   );
   const pkgN = pendingCount(pkg.data);
+  const brewN = pendingCount(brew.data);
   const ctrN = countAvailable(ctrUpdates.data);
   const list = torrents.data?.torrents ?? [];
   const active = list.filter((t) => t.status === "downloading" || t.status === "checking" || t.status === "download-wait").slice(0, 3);
@@ -328,6 +330,7 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
     ["Containers", containers],
     ["Updates", ctrUpdates],
     ["Updates", pkg],
+    ["Updates", brew],
     ["Downloads", torrents],
     ["Recent files", files],
     ["System events", events],
@@ -344,6 +347,7 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
     !attention.length &&
     !broken.length &&
     !pkgN &&
+    !brewN &&
     !ctrN &&
     !active.length &&
     !finished.length &&
@@ -403,11 +407,12 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
                 </SubSection>
               </Section>
             )}
-            {(pkgN > 0 || ctrN > 0) && (
+            {(pkgN > 0 || brewN > 0 || ctrN > 0) && (
               <Section title="Updates" icon={<PackageCheck />} tint="mint" to="/updates">
                 <SubSection>
-                  {pkgN > 0 && <Row to="/updates?tab=system" icon={<PackageCheck />} tone="ok" title={`${pkgN} system update${pkgN === 1 ? "" : "s"}`} detail="From the last check" />}
-                  {ctrN > 0 && <Row to="/updates?tab=containers" icon={<PackageCheck />} tone="ok" title={`${ctrN} container image${ctrN === 1 ? "" : "s"}`} detail="Newer versions available" />}
+                  {ctrN > 0 && <Row to="/updates?tab=containers" icon={<PackageCheck />} tone="ok" title={`${ctrN} container ${plural(ctrN, "image")}`} detail="Newer versions available" />}
+                  {pkgN > 0 && <Row to="/updates?tab=system" icon={<PackageCheck />} tone="ok" title={`${pkgN} system ${plural(pkgN, "update")}`} detail="From the last check" />}
+                  {brewN > 0 && <Row to="/updates?tab=brew" icon={<PackageCheck />} tone="ok" title={`${brewN} Homebrew ${plural(brewN, "update")}`} detail="From the last check" />}
                 </SubSection>
               </Section>
             )}

@@ -4,7 +4,6 @@ package pkg
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/schedule"
@@ -17,73 +16,45 @@ import (
 // and dnf and pamac refresh expired metadata. "Check for updates" on the
 // Updates page refreshes the real databases first (with approval if needed).
 
-func newSchedule() *schedule.Hours {
-	return schedule.New("pkg.settings", "pkg.settings", 24, 0, 6, 12, 24, 72, 168)
+// SettingsKey stores the background check interval. Homebrew shares it, so
+// one setting covers every package source on the host.
+const SettingsKey = "pkg.settings"
+
+// NewSchedule returns the shared check interval setting.
+func NewSchedule(action string) *schedule.Hours {
+	return schedule.New(SettingsKey, action, 24, 0, 6, 12, 24, 72, 168)
 }
 
-// autoCheck lists updates every CheckHours, starting a few minutes after
-// startup when the last check is older than that. A changed setting wakes it.
+func newSchedule() *schedule.Hours { return NewSchedule("pkg.settings") }
+
+// autoCheck lists updates every CheckHours (see schedule.Hours.Every).
 func (s *Service) autoCheck(ctx context.Context) {
-	first := true
-	var retryAt time.Time
-	for {
-		hours := s.sched.Load(ctx)
-		if hours <= 0 || s.requireBackend() != nil {
-			select {
-			case <-ctx.Done():
-				return
-			case <-s.sched.Wake():
-				continue
+	s.sched.Every(ctx, "pkg",
+		func() bool { return s.requireBackend() == nil },
+		func() time.Time {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.last == nil {
+				return time.Time{}
 			}
-		}
-		interval := time.Duration(hours) * time.Hour
-		s.mu.Lock()
-		var last time.Time
-		if s.last != nil {
-			last = s.last.At
-		}
-		s.mu.Unlock()
-		delay := time.Until(last.Add(interval))
-		if first && delay < 3*time.Minute {
-			delay = 3 * time.Minute // let the server settle after start
-		}
-		// After a failure, retry at most every 30 minutes.
-		if r := time.Until(retryAt); r > delay {
-			delay = r
-		}
-		if delay < time.Minute {
-			delay = time.Minute
-		}
-		t := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return
-		case <-s.sched.Wake():
-			t.Stop()
-			continue
-		case <-t.C:
-		}
-		first = false
-		s.mu.Lock()
-		busy := s.checking || s.job != nil
-		recent := s.last != nil && time.Since(s.last.At) < interval-time.Minute
-		if !busy && !recent {
-			s.checking = true
-		}
-		s.mu.Unlock()
-		if busy || recent {
-			continue
-		}
-		s.publish()
-		retryAt = time.Time{}
-		if _, err := s.list(ctx, true); err != nil {
-			slog.Debug("pkg: background check failed", "err", err)
-			retryAt = time.Now().Add(min(interval, 30*time.Minute))
-		}
-		s.mu.Lock()
-		s.checking = false
-		s.mu.Unlock()
-		s.publish()
-	}
+			return s.last.At
+		},
+		func(ctx context.Context) error {
+			s.mu.Lock()
+			busy := s.checking || s.job != nil
+			if !busy {
+				s.checking = true
+			}
+			s.mu.Unlock()
+			if busy {
+				return schedule.ErrSkipped
+			}
+			s.publish()
+			_, err := s.list(ctx, true)
+			s.mu.Lock()
+			s.checking = false
+			s.mu.Unlock()
+			s.publish()
+			return err
+		})
 }

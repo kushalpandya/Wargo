@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/audit"
@@ -41,13 +42,38 @@ type Hours struct {
 	wake chan struct{}
 }
 
-// New creates the setting.
+// shared lists every setting by store key, so a change saved through one
+// wakes all the checks that share the key (OS packages and Homebrew).
+var shared = struct {
+	sync.Mutex
+	byKey map[string][]*Hours
+}{byKey: map[string][]*Hours{}}
+
+// New creates the setting. Settings created with the same key share one
+// stored value, and saving it through any of them wakes them all.
 func New(key, action string, def int, allowed ...int) *Hours {
-	return &Hours{Key: key, Action: action, Default: def, Allowed: allowed, wake: make(chan struct{}, 1)}
+	h := &Hours{Key: key, Action: action, Default: def, Allowed: allowed, wake: make(chan struct{}, 1)}
+	shared.Lock()
+	shared.byKey[key] = append(shared.byKey[key], h)
+	shared.Unlock()
+	return h
 }
 
 // Wake fires after the setting changed.
 func (h *Hours) Wake() <-chan struct{} { return h.wake }
+
+// notify wakes every setting saved under h's key.
+func (h *Hours) notify() {
+	shared.Lock()
+	all := append([]*Hours(nil), shared.byKey[h.Key]...)
+	shared.Unlock()
+	for _, x := range all {
+		select {
+		case x.wake <- struct{}{}:
+		default:
+		}
+	}
+}
 
 // Valid reports whether n is an allowed value.
 func (h *Hours) Valid(n int) bool {
@@ -122,10 +148,7 @@ func (h *Hours) HandlePut(w http.ResponseWriter, r *http.Request) error {
 	if h.Apply != nil {
 		h.Apply(v.CheckHours)
 	}
-	select {
-	case h.wake <- struct{}{}:
-	default:
-	}
+	h.notify()
 	if h.Audit != nil {
 		h.Audit.Record(r, h.Action, fmt.Sprintf("check every %dh", v.CheckHours), nil, nil)
 	}

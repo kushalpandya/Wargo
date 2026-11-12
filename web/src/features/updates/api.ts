@@ -10,7 +10,10 @@ export interface PkgUpdate {
   repo: string;
   /** Download size in bytes, 0 when unknown (or already cached). */
   size: number;
-  source: "repo" | "aur" | "flatpak";
+  /** OS packages: repo, aur, flatpak. Homebrew: formula, cask, pinned. */
+  source: "repo" | "aur" | "flatpak" | "formula" | "cask" | "pinned";
+  /** Homebrew casks whose installer may ask for the account password. */
+  needsPassword?: boolean;
 }
 
 export interface CheckResult {
@@ -82,6 +85,25 @@ export interface PkgStatus {
   fake?: boolean;
 }
 
+/** Homebrew status (GET /api/brew/status, sticky "brew" topic). */
+export interface BrewStatus {
+  supported: boolean;
+  available: boolean;
+  backend: "brew";
+  prefix?: string;
+  version?: string;
+  /** False when Wargo's user doesn't own Homebrew; problem says why. */
+  canUpgrade: boolean;
+  problem?: string;
+  upgradeCommand?: string;
+  checking: boolean;
+  /** updates: formulae and casks; extras: pinned formulae (skipped by brew upgrade). */
+  lastCheck?: CheckResult;
+  running?: JobSnapshot;
+  lastRun?: RunRecord;
+  fake?: boolean;
+}
+
 export interface Precheck {
   lock: { locked: boolean; path?: string; reason?: string };
   disk: { path: string; free: number; low: boolean }[];
@@ -90,15 +112,27 @@ export interface Precheck {
 
 export const statusKey = ["pkg", "backend"] as const;
 
-/** Backend status, kept live through the sticky "pkg" topic. */
-export function usePkgStatus({ enabled = true }: { enabled?: boolean } = {}) {
+export const brewKey = ["brew", "status"] as const;
+
+/** A status kept live through a sticky topic, cached under key. */
+function useLiveStatus<T>(key: readonly string[], topic: string, path: string, enabled: boolean) {
   const qc = useQueryClient();
-  useTopic<PkgStatus>(enabled ? "pkg" : null, (s) => qc.setQueryData(statusKey, s));
-  return useQuery({ queryKey: statusKey, queryFn: () => api.get<PkgStatus>("/api/pkg/backend"), enabled, staleTime: 60_000 });
+  useTopic<T>(enabled ? topic : null, (s) => qc.setQueryData(key, s));
+  return useQuery({ queryKey: key, queryFn: () => api.get<T>(path), enabled, staleTime: 60_000 });
 }
 
-/** Number of pending repo updates from the last manual check (0 if stale/unknown). */
-export function pendingCount(s?: PkgStatus): number {
+/** OS package backend status, kept live through the sticky "pkg" topic. */
+export function usePkgStatus({ enabled = true }: { enabled?: boolean } = {}) {
+  return useLiveStatus<PkgStatus>(statusKey, "pkg", "/api/pkg/backend", enabled);
+}
+
+/** Homebrew status, kept live through the sticky "brew" topic. */
+export function useBrewStatus({ enabled = true }: { enabled?: boolean } = {}) {
+  return useLiveStatus<BrewStatus>(brewKey, "brew", "/api/brew/status", enabled);
+}
+
+/** Number of pending updates from the last check (0 if stale, failed or unknown). */
+export function pendingCount(s?: { lastCheck?: CheckResult }): number {
   const c = s?.lastCheck;
   if (!c || c.stale || c.error) return 0;
   return c.updates.length;

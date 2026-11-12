@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
 import { Link } from "react-router";
-import { ArrowRight, ArrowUpCircle, Boxes, ChevronRight, CircleCheck, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
-import { ago, datetime } from "@/lib/format";
+import { ArrowRight, ArrowUpCircle, Boxes, CircleCheck, TriangleAlert } from "lucide-react";
+import { ago, plural } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import type { Capabilities } from "@/app/session";
 import { Card, CardHeader, Stat } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge, EmptyState, ErrorNote, Notice, Skeleton, Spinner } from "@/components/ui/misc";
-import { toast } from "@/components/ui/toast";
+import { Badge, EmptyState, ErrorNote, Notice, Skeleton } from "@/components/ui/misc";
 import { ContainerIcon } from "@/features/containers/ContainerIcon";
 import { useContainerActions } from "@/features/containers/actions";
-import { useCheckContainerUpdates } from "@/features/containers/api";
 import type { Container, UpdateCheck, UpdatesStatus } from "@/features/containers/types";
 import { BulkContainerUpdate } from "./BulkContainerUpdate";
+import { Collapsible, SourceToolbar, UpdateAllButton, UpdateSummary } from "./shared";
 
 /** "6 h", "30 min", "1 day". */
 function every(ms: number): string {
@@ -113,69 +112,39 @@ function ListHeader() {
   );
 }
 
-/** Collapsible list (details/summary) of other containers. */
-function Collapsible({ title, icon, count, children, tone }: { title: string; icon: React.ReactNode; count: number; children: React.ReactNode; tone?: "warn" }) {
-  return (
-    <Card className="mt-4">
-      <details className="group">
-        <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-4 py-2 [&::-webkit-details-marker]:hidden">
-          <ChevronRight className="size-4 shrink-0 text-subtle transition-transform group-open:rotate-90" aria-hidden="true" />
-          <span className={cn("[&_svg]:size-4", tone === "warn" ? "text-warn" : "text-ok")}>{icon}</span>
-          <h2 className="text-ui font-semibold tracking-tight">{title}</h2>
-          <span className="num text-xs text-subtle">{count}</span>
-        </summary>
-        <ul className="border-t border-border">{children}</ul>
-      </details>
-    </Card>
-  );
-}
-
 function Summary({ st, checking, stale, current, errors, total }: { st?: UpdatesStatus; checking: boolean; stale: number; current: number; errors: number; total: number }) {
   const checked = !!st?.checkedAt;
   return (
-    <Card className="mb-4">
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-4 sm:grid-cols-4">
-        <Stat
-          label="Updates"
-          value={checked ? stale : "—"}
-          unit={checked ? (stale === 1 ? "container" : "containers") : undefined}
-          sub={checked ? (stale ? "newer images found" : "nothing to update") : "not checked yet"}
-        />
-        <Stat label="Up to date" value={checked ? current : "—"} unit={checked ? `of ${total}` : undefined} sub={checked ? "containers checked" : " "} />
-        <Stat
-          label="Not checked"
-          value={checked ? errors : "—"}
-          tone={errors ? "warn" : undefined}
-          sub={checked ? (errors ? "local, pinned or unreachable" : "every image checked") : " "}
-        />
-        <div className="min-w-0">
-          <div className="text-2xs font-medium uppercase tracking-wider text-subtle">Last checked</div>
-          <div className="mt-0.5 flex items-baseline gap-1">
-            {checking ? (
-              <span className="inline-flex items-center gap-1.5 text-sm text-accent">
-                <Spinner /> Checking…
-              </span>
-            ) : (
-              <span className="num text-xl font-medium leading-tight" title={st?.checkedAt ? datetime(st.checkedAt) : undefined}>
-                {st?.checkedAt ? ago(st.checkedAt) : "never"}
-              </span>
-            )}
-          </div>
-          <div className="mt-0.5 truncate text-xs text-muted">
-            {st?.intervalMs ? (st.nextCheckAt ? `next check ${until(st.nextCheckAt)}` : `every ${every(st.intervalMs)}`) : "automatic checks off"}
-          </div>
-        </div>
-      </div>
-      <div className="flex items-start gap-2 border-t border-border px-4 py-2 text-xs text-muted">
-        <ShieldCheck className="mt-px size-3.5 shrink-0 text-frost" />
-        <span>
+    <UpdateSummary
+      checking={checking}
+      checkedAt={st?.checkedAt}
+      checkedSub={st?.intervalMs ? (st.nextCheckAt ? `next check ${until(st.nextCheckAt)}` : `every ${every(st.intervalMs)}`) : "automatic checks off"}
+      note={
+        <>
           {st?.intervalMs
             ? `Wargo compares image digests with the registry every ${every(st.intervalMs)} without pulling anything.`
             : "Background checks are disabled (docker.update_check_interval = 0)."}{" "}
           Containers are only updated when you click Update.
-        </span>
-      </div>
-    </Card>
+        </>
+      }
+      stats={
+        <>
+          <Stat
+            label="Pending"
+            value={checked ? stale : "—"}
+            unit={checked ? plural(stale, "container") : undefined}
+            sub={checked ? (stale ? "newer images found" : "up to date") : "not checked yet"}
+          />
+          <Stat label="Up to date" value={checked ? current : "—"} unit={checked ? `of ${total}` : undefined} sub={checked ? "containers checked" : " "} />
+          <Stat
+            label="Not checked"
+            value={checked ? errors : "—"}
+            tone={errors ? "warn" : undefined}
+            sub={checked ? (errors ? "local, pinned or unreachable" : "every image checked") : " "}
+          />
+        </>
+      }
+    />
   );
 }
 
@@ -195,16 +164,6 @@ export function ContainerUpdates({
 }) {
   const actions = useContainerActions();
   const [bulk, setBulk] = useState(false);
-  const check = useCheckContainerUpdates({
-    onSuccess: (s) => {
-      const r = Object.values(s.results);
-      const n = r.filter((u) => u.updateAvailable).length;
-      const failed = r.filter((u) => u.updateAvailable === null).length;
-      toast.ok(n ? `${n} container update${n === 1 ? "" : "s"} available` : "All containers are up to date", failed ? `${failed} image(s) could not be checked` : undefined);
-    },
-    onError: (e) => toast.error("Update check failed", e),
-  });
-
   if (docker && !docker.available) {
     return (
       <Card>
@@ -224,7 +183,7 @@ export function ContainerUpdates({
     );
   }
 
-  const checking = check.isPending || !!updates?.checking;
+  const checking = !!updates?.checking;
   const res = updates?.results ?? {};
   const stale = list.filter((c) => c.updateAvailable).sort((a, b) => a.name.localeCompare(b.name));
   const current = list.filter((c) => c.updateAvailable === false).sort((a, b) => a.name.localeCompare(b.name));
@@ -232,36 +191,26 @@ export function ContainerUpdates({
   const unchecked = list.filter((c) => !res[c.id] && c.updateAvailable == null);
   const checked = !!updates?.checkedAt;
 
-  const checkBtn = (
-    <Button
-      variant={checked ? "secondary" : "primary"}
-      icon={<RefreshCw className={cn(checking && "animate-spin")} />}
-      disabled={checking}
-      onClick={() => check.mutate()}
-    >
-      {checking ? "Checking…" : "Check now"}
-    </Button>
-  );
+  const batch = stale.filter((c) => !c.self);
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted">
-          <span>{docker?.version ? `Docker ${docker.version}` : "Docker"}</span>
-          <span className="num">
-            · {list.length} container{list.length === 1 ? "" : "s"}
-          </span>
-          {docker?.casaos && <Badge tone="neutral">CasaOS</Badge>}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {checkBtn}
-          {stale.some((c) => !c.self) && (
-            <Button variant="primary" icon={<ArrowUpCircle />} onClick={() => setBulk(true)} disabled={checking}>
-              Update all <span className="num">({stale.filter((c) => !c.self).length})</span>
-            </Button>
-          )}
-        </div>
-      </div>
+      <SourceToolbar
+        info={
+          <>
+            <span>{docker?.version ? `Docker ${docker.version}` : "Docker"}</span>
+            <span className="num">
+              · {list.length} {plural(list.length, "container")}
+            </span>
+            {docker?.casaos && <Badge tone="neutral">CasaOS</Badge>}
+          </>
+        }
+        actions={
+          <>
+            {batch.length > 0 && <UpdateAllButton count={batch.length} disabled={checking} onClick={() => setBulk(true)} />}
+          </>
+        }
+      />
 
       <Summary st={updates} checking={checking} stale={stale.length} current={current.length} errors={failed.length} total={list.length} />
 
@@ -270,7 +219,7 @@ export function ContainerUpdates({
 
       {!checked && stale.length === 0 ? (
         <Card>
-          <EmptyState icon={<Boxes />} title={checking ? "Checking images…" : "No update check yet"} action={checking ? undefined : checkBtn}>
+          <EmptyState icon={<Boxes />} title={checking ? "Checking images…" : "No update check yet"}>
             {updates?.intervalMs && updates.nextCheckAt
               ? `The first automatic check runs ${until(updates.nextCheckAt)}. `
               : ""}
@@ -335,13 +284,13 @@ export function ContainerUpdates({
 
       {checked && unchecked.length > 0 && (
         <Notice tone="frost" className="mt-4">
-          {unchecked.length} container{unchecked.length === 1 ? " was" : "s were"} created or recreated since the last check:{" "}
+          {unchecked.length} {plural(unchecked.length, "container was", "containers were")} created or recreated since the last check:{" "}
           {unchecked.map((c) => c.name).join(", ")}.
         </Notice>
       )}
 
       {/* Wargo updates itself on its own (it restarts), never as part of a batch. */}
-      <BulkContainerUpdate open={bulk} containers={stale.filter((c) => !c.self)} onClose={() => setBulk(false)} />
+      <BulkContainerUpdate open={bulk} containers={batch} onClose={() => setBulk(false)} />
       {actions.element}
     </div>
   );

@@ -257,6 +257,55 @@ func (s *Service) Run(r *http.Request, action, target string, argv []string, std
 	return out, err
 }
 
+// ErrPasswordRequired asks the client for the account (sudo) password only,
+// for commands that must hand it on to a program that runs sudo itself
+// (Homebrew casks with installers). Passkeys can't produce a password.
+func (s *Service) ErrPasswordRequired(action, target string) *httpx.Error {
+	_, sudoErr := lookSudo()
+	m := map[string]any{"sudo": sudoErr == nil && !s.containerMode() && !noNewPrivs(), "passkey": false}
+	return httpx.Errorf(http.StatusForbidden, "elevation_required", "Administrator approval required").
+		With(map[string]any{"action": action, "target": target, "methods": m})
+}
+
+// VerifyPassword checks r's sudo password by running a no-op through sudo
+// and returns it, for a caller that passes it on to a program that runs
+// sudo itself. Attempts are throttled and audited like Run. The caller
+// must keep the password in memory only and drop it when done.
+func (s *Service) VerifyPassword(r *http.Request, action, target string) (string, error) {
+	cred, err := credentialFrom(r)
+	if err != nil {
+		return "", err
+	}
+	if cred == nil || cred.Method != "sudo" || s.containerMode() {
+		return "", s.ErrPasswordRequired(action, target)
+	}
+	ip := s.proxy.ClientIP(r)
+	if ok, wait := s.throttle.Allow(ip); !ok {
+		return "", httpx.Errorf(http.StatusTooManyRequests, "throttled", "Too many attempts. Try again in "+wait.Round(time.Second).String())
+	}
+	pw := cred.Password
+	cred.Password = ""
+	if !validPassword(pw) {
+		err = errBadPassword
+	} else {
+		_, err = s.runSudo(r.Context(), pw, []string{"/usr/bin/true"}, nil)
+	}
+	switch {
+	case errors.Is(err, errBadPassword):
+		s.throttle.Fail(ip)
+	case err == nil:
+		s.throttle.Success(ip)
+	default:
+		s.throttle.Release(ip)
+	}
+	ctx := audit.WithElevation(r.Context(), "sudo")
+	s.audit.Record(r.WithContext(ctx), action, target, err, map[string]any{"passwordForwarded": true})
+	if err != nil {
+		return "", err
+	}
+	return pw, nil
+}
+
 // runContainer approves and runs a request in container mode. Everything
 // happens with full root privileges even when the caller is inside
 // host.AsUser (file manager handlers).

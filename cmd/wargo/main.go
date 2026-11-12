@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/auth"
+	"github.com/kushalpandya/wargo/internal/brew"
 	"github.com/kushalpandya/wargo/internal/config"
 	"github.com/kushalpandya/wargo/internal/docker"
 	"github.com/kushalpandya/wargo/internal/helper"
@@ -52,6 +53,9 @@ func main() {
 		serve(args)
 	case "helper":
 		os.Exit(helper.Main(args))
+	case "brew-askpass":
+		// Run by sudo as SUDO_ASKPASS during a Homebrew update.
+		os.Exit(brew.AskpassMain(args))
 	case "admin":
 		admin(args)
 	case "version":

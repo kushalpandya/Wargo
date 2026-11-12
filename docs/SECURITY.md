@@ -139,6 +139,17 @@ updates, restarting the server) ask for approval every time:
   through a private temporary file in the data directory, readable only by
   Wargo's account. Attempts are slowed down, and sudo
   itself uses the normal `system-auth` rules, including `pam_faillock`.
+- **Homebrew casks (macOS).** Homebrew runs as Wargo's own user, never as
+  root. Some casks (`.pkg` installers, system services) make Homebrew call
+  `sudo` itself, several times during one update, so for these the password
+  is kept for the length of that update instead of one command. Wargo first
+  checks it with `sudo -k -S`, then hands it to Homebrew's `sudo -A` through
+  `SUDO_ASKPASS`: a small script in a private temporary folder that asks
+  Wargo over a socket in the same folder. Wargo answers only processes
+  started by that update, at most 64 times, and forgets the password and
+  removes the folder when the update ends. Passkeys can't approve this,
+  because Homebrew needs the password itself. Updates that need no password
+  never ask for one.
 - **Passkey through `wargo-privd` (optional).** A small root service on a
   local socket. It keeps its own list of trusted passkeys (written once, with
   sudo approval), asks for a passkey confirmation tied to the exact action and

@@ -616,7 +616,7 @@ func (s *Service) attach(rec *RunRecord) *jobs.Job {
 const maxLineLen = 2000
 
 func (s *Service) follow(ctx context.Context, rec *RunRecord, j *jobs.Job) {
-	f, err := openLog(host.Path(rec.Log))
+	f, err := OpenLog(host.Path(rec.Log))
 	if err != nil {
 		s.finish(rec, j, nil, fmt.Errorf("cannot read upgrade log: %w", err), ProgressState{})
 		return
@@ -827,7 +827,7 @@ func (s *Service) handleLog(w http.ResponseWriter, r *http.Request) error {
 	if id := r.URL.Query().Get("id"); id != "" && id != rec.ID {
 		return httpx.ErrNotFound
 	}
-	lines, err := tailLines(host.Path(rec.Log), 256<<10)
+	lines, err := TailLines(host.Path(rec.Log), 256<<10)
 	if err != nil {
 		return httpx.ErrNotFound
 	}
@@ -835,14 +835,16 @@ func (s *Service) handleLog(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// openLog opens an upgrade log for reading without following a symlink
+// OpenLog opens an upgrade log for reading without following a symlink
 // planted in its place (in container mode Wargo reads it as root).
-func openLog(path string) (*os.File, error) {
+func OpenLog(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 }
 
-func tailLines(path string, limit int64) ([]string, error) {
-	f, err := openLog(path)
+// TailLines returns the cleaned last lines of an upgrade log, reading at
+// most limit bytes from its end.
+func TailLines(path string, limit int64) ([]string, error) {
+	f, err := OpenLog(path)
 	if err != nil {
 		return nil, err
 	}

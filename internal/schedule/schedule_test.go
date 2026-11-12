@@ -54,3 +54,29 @@ func TestHours(t *testing.T) {
 		}
 	}
 }
+
+func TestSharedKeyWakesAll(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	a := New("shared.settings", "a", 24, 0, 24)
+	b := New("shared.settings", "b", 24, 0, 24)
+	a.Store, b.Store = st, st
+	w := httptest.NewRecorder()
+	httpx.Handler(a.HandlePut)(w, httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"checkHours":0}`)))
+	if w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	for _, h := range []*Hours{a, b} {
+		select {
+		case <-h.Wake():
+		case <-time.After(time.Second):
+			t.Fatalf("%s not woken", h.Action)
+		}
+	}
+	if b.Load(context.Background()) != 0 {
+		t.Error("b doesn't see the shared value")
+	}
+}

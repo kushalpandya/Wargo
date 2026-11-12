@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useTopic } from "@/lib/ws";
 import type { Container, UpdatesStatus } from "./types";
@@ -44,20 +44,22 @@ export function useContainerUpdates({ enabled = true }: { enabled?: boolean } = 
 /** Containers whose image has a newer version, from an update-check status. */
 export const countAvailable = (s?: UpdatesStatus) => Object.values(s?.results ?? {}).filter((u) => u.updateAvailable).length;
 
-/** POST /api/containers/check-updates; resolves when the check finished. */
+/** POST /api/containers/check-updates, keeping the cached status in step; resolves when the check finished. */
+export async function checkContainerUpdates(qc: QueryClient): Promise<UpdatesStatus> {
+  qc.setQueryData<UpdatesStatus>(containerUpdatesKey, (s) => (s ? { ...s, checking: true } : s));
+  try {
+    const s = await api.post<UpdatesStatus>("/api/containers/check-updates");
+    qc.setQueryData(containerUpdatesKey, s);
+    qc.invalidateQueries({ queryKey: containersKey, exact: true });
+    return s;
+  } catch (e) {
+    qc.invalidateQueries({ queryKey: containerUpdatesKey, exact: true });
+    throw e;
+  }
+}
+
+/** checkContainerUpdates as a mutation. */
 export function useCheckContainerUpdates(opts: { onSuccess?: (s: UpdatesStatus) => void; onError?: (e: unknown) => void } = {}) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => api.post<UpdatesStatus>("/api/containers/check-updates"),
-    onMutate: () => qc.setQueryData<UpdatesStatus>(containerUpdatesKey, (s) => (s ? { ...s, checking: true } : s)),
-    onSuccess: (s) => {
-      qc.setQueryData(containerUpdatesKey, s);
-      qc.invalidateQueries({ queryKey: containersKey, exact: true });
-      opts.onSuccess?.(s);
-    },
-    onError: (e) => {
-      qc.invalidateQueries({ queryKey: containerUpdatesKey, exact: true });
-      opts.onError?.(e);
-    },
-  });
+  return useMutation({ mutationFn: () => checkContainerUpdates(qc), onSuccess: opts.onSuccess, onError: opts.onError });
 }

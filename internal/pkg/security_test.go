@@ -70,7 +70,7 @@ func TestTailLinesRefusesSymlink(t *testing.T) {
 	if err := os.Symlink(secret, log); err != nil {
 		t.Fatal(err)
 	}
-	if lines, err := tailLines(log, 1<<20); err == nil {
+	if lines, err := TailLines(log, 1<<20); err == nil {
 		t.Fatalf("followed symlink: %q", lines)
 	}
 }

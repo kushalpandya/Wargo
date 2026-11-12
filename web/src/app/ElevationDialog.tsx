@@ -15,6 +15,7 @@ const actionLabels: Record<string, string> = {
   "files.op": "Change files you don't have permission for",
   "pkg.refresh": "Refresh package databases",
   "pkg.upgrade": "Install system updates",
+  "brew.upgrade": "Install Homebrew updates",
   "system.power": "Power control",
   "containers.compose_update": "Update a compose project",
   "privd.trust": "Trust a passkey for admin approvals",

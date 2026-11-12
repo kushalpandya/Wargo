@@ -29,6 +29,7 @@ sign-in needs `/etc/pam.d/wargo` (from `deploy/pam/wargo`).
 | Terminal (host, root and container shells, tabs, reconnect) | Done | Host shell live; root and container shells (with a real terminal, tmux included) in container mode |
 | File manager (browse, preview, edit, upload, archives, permissions) | Done | Test folder; home folder browsed read only |
 | OS updates (check, background check, upgrade through systemd-run, restart detection) | Done | Real `pamac checkupdates`; upgrades only with a simulated script |
+| Homebrew updates (formulae and casks, background check, upgrade, password for cask installers) | Done | Real `brew outdated` on macOS; upgrades only with a simulated script (`WARGO_BREW_FAKE`), password handoff through the askpass helper in unit tests; not tried on Linux |
 | Prowlarr search, magnet, .torrent, queue | Done | Real Prowlarr (search and magnet read only); queue with fakes |
 | Transmission downloads (pause, resume, remove) | Done | Fake Transmission (the real one needs your password) |
 | Plex (now playing, recently watched and added on Home; token import) | Done | Real Plex Media Server (read only) |

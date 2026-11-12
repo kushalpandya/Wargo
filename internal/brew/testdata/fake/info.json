@@ -1,0 +1,20 @@
+{
+  "formulae": [
+    { "name": "git", "tap": "homebrew/core" },
+    { "name": "node", "tap": "homebrew/core" },
+    { "name": "openssl@3", "tap": "homebrew/core" },
+    { "name": "python@3.13", "tap": "homebrew/core" },
+    { "name": "ripgrep", "tap": "homebrew/core" }
+  ],
+  "casks": [
+    { "token": "iterm2", "tap": "homebrew/cask", "artifacts": [{ "uninstall": [{ "quit": "com.googlecode.iterm2" }] }, { "app": ["iTerm.app"] }] },
+    {
+      "token": "nordvpn",
+      "tap": "homebrew/cask",
+      "artifacts": [
+        { "uninstall": [{ "launchctl": ["com.nordvpn.macos.helper"], "pkgutil": "com.nordvpn.macos", "delete": ["/Library/PrivilegedHelperTools/com.nordvpn.macos.helper"] }] },
+        { "pkg": ["NordVPN.pkg"] }
+      ]
+    }
+  ]
+}

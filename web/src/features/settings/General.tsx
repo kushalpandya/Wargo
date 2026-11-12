@@ -14,7 +14,7 @@ import { toast } from "@/components/ui/toast";
 import { TileEditor } from "@/features/launcher/TileEditor";
 import { useLauncherSettings, useSaveLauncherSettings, useTiles, type LauncherSettings as LS } from "@/features/launcher/api";
 import { containerUpdatesKey, useContainerUpdatesStatus } from "@/features/containers/api";
-import { usePkgStatus } from "@/features/updates/api";
+import { useBrewStatus, usePkgStatus } from "@/features/updates/api";
 import { SettingRow, SettingsList, SettingsStack, usePatchSave } from "./shared";
 
 function LauncherCard() {
@@ -114,29 +114,35 @@ function IntervalSelect({ path, label, hours }: { path: string; label: string; h
 function UpdateChecksCard() {
   const { data: caps } = useCapabilities();
   const pkgOn = !!caps?.pkg?.available;
+  const brewOn = !!caps?.brew?.available;
   const dockerOn = !!caps?.docker?.available;
   const pkgLast = usePkgStatus({ enabled: pkgOn }).data?.lastCheck?.at;
+  const brewLast = useBrewStatus({ enabled: brewOn }).data?.lastCheck?.at;
+  // OS packages and Homebrew share one interval (saved once, read by both).
+  const pkgTitle = pkgOn && brewOn ? "System packages and Homebrew" : pkgOn ? "System packages" : "Homebrew";
+  const pkgSeen = [pkgLast, brewLast].filter(Boolean).sort().pop();
   const ctrLast = useContainerUpdatesStatus({ enabled: dockerOn }).data?.checkedAt;
 
   return (
     <Card>
       <CardHeader title="Update checks" icon={<PackageCheck />} tint="mint" />
       <CardBody>
-        {!pkgOn && !dockerOn ? (
+        {!pkgOn && !brewOn && !dockerOn ? (
           <p className="text-sm text-muted">Nothing to check on this host.</p>
         ) : (
           <SettingsList>
-            {pkgOn && (
+            {(pkgOn || brewOn) && (
               <SettingRow
-                title="System packages"
+                title={pkgTitle}
                 description={
                   <>
-                    Looks for OS updates in the background, without asking for approval. Installing is always up to you.
-                    {pkgLast && <span className="num"> Last checked {ago(pkgLast)}.</span>}
+                    {pkgOn ? "Looks for OS updates" : "Refreshes Homebrew and looks for outdated packages"} in the background
+                    {pkgOn && brewOn ? ", and for Homebrew updates," : ""} without asking for approval. Installing is always up to you.
+                    {pkgSeen && <span className="num"> Last checked {ago(pkgSeen)}.</span>}
                   </>
                 }
               >
-                <IntervalSelect path="/api/pkg/settings" label="System package checks" hours={[0, 6, 12, 24, 72, 168]} />
+                <IntervalSelect path={pkgOn ? "/api/pkg/settings" : "/api/brew/settings"} label={`${pkgTitle} checks`} hours={[0, 6, 12, 24, 72, 168]} />
               </SettingRow>
             )}
             {dockerOn && (
