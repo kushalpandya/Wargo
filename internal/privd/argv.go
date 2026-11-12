@@ -163,16 +163,27 @@ func (c *Config) checkSystemdRun(args []string) error {
 		if len(args) < i+3 || args[i+1] != "helper" {
 			return errors.New("only `wargo helper <op>` may be run")
 		}
+		// systemd-run will exec this binary as root: it must not be
+		// replaceable by the Wargo user.
+		if err := checkTrustedFile(cmd); err != nil {
+			return fmt.Errorf("wargo binary is not trusted: %w", err)
+		}
 		return nil
 	}
-	if filepath.IsAbs(cmd) {
-		if filepath.Clean(cmd) != cmd || !slices.Contains(systemBinDirs, filepath.Dir(cmd)) {
-			return fmt.Errorf("command %q is not in a system directory", cmd)
-		}
-		cmd = filepath.Base(cmd)
+	// Bare names are refused: systemd would search its own PATH, which can
+	// put a user-writable /usr/local/bin ahead of the directory checked here.
+	if !filepath.IsAbs(cmd) {
+		return fmt.Errorf("package manager %q must be an absolute path", cmd)
 	}
-	if !slices.Contains(packageManagers, cmd) {
+	if filepath.Clean(cmd) != cmd || !slices.Contains(systemBinDirs, filepath.Dir(cmd)) {
+		return fmt.Errorf("command %q is not in a system directory", cmd)
+	}
+	if !slices.Contains(packageManagers, filepath.Base(cmd)) {
 		return fmt.Errorf("systemd-run may only launch a package manager, not %q", cmd)
+	}
+	// root runs this binary: it must not be replaceable by the Wargo user.
+	if err := checkTrustedFile(cmd); err != nil {
+		return fmt.Errorf("package manager is not trusted: %w", err)
 	}
 	return nil
 }
@@ -211,35 +222,73 @@ func checkTrustedPath(path string, f *os.File) error {
 	return checkParents(path)
 }
 
+// requireRootOwner is true when privd runs as root, which is when file
+// ownership is enforced. Tests override it to exercise the root-owned
+// checks without root.
+var requireRootOwner = os.Geteuid() == 0
+
+// rootUID is the uid that counts as root, and trustStop (when set) ends
+// the ancestor walks. Tests override both.
+var (
+	rootUID   = uint32(0)
+	trustStop = ""
+)
+
 func checkOwner(path string, st os.FileInfo) error {
 	if st.Mode().Perm()&0o022 != 0 {
 		return fmt.Errorf("%s is writable by group or others", path)
 	}
-	if os.Geteuid() == 0 {
-		if sys, ok := st.Sys().(*syscall.Stat_t); ok && sys.Uid != 0 {
+	if requireRootOwner {
+		if sys, ok := st.Sys().(*syscall.Stat_t); ok && sys.Uid != rootUID {
 			return fmt.Errorf("%s is not owned by root", path)
 		}
 	}
 	return nil
 }
 
+// checkParents walks the ancestors of the literal path (a symlink
+// component must itself be root-owned and sit in a trusted directory) and
+// then those of the resolved path.
 func checkParents(path string) error {
-	if os.Geteuid() != 0 {
+	if !requireRootOwner {
 		return nil
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return err
 	}
-	for d := filepath.Dir(resolved); ; d = filepath.Dir(d) {
-		st, err := os.Stat(d)
-		if err != nil {
-			return err
+	if err := walkTrusted(path, true); err != nil {
+		return err
+	}
+	return walkTrusted(resolved, false)
+}
+
+// walkTrusted checks the ancestors of start without following links. With
+// withSelf, start itself is also checked when it is a symlink (a regular
+// file is checked by the caller).
+func walkTrusted(start string, withSelf bool) error {
+	for d := start; ; d = filepath.Dir(d) {
+		if d == trustStop {
+			return nil
 		}
-		// Sticky world-writable dirs (/tmp) still allow others to plant
-		// files, so they are refused as well.
-		if err := checkOwner(d, st); err != nil {
-			return err
+		if d != start || withSelf {
+			st, err := os.Lstat(d)
+			if err != nil {
+				return err
+			}
+			switch {
+			case st.Mode()&os.ModeSymlink != 0:
+				// Mode bits of a link are meaningless; only the owner counts.
+				if sys, ok := st.Sys().(*syscall.Stat_t); ok && sys.Uid != rootUID {
+					return fmt.Errorf("%s is not owned by root", d)
+				}
+			case d != start:
+				// Sticky world-writable dirs (/tmp) still allow others to
+				// plant files, so they are refused as well.
+				if err := checkOwner(d, st); err != nil {
+					return err
+				}
+			}
 		}
 		if d == "/" {
 			return nil

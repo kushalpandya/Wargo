@@ -460,8 +460,15 @@ var systemBinDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/loc
 // ResolvePackageManager returns the absolute path of an allowed package
 // manager binary, or an error.
 func ResolvePackageManager(name string) (string, error) {
+	lit, _, err := resolvePackageManager(name)
+	return lit, err
+}
+
+// resolvePackageManager also returns the fully resolved host path, which
+// is what root must execute so a later swap of a link cannot redirect it.
+func resolvePackageManager(name string) (literal, resolved string, err error) {
 	if !filepath.IsAbs(name) && strings.Contains(name, "/") {
-		return "", fmt.Errorf("%q must be a bare name or absolute path", name)
+		return "", "", fmt.Errorf("%q must be a bare name or absolute path", name)
 	}
 	base := filepath.Base(name)
 	allowed := false
@@ -471,22 +478,97 @@ func ResolvePackageManager(name string) (string, error) {
 		}
 	}
 	if !allowed {
-		return "", fmt.Errorf("%q is not a supported package manager", name)
+		return "", "", fmt.Errorf("%q is not a supported package manager", name)
 	}
 	p := name
 	if !filepath.IsAbs(p) {
-		var err error
 		if p, err = host.LookPath(base); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	p = filepath.Clean(p)
 	for _, d := range systemBinDirs {
 		if filepath.Dir(p) == d {
-			return p, nil
+			r, err := checkRootTrusted(p)
+			if err != nil {
+				return "", "", err
+			}
+			return p, r, nil
 		}
 	}
-	return "", fmt.Errorf("%q is not in a system directory", p)
+	return "", "", fmt.Errorf("%q is not in a system directory", p)
+}
+
+// requireRootOwner enforces ownership checks on package manager binaries;
+// true when running as root. rootUID is the uid that counts as root. Tests
+// override both.
+var (
+	requireRootOwner = os.Geteuid() == 0
+	rootUID          = uint32(0)
+)
+
+// checkRootTrusted refuses a binary, or any directory above it (up to the
+// host root), that is not root-owned or is group/world-writable, since
+// root is about to run it. p is a host path: in container mode it is
+// looked at below the host root, never in the container's own filesystem.
+// Both the literal path (every component, so a symlink must sit in a
+// trusted directory) and the fully resolved path are checked. It returns
+// the resolved host path, which is what must be executed.
+func checkRootTrusted(p string) (string, error) {
+	resolved := p
+	if host.Container() {
+		rp, err := host.Resolve(p)
+		if err != nil {
+			return "", err
+		}
+		hp, ok := host.Unpath(rp)
+		if !ok {
+			return "", fmt.Errorf("%s resolves outside the host", p)
+		}
+		resolved = hp
+	} else {
+		var err error
+		if resolved, err = filepath.EvalSymlinks(p); err != nil {
+			return "", err
+		}
+	}
+	if !requireRootOwner {
+		return resolved, nil
+	}
+	if err := trustWalk(p); err != nil {
+		return "", err
+	}
+	if err := trustWalk(resolved); err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+// trustWalk checks start and every ancestor (without following links, so a
+// symlink component is judged by its own owner and its directory). In
+// container mode the walk ends below the host root: the mount point belongs
+// to the container.
+func trustWalk(start string) error {
+	for d := start; ; d = filepath.Dir(d) {
+		if d == "/" && host.Container() {
+			return nil
+		}
+		st, err := os.Lstat(host.Path(d))
+		if err != nil {
+			return err
+		}
+		// A symlink's own mode bits are meaningless; its owner and the
+		// directory holding it are what matter.
+		if st.Mode()&os.ModeSymlink == 0 && st.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("%s is writable by group or others", d)
+		}
+		if sys, ok := st.Sys().(*syscall.Stat_t); ok && sys.Uid != rootUID {
+			return fmt.Errorf("%s is not owned by root", d)
+		}
+		if d == "/" {
+			return nil
+		}
+	}
 }
 
 // pkg-run -- <package manager> [args...]: runs the package manager and
@@ -495,11 +577,14 @@ func pkgRun(args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) < 2 || args[0] != "--" {
 		return 1, errors.New("usage: pkg-run -- <package-manager> [args...]")
 	}
-	bin, err := ResolvePackageManager(args[1])
+	lit, bin, err := resolvePackageManager(args[1])
 	if err != nil {
 		return 1, err
 	}
 	cmd := host.Command(nil, append([]string{bin}, args[2:]...)...)
+	if !host.Container() {
+		cmd.Args[0] = lit // programs like dnf look at argv[0]
+	}
 	if host.Container() {
 		cmd.Env = append(cmd.Env, "DEBIAN_FRONTEND=noninteractive", "LC_ALL=C")
 	}

@@ -119,3 +119,23 @@ func TestLogDirSymlinkRejected(t *testing.T) {
 		t.Fatal("symlinked log directory accepted")
 	}
 }
+
+// The log path pkg builds for the native data dir must pass privd's check.
+func TestUpgradeLogAcceptedByPrivd(t *testing.T) {
+	c, dir := logFixture(t)
+	log := filepath.Join(dir, "pkg-20260101-120000.log") // dir plays the role of /var/lib/wargo
+	argv, files, err := c.openLogTargets(runArgv(log))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		f.Close()
+	}
+	if len(argv) == 0 {
+		t.Fatal("no argv")
+	}
+	// The old location, a subdirectory, is still refused.
+	if _, _, err := c.openLogTargets(runArgv(filepath.Join(dir, "pkg", "x.log"))); err == nil {
+		t.Fatal("subdirectory log accepted")
+	}
+}

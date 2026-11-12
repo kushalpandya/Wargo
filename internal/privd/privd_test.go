@@ -271,34 +271,38 @@ func TestDisallowedArgvAfterValidAssertion(t *testing.T) {
 }
 
 func TestCheckArgv(t *testing.T) {
-	c := Config{WargoBinary: "/usr/local/bin/wargo", SystemdRun: "/usr/bin/systemd-run", Systemctl: "/usr/bin/systemctl"}
+	bin := filepath.Join(t.TempDir(), "wargo")
+	os.WriteFile(bin, []byte("x"), 0o755)
+	sysDir := fakeSystemBinDir(t, "pacman", "apt-get")
+	c := Config{WargoBinary: bin, SystemdRun: "/usr/bin/systemd-run", Systemctl: "/usr/bin/systemctl"}
 	ok := [][]string{
-		{"/usr/local/bin/wargo", "helper", "kill", "TERM", "123"},
+		{bin, "helper", "kill", "TERM", "123"},
 		{"systemctl", "reboot"},
 		{"/usr/bin/systemctl", "poweroff"},
 		{"systemd-run", "--unit=wargo-upgrade-abc123", "--collect", "--quiet", "--setenv=DEBIAN_FRONTEND=noninteractive",
-			"--property=StandardOutput=append:/var/log/wargo/upgrade-abc123.log", "--", "/usr/bin/apt-get", "-y", "full-upgrade"},
-		{"/usr/bin/systemd-run", "--unit=wargo-upgrade-1", "pacman", "-Syu", "--noconfirm"},
-		{"systemd-run", "--unit=wargo-upgrade-1", "/usr/local/bin/wargo", "helper", "fs", "x"},
+			"--property=StandardOutput=append:/var/log/wargo/upgrade-abc123.log", "--", sysDir + "/apt-get", "-y", "full-upgrade"},
+		{"/usr/bin/systemd-run", "--unit=wargo-upgrade-1", sysDir + "/pacman", "-Syu", "--noconfirm"},
+		{"systemd-run", "--unit=wargo-upgrade-1", bin, "helper", "fs", "x"},
 		// Exactly what internal/pkg builds for an upgrade.
 		{"systemd-run", "--unit=wargo-upgrade-0123abcd", "--collect", "--description=Wargo system upgrade (pamac)",
-			"--property=Type=exec", "--property=StandardOutput=append:/var/lib/wargo/pkg/0123abcd.log",
-			"--property=StandardError=append:/var/lib/wargo/pkg/0123abcd.log", "--setenv=DEBIAN_FRONTEND=noninteractive",
-			"--setenv=LC_ALL=C", "--", "/usr/local/bin/wargo", "helper", "pkg-run", "--", "pacman", "-Syu", "--noconfirm"},
+			"--property=Type=exec", "--property=StandardOutput=append:/var/lib/wargo/pkg-0123abcd.log",
+			"--property=StandardError=append:/var/lib/wargo/pkg-0123abcd.log", "--setenv=DEBIAN_FRONTEND=noninteractive",
+			"--setenv=LC_ALL=C", "--", bin, "helper", "pkg-run", "--", "pacman", "-Syu", "--noconfirm"},
 		// Package database refresh.
-		{"/usr/local/bin/wargo", "helper", "pkg-run", "--", "apt-get", "update"},
+		{bin, "helper", "pkg-run", "--", "apt-get", "update"},
 	}
 	bad := [][]string{
 		{},
 		{"wargo", "helper", "kill"},
-		{"/usr/local/bin/wargo", "serve"},
-		{"/usr/local/bin/wargo", "helper"},
+		{bin, "serve"},
+		{bin, "helper"},
 		{"/tmp/wargo", "helper", "kill", "TERM", "1"},
 		{"/bin/sh", "-c", "id"},
 		{"systemctl", "start", "sshd"},
 		{"systemctl", "reboot", "--force"},
 		{"systemd-run", "/bin/sh"},
 		{"systemd-run", "--unit=other", "pacman", "-Syu"},
+		{"systemd-run", "--unit=wargo-upgrade-1", "pacman", "-Syu"}, // bare names are searched on systemd's PATH
 		{"systemd-run", "--unit=wargo-upgrade-1", "/bin/sh", "-c", "id"},
 		{"systemd-run", "--unit=wargo-upgrade-1", "--property=ExecStartPre=/bin/sh", "pacman", "-Syu"},
 		{"systemd-run", "--unit=wargo-upgrade-1", "--property=StandardOutput=file:/etc/shadow", "pacman"},
@@ -308,8 +312,8 @@ func TestCheckArgv(t *testing.T) {
 		{"systemd-run", "--unit=wargo-upgrade-1", "--uid=0", "pacman"},
 		{"systemd-run", "--unit=wargo-upgrade-1", "/tmp/pacman"},
 		{"systemd-run", "--unit=wargo-upgrade-1"},
-		{"systemd-run", "--unit=wargo-upgrade-1", "/usr/local/bin/wargo", "serve"},
-		{"/usr/local/bin/wargo", "helper", "kill\x00"},
+		{"systemd-run", "--unit=wargo-upgrade-1", bin, "serve"},
+		{bin, "helper", "kill\x00"},
 	}
 	for _, a := range ok {
 		out, err := c.checkArgv(a)
@@ -432,5 +436,127 @@ func dialStatus(t *testing.T, socket string) privproto.Response {
 		var r privproto.Response
 		json.NewDecoder(c).Decode(&r)
 		return r
+	}
+}
+
+func TestLoadConfigRequiresRootOwned(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "privd.toml")
+	body := "allowed_uid = 1000\norigins = [\"https://wargo.example.com\"]\n"
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(p); err != nil {
+		t.Fatalf("unprivileged load: %v", err)
+	}
+	// As root, a file owned by this (non-root) test user is refused.
+	old := requireRootOwner
+	requireRootOwner = true
+	t.Cleanup(func() { requireRootOwner = old })
+	if _, err := LoadConfig(p); err == nil || !strings.Contains(err.Error(), "not owned by root") {
+		t.Fatalf("user-owned config accepted: %v", err)
+	}
+	requireRootOwner = false
+	os.Chmod(p, 0o666)
+	if _, err := LoadConfig(p); err == nil {
+		t.Fatal("world-writable config accepted")
+	}
+}
+
+func TestSystemdRunCommandMustBeTrusted(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "wargo")
+	os.WriteFile(bin, []byte("x"), 0o755)
+	c := Config{WargoBinary: bin, SystemdRun: "/usr/bin/systemd-run", Systemctl: "/usr/bin/systemctl"}
+	argv := []string{"systemd-run", "--unit=wargo-upgrade-1", "--", bin, "helper", "pkg-run", "--", "pacman", "-Syu"}
+	if _, err := c.checkArgv(argv); err != nil {
+		t.Fatalf("trusted binary rejected: %v", err)
+	}
+	old := requireRootOwner
+	requireRootOwner = true
+	t.Cleanup(func() { requireRootOwner = old })
+	if _, err := c.checkArgv(argv); err == nil || !strings.Contains(err.Error(), "not owned by root") {
+		t.Fatalf("user-owned wargo binary accepted for systemd-run: %v", err)
+	}
+	requireRootOwner = false
+	os.Chmod(bin, 0o777)
+	if _, err := c.checkArgv(argv); err == nil {
+		t.Fatal("writable wargo binary accepted for systemd-run")
+	}
+}
+
+// fakeSystemBinDir points systemBinDirs at a temp dir holding empty
+// executables with the given names.
+func fakeSystemBinDir(t *testing.T, names ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := systemBinDirs
+	systemBinDirs = []string{dir}
+	t.Cleanup(func() { systemBinDirs = old })
+	return dir
+}
+
+func TestSystemdRunPackageManagerMustBeTrusted(t *testing.T) {
+	// Two system dirs: one is user-writable (like /usr/local/bin) and holds
+	// a planted pacman, the other holds the trusted one.
+	local, usr := t.TempDir(), t.TempDir()
+	for _, f := range []string{local + "/pacman", usr + "/pacman"} {
+		os.WriteFile(f, []byte("x"), 0o755)
+	}
+	os.Chmod(local+"/pacman", 0o777)
+	old := systemBinDirs
+	systemBinDirs = []string{usr, local}
+	t.Cleanup(func() { systemBinDirs = old })
+	c := Config{WargoBinary: "/usr/local/bin/wargo", SystemdRun: "/usr/bin/systemd-run", Systemctl: "/usr/bin/systemctl"}
+	run := func(cmd string) error {
+		_, err := c.checkArgv([]string{"systemd-run", "--unit=wargo-upgrade-1", "--", cmd, "-Syu"})
+		return err
+	}
+	if err := run("pacman"); err == nil {
+		t.Error("bare package manager name accepted")
+	}
+	if err := run(usr + "/pacman"); err != nil {
+		t.Errorf("trusted absolute path rejected: %v", err)
+	}
+	if err := run(local + "/pacman"); err == nil {
+		t.Error("planted (writable) package manager accepted")
+	}
+	// Ownership: as root, a user-owned binary is refused.
+	oldReq := requireRootOwner
+	requireRootOwner = true
+	t.Cleanup(func() { requireRootOwner = oldReq })
+	if err := run(usr + "/pacman"); err == nil || !strings.Contains(err.Error(), "not owned by root") {
+		t.Errorf("user-owned package manager accepted: %v", err)
+	}
+}
+
+func TestSystemdRunSymlinkInWritableDirRefused(t *testing.T) {
+	root := t.TempDir()
+	real, links := filepath.Join(root, "real"), filepath.Join(root, "links")
+	for _, d := range []string{real, links} {
+		os.Mkdir(d, 0o755)
+	}
+	os.WriteFile(real+"/pacman", []byte("x"), 0o755)
+	if err := os.Symlink("../real/pacman", links+"/pacman"); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(links, 0o777) // the Wargo user could swap the link by rename
+	oldDirs, oldReq, oldUID, oldStop := systemBinDirs, requireRootOwner, rootUID, trustStop
+	systemBinDirs, requireRootOwner, rootUID, trustStop = []string{real, links}, true, uint32(os.Getuid()), root
+	t.Cleanup(func() { systemBinDirs, requireRootOwner, rootUID, trustStop = oldDirs, oldReq, oldUID, oldStop })
+	c := Config{WargoBinary: "/usr/local/bin/wargo", SystemdRun: "/usr/bin/systemd-run", Systemctl: "/usr/bin/systemctl"}
+	run := func(cmd string) error {
+		_, err := c.checkArgv([]string{"systemd-run", "--unit=wargo-upgrade-1", "--", cmd, "-Syu"})
+		return err
+	}
+	if err := run(real + "/pacman"); err != nil {
+		t.Fatalf("trusted binary rejected: %v", err)
+	}
+	if err := run(links + "/pacman"); err == nil || !strings.Contains(err.Error(), links+" is writable") {
+		t.Fatalf("symlink in writable dir accepted: %v", err)
 	}
 }

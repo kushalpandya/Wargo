@@ -10,6 +10,7 @@ package privd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/user"
@@ -61,7 +62,17 @@ func defaults() Config {
 // LoadConfig reads and validates the config file.
 func LoadConfig(path string) (Config, error) {
 	c := defaults()
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return c, err
+	}
+	defer f.Close()
+	// The config names the binaries privd executes as root, so it must
+	// not be editable by the Wargo user.
+	if err := checkTrustedPath(path, f); err != nil {
+		return c, fmt.Errorf("config %s is not trusted: %w", path, err)
+	}
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return c, err
 	}

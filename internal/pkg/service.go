@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,12 +102,17 @@ type Status struct {
 }
 
 type Service struct {
-	d       *server.Deps
-	be      Backend
-	osr     OSRelease
-	run     Runner
-	dataDir string
-	extras  []string
+	d   *server.Deps
+	be  Backend
+	osr OSRelease
+	run Runner
+	// dataDir holds upgrade logs. privd only lets systemd append to files
+	// directly inside its log directories, so this is the data dir itself,
+	// not a subdirectory. legacyLogDir is where older versions wrote them.
+	dataDir      string
+	legacyLogDir string
+	bareLogName  bool // container mode keeps the <id>.log name
+	extras       []string
 
 	fake       bool
 	fakeScript string
@@ -131,7 +137,7 @@ type Service struct {
 func New(d *server.Deps) *Service {
 	s := &Service{
 		d: d, osr: readOSRelease(), run: ExecRunner(5 * time.Minute),
-		dataDir: filepath.Join(d.Cfg.DataDir, "pkg"), ctx: context.Background(),
+		dataDir: d.Cfg.DataDir, legacyLogDir: filepath.Join(d.Cfg.DataDir, "pkg"), ctx: context.Background(),
 		sched: newSchedule(),
 	}
 	s.sched.Store, s.sched.Audit = d.Store, d.Audit
@@ -139,6 +145,8 @@ func New(d *server.Deps) *Service {
 		// The upgrade unit runs on the host and appends to its log there;
 		// Wargo reads it through the host mount.
 		s.dataDir = containerLogDir
+		s.legacyLogDir = ""
+		s.bareLogName = true
 	}
 	s.be = Detect(s.osr, hasBin)
 	if s.be != nil {
@@ -453,10 +461,13 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	pruneLogs(host.Path(s.dataDir), 10)
+	if s.legacyLogDir != "" {
+		pruneLogs(host.Path(s.legacyLogDir), 10)
+	}
 	now := time.Now()
 	id := now.Format("20060102-150405")
 	rec := &RunRecord{
-		ID: id, Unit: "wargo-upgrade-" + id, Log: filepath.Join(s.dataDir, id+".log"),
+		ID: id, Unit: "wargo-upgrade-" + id, Log: s.logPath(id),
 		Backend: s.be.Name(), Packages: pending, StartedAt: now, Fake: s.fake,
 	}
 	// O_EXCL never follows a symlink at the final component.
@@ -482,7 +493,11 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 		go cmd.Wait()
 	} else {
 		lf.Close()
-		argv := s.systemdRunArgv(rec)
+		argv, err := s.systemdRunArgv(rec)
+		if err != nil {
+			os.Remove(host.Path(rec.Log))
+			return httpx.Errorf(http.StatusBadGateway, "upgrade_start_failed", "Could not start the upgrade: "+err.Error())
+		}
 		out, err := s.d.Elevate.Run(r, "pkg.upgrade", target, argv, nil)
 		if err != nil {
 			os.Remove(host.Path(rec.Log))
@@ -511,7 +526,7 @@ func (s *Service) helperArgv(args ...string) []string {
 }
 
 // systemdRunArgv builds the root command that starts the upgrade unit.
-func (s *Service) systemdRunArgv(rec *RunRecord) []string {
+func (s *Service) systemdRunArgv(rec *RunRecord) ([]string, error) {
 	argv := []string{"systemd-run",
 		"--unit=" + rec.Unit,
 		"--collect",
@@ -533,18 +548,35 @@ func (s *Service) systemdRunArgv(rec *RunRecord) []string {
 		// absolute) package manager through the host's /bin/sh with the
 		// constant wrapper script that prints the exit marker.
 		up := s.be.UpgradeArgv()
-		if bin, err := helper.ResolvePackageManager(up[0]); err == nil {
-			up = append([]string{bin}, up[1:]...)
+		bin, err := helper.ResolvePackageManager(up[0])
+		if err != nil {
+			return nil, err
 		}
+		up = append([]string{bin}, up[1:]...)
 		argv = append(argv, "/bin/sh", "-c", wrapperScript, "wargo-upgrade")
-		return append(argv, up...)
+		return append(argv, up...), nil
 	}
 	argv = append(argv, s.helperArgv("pkg-run", "--")...)
-	return append(argv, s.be.UpgradeArgv()...)
+	return append(argv, s.be.UpgradeArgv()...), nil
 }
 
 // containerLogDir holds upgrade logs on the host in container mode.
 const containerLogDir = "/var/log/wargo"
+
+func (s *Service) logPath(id string) string {
+	if s.bareLogName {
+		return filepath.Join(s.dataDir, id+".log")
+	}
+	return upgradeLogPath(s.dataDir, id)
+}
+
+// upgradeLogPath is where an upgrade's log lives: directly inside dir, as
+// wargo-privd refuses log files in subdirectories.
+func upgradeLogPath(dir, id string) string { return filepath.Join(dir, "pkg-"+id+".log") }
+
+// upgradeLogRe matches upgrade logs: pkg-<id>.log, and the bare <id>.log
+// that older versions wrote.
+var upgradeLogRe = regexp.MustCompile(`^(pkg-)?\d{8}-\d{6}\.log$`)
 
 func pruneLogs(dir string, keep int) {
 	ents, err := os.ReadDir(dir)
@@ -553,7 +585,7 @@ func pruneLogs(dir string, keep int) {
 	}
 	var logs []string
 	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".log") {
+		if upgradeLogRe.MatchString(e.Name()) {
 			logs = append(logs, e.Name())
 		}
 	}

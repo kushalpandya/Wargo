@@ -19,7 +19,10 @@ func TestContainerSystemdRunArgv(t *testing.T) {
 	defer host.SetRoot(r)()
 	s := &Service{be: &pacmanBackend{}}
 	rec := &RunRecord{ID: "x", Unit: "wargo-upgrade-x", Log: containerLogDir + "/x.log", Backend: "pacman"}
-	argv := s.systemdRunArgv(rec)
+	argv, err := s.systemdRunArgv(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !slices.Contains(argv, "--property=StandardOutput=append:/var/log/wargo/x.log") {
 		t.Errorf("log must be a host path: %v", argv)
 	}
@@ -50,5 +53,14 @@ func TestContainerHostPaths(t *testing.T) {
 	}
 	if o := readOSRelease(); o.ID != "manjaro" {
 		t.Fatalf("os-release %+v", o)
+	}
+}
+
+func TestContainerSystemdRunArgvNeedsResolvedPM(t *testing.T) {
+	defer host.SetRoot(t.TempDir())() // no package manager on this "host"
+	s := &Service{be: &pacmanBackend{}}
+	rec := &RunRecord{ID: "x", Unit: "wargo-upgrade-x", Log: containerLogDir + "/x.log", Backend: "pacman"}
+	if argv, err := s.systemdRunArgv(rec); err == nil {
+		t.Fatalf("fell back to a bare name: %q", argv)
 	}
 }

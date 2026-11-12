@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kushalpandya/wargo/internal/host"
 )
 
 func TestResolvePackageManager(t *testing.T) {
@@ -348,5 +350,97 @@ func TestStdinFileOwnerRequiresSudoUID(t *testing.T) {
 	}
 	if _, err := stdinFileOwner(opt, "abc", 0); err == nil {
 		t.Error("bad SUDO_UID accepted")
+	}
+}
+
+func TestResolvePackageManagerMustBeRootOwned(t *testing.T) {
+	dir := t.TempDir()
+	pm := filepath.Join(dir, "pacman")
+	if err := os.WriteFile(pm, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldDirs, oldReq, oldUID := systemBinDirs, requireRootOwner, rootUID
+	systemBinDirs = []string{dir}
+	t.Cleanup(func() { systemBinDirs, requireRootOwner, rootUID = oldDirs, oldReq, oldUID })
+	requireRootOwner = false
+	if _, err := ResolvePackageManager(pm); err != nil {
+		t.Fatalf("unprivileged: %v", err)
+	}
+	requireRootOwner = true
+	if _, err := ResolvePackageManager(pm); err == nil || !strings.Contains(err.Error(), "not owned by root") {
+		t.Fatalf("user-owned binary accepted: %v", err)
+	}
+	// Pretend this user is root, so only the mode check can reject.
+	rootUID = uint32(os.Getuid())
+	os.Chmod(pm, 0o777)
+	if _, err := ResolvePackageManager(pm); err == nil || !strings.Contains(err.Error(), pm+" is writable") {
+		t.Fatalf("writable binary: %v", err)
+	}
+}
+
+func TestResolvePackageManagerContainerUsesHostRoot(t *testing.T) {
+	r := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(r, "usr/bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Only the "host" has pacman; the container's own /usr/bin must not matter.
+	if err := os.WriteFile(filepath.Join(r, "usr/bin/pacman"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The mount point itself is not trusted material (0777 here).
+	os.Chmod(r, 0o777)
+	defer host.SetRoot(r)()
+	oldReq, oldUID := requireRootOwner, rootUID
+	requireRootOwner, rootUID = true, uint32(os.Getuid())
+	t.Cleanup(func() { requireRootOwner, rootUID = oldReq, oldUID })
+	p, err := ResolvePackageManager("pacman")
+	if err != nil || p != "/usr/bin/pacman" {
+		t.Fatalf("got %q, %v", p, err)
+	}
+	// A writable directory below the host root is refused.
+	os.Chmod(filepath.Join(r, "usr/bin"), 0o777)
+	if _, err := ResolvePackageManager("pacman"); err == nil {
+		t.Fatal("writable host directory accepted")
+	}
+}
+
+func TestResolvePackageManagerSymlinkInWritableDir(t *testing.T) {
+	r := t.TempDir()
+	os.MkdirAll(filepath.Join(r, "usr/lib/pm"), 0o755)
+	os.MkdirAll(filepath.Join(r, "usr/local/bin"), 0o755)
+	os.WriteFile(filepath.Join(r, "usr/lib/pm/pacman"), []byte("x"), 0o755)
+	if err := os.Symlink("/usr/lib/pm/pacman", filepath.Join(r, "usr/local/bin/pacman")); err != nil {
+		t.Fatal(err)
+	}
+	defer host.SetRoot(r)()
+	oldReq, oldUID := requireRootOwner, rootUID
+	requireRootOwner, rootUID = true, uint32(os.Getuid())
+	t.Cleanup(func() { requireRootOwner, rootUID = oldReq, oldUID })
+	// Trusted link directory: accepted, and the resolved path is what runs.
+	lit, res, err := resolvePackageManager("/usr/local/bin/pacman")
+	if err != nil || lit != "/usr/local/bin/pacman" || res != "/usr/lib/pm/pacman" {
+		t.Fatalf("got %q %q %v", lit, res, err)
+	}
+	// The directory holding the link is writable: the link could be swapped.
+	os.Chmod(filepath.Join(r, "usr/local/bin"), 0o777)
+	if _, err := ResolvePackageManager("/usr/local/bin/pacman"); err == nil || !strings.Contains(err.Error(), "/usr/local/bin is writable") {
+		t.Fatalf("symlink in writable dir accepted: %v", err)
+	}
+}
+
+func TestResolvePackageManagerSymlinkedHostRoot(t *testing.T) {
+	r := t.TempDir()
+	os.MkdirAll(filepath.Join(r, "usr/bin"), 0o755)
+	os.WriteFile(filepath.Join(r, "usr/bin/pacman"), []byte("x"), 0o755)
+	link := filepath.Join(t.TempDir(), "hostlink")
+	if err := os.Symlink(r, link); err != nil {
+		t.Fatal(err)
+	}
+	defer host.SetRoot(link)()
+	oldReq, oldUID := requireRootOwner, rootUID
+	requireRootOwner, rootUID = true, uint32(os.Getuid())
+	t.Cleanup(func() { requireRootOwner, rootUID = oldReq, oldUID })
+	if _, err := ResolvePackageManager("pacman"); err != nil {
+		t.Fatalf("symlinked host root: %v", err)
 	}
 }
