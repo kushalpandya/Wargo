@@ -13,6 +13,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	// syscall.O_PATH exists only on some Linux architectures (arm64,
+	// riscv64); x/sys/unix defines it on all of them.
+	"golang.org/x/sys/unix"
 )
 
 // os.Root follows relative symlinks that stay inside the root. That is
@@ -21,7 +25,7 @@ import (
 // /home/other/x -> ../../etc/shadow stays inside "/". The functions below
 // refuse every symlink on the way instead.
 
-const walkFlags = syscall.O_PATH | syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_CLOEXEC
+const walkFlags = unix.O_PATH | syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_CLOEXEC
 
 // PinParent opens the folder holding p (a Clean path relative to root)
 // without following a symlink in any folder of the path, and returns it as
@@ -75,7 +79,7 @@ func PinParent(root *os.Root, p string) (parent *os.Root, base string, err error
 // ChmodNoFollow changes the mode of base, a single name inside dir. A
 // symlink there is refused (ErrSymlinkInPath) instead of followed.
 func ChmodNoFollow(dir *os.Root, base string, m os.FileMode) error {
-	fd, err := openEntry(dir, base, syscall.O_PATH|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	fd, err := openEntry(dir, base, unix.O_PATH|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
@@ -157,7 +161,7 @@ func openEntry(dir *os.Root, base string, flags int, perm os.FileMode) (int, err
 
 // isSymlinkAt reports whether name inside the folder dirfd is a symlink.
 func isSymlinkAt(dirfd int, name string) bool {
-	fd, err := openat(dirfd, name, syscall.O_PATH|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	fd, err := openat(dirfd, name, unix.O_PATH|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return false
 	}
