@@ -36,6 +36,14 @@ cd web && npx tsc -b
 node scripts/audit.mjs http://127.0.0.1:5173/<page>   # layout + accessibility (uses Chrome)
 ```
 
+### Testing on macOS with Colima
+
+The Go code only builds on Linux. On a Mac, create a dedicated Colima profile that mounts only this repo
+(`colima start -p wargo --cpu 4 --memory 4 --disk 40 --mount "$PWD"`), then use `scripts/colima-dev.sh test [args]`
+to run vet and `go test -race` on Linux, `scripts/colima-dev.sh deploy` to rebuild and restart a `wargo`
+container (data kept in the `wargo-data` volume), and `scripts/colima-dev.sh logs` to follow its output.
+Your Docker context is left untouched.
+
 `web/scripts/shot.mjs` takes screenshots at phone, tablet and desktop sizes in
 light and dark themes. Please check both themes for UI changes.
 
