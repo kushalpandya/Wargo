@@ -94,12 +94,20 @@ type Service struct {
 	pending  map[string]pendingLogin
 	cerem    map[string]ceremony
 	lastSeen map[string]time.Time
+	// usedLogin holds the SHA-256 of each sealed passkey login token that
+	// already signed someone in, until the token expires. Entries are only
+	// added after a verified assertion, so a flood cannot grow it.
+	usedLogin map[[32]byte]time.Time
+	// bootID is random per process and sealed into login tokens, so a token
+	// used before a restart (when usedLogin was lost) is refused after it.
+	bootID string
 }
 
 func New(cfg config.Config, st *store.Store, al *audit.Log, proxy *httpx.ProxyTrust) *Service {
 	s := &Service{
 		cfg: cfg, st: st, audit: al, proxy: proxy, throttle: NewThrottle(),
 		pending: map[string]pendingLogin{}, cerem: map[string]ceremony{}, lastSeen: map[string]time.Time{},
+		usedLogin: map[[32]byte]time.Time{}, bootID: randToken(16),
 	}
 	if cfg.Dev.AuthBypass {
 		if cfg.LoopbackOnly() {
@@ -488,6 +496,11 @@ func (s *Service) gcPending() {
 	for k, v := range s.cerem {
 		if now.After(v.expires) {
 			delete(s.cerem, k)
+		}
+	}
+	for k, exp := range s.usedLogin {
+		if now.After(exp) {
+			delete(s.usedLogin, k)
 		}
 	}
 }

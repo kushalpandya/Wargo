@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -21,7 +22,9 @@ import (
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
-// maxCeremonies bounds pending WebAuthn ceremonies kept in memory.
+// maxCeremonies bounds pending registration and step-up ceremonies kept in
+// memory. Those routes need a session; discoverable login, which anyone
+// can start, uses sealed tokens instead (sealLoginCeremony).
 const maxCeremonies = 1024
 
 type ceremony struct {
@@ -108,7 +111,7 @@ func (s *Service) storeCeremony(r *http.Request, rpID string, d *webauthn.Sessio
 	id := randToken(18)
 	s.mu.Lock()
 	s.gcPending()
-	// Unauthenticated clients can start ceremonies: bound the map.
+	// Bound the map anyway, in case a session is used to flood it.
 	if len(s.cerem) >= maxCeremonies {
 		var oldest string
 		for k, c := range s.cerem {
@@ -132,6 +135,112 @@ func (s *Service) takeCeremony(r *http.Request, id, rpID string) (webauthn.Sessi
 		return webauthn.SessionData{}, httpx.Errorf(http.StatusBadRequest, "ceremony_expired", "Passkey request expired, try again")
 	}
 	return c.data, nil
+}
+
+// loginCeremonyTTL is how long a discoverable login ceremony stays valid.
+const loginCeremonyTTL = 5 * time.Minute
+
+// maxLoginToken bounds the sealed login token accepted from a client.
+const maxLoginToken = 4096
+
+// loginPurpose tags sealed login tokens so no other sealed value can pass
+// for one.
+const loginPurpose = "passkey_login"
+
+// sealedLogin is a discoverable login ceremony carried by the client.
+// Anyone can start one, so nothing is kept server side until it succeeds.
+type sealedLogin struct {
+	Purpose string               `json:"purpose"`
+	Data    webauthn.SessionData `json:"data"`
+	RPID    string               `json:"rpID"`
+	IP      string               `json:"ip"`
+	Expires int64                `json:"expires"`
+	Boot    string               `json:"boot"`
+}
+
+var errLoginCeremony = httpx.Errorf(http.StatusBadRequest, "ceremony_expired", "Passkey request expired, try again")
+
+// sealLoginCeremony returns a URL-safe token holding sd, bound to rpID and
+// the client's IP for loginCeremonyTTL.
+func (s *Service) sealLoginCeremony(r *http.Request, rpID string, sd *webauthn.SessionData) (string, error) {
+	return s.sealLogin(sealedLogin{
+		Purpose: loginPurpose, Data: *sd, RPID: rpID, IP: s.proxy.ClientIP(r),
+		Expires: time.Now().Add(loginCeremonyTTL).Unix(), Boot: s.bootID,
+	})
+}
+
+func (s *Service) sealLogin(c sealedLogin) (string, error) {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	sealed, err := s.st.Seal(string(b))
+	if err != nil {
+		return "", err
+	}
+	raw, err := base64.StdEncoding.DecodeString(sealed)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// loginTokenKey decodes a sealed login token. The key is the SHA-256 of
+// the decoded bytes, so other spellings of the same token share it.
+func loginTokenKey(token string) ([32]byte, []byte, bool) {
+	if token == "" || len(token) > maxLoginToken {
+		return [32]byte{}, nil, false
+	}
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(token)
+	if err != nil {
+		return [32]byte{}, nil, false
+	}
+	return sha256.Sum256(raw), raw, true
+}
+
+// openLoginCeremony checks a token from sealLoginCeremony: it must be
+// unexpired, for rpID, from the same client IP, sealed by this process and
+// not used before.
+func (s *Service) openLoginCeremony(r *http.Request, token, rpID string) (webauthn.SessionData, error) {
+	key, raw, ok := loginTokenKey(token)
+	if !ok {
+		return webauthn.SessionData{}, errLoginCeremony
+	}
+	plain, err := s.st.Unseal(base64.StdEncoding.EncodeToString(raw))
+	if err != nil || plain == "" {
+		return webauthn.SessionData{}, errLoginCeremony
+	}
+	var c sealedLogin
+	if json.Unmarshal([]byte(plain), &c) != nil || c.Purpose != loginPurpose ||
+		time.Now().Unix() > c.Expires || c.RPID != rpID || c.IP != s.proxy.ClientIP(r) || c.Boot != s.bootID {
+		return webauthn.SessionData{}, errLoginCeremony
+	}
+	s.mu.Lock()
+	_, used := s.usedLogin[key]
+	s.mu.Unlock()
+	if used {
+		return webauthn.SessionData{}, errLoginCeremony
+	}
+	return c.Data, nil
+}
+
+// markLoginUsed records a token that signed someone in. It reports false
+// when the token was already used (a parallel finish won the race).
+func (s *Service) markLoginUsed(token string) bool {
+	key, _, ok := loginTokenKey(token)
+	if !ok {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gcPending()
+	if _, used := s.usedLogin[key]; used {
+		return false
+	}
+	// Kept a little past the token's own expiry, so clock rounding never
+	// lets it back in.
+	s.usedLogin[key] = time.Now().Add(loginCeremonyTTL + time.Minute)
+	return true
 }
 
 func (s *Service) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Request) error {
@@ -211,7 +320,11 @@ func (s *Service) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return err
 	}
-	httpx.OK(w, map[string]any{"ceremony": s.storeCeremony(r, rpID, sd), "options": opts})
+	token, err := s.sealLoginCeremony(r, rpID, sd)
+	if err != nil {
+		return err
+	}
+	httpx.OK(w, map[string]any{"ceremony": token, "options": opts})
 	return nil
 }
 
@@ -248,12 +361,18 @@ func (s *Service) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 	if ok, wait := s.throttle.AllowLocal(ip); !ok {
 		return httpx.Errorf(http.StatusTooManyRequests, "throttled", "Too many attempts. Try again in "+wait.Round(time.Second).String())
 	}
-	sd, err := s.takeCeremony(r, r.URL.Query().Get("ceremony"), rpID)
+	token := r.URL.Query().Get("ceremony")
+	sd, err := s.openLoginCeremony(r, token, rpID)
 	if err != nil {
 		s.throttle.Release(ip)
 		return err
 	}
 	id, err := s.verifyAssertion(r, wa, rpID, sd)
+	if err == nil && !s.markLoginUsed(token) {
+		s.audit.Record(r, "auth.passkey_login", rpID, errors.New("ceremony already used"), nil)
+		s.throttle.Release(ip)
+		return errLoginCeremony
+	}
 	s.audit.Record(r, "auth.passkey_login", rpID, err, nil)
 	if err != nil {
 		s.throttle.FailLocal(ip)

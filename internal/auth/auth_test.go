@@ -4,14 +4,24 @@ package auth
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
+	"github.com/go-webauthn/webauthn/protocol/webauthncose"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/pquerna/otp/totp"
 
 	"github.com/kushalpandya/wargo/internal/audit"
@@ -587,4 +597,206 @@ func TestCheckPasswordReleasesOnce(t *testing.T) {
 			t.Fatalf("in-flight slots = %d, want 1", n)
 		}
 	})
+}
+
+// passkeyReq builds a passkey request from ip against the localhost RP.
+func passkeyReq(method, target, ip, body string) *http.Request {
+	r := httptest.NewRequest(method, "http://localhost:2207"+target, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "http://localhost:2207")
+	r.RemoteAddr = ip + ":40000"
+	return r
+}
+
+// passkeyBegin starts a discoverable login from ip and returns the
+// ceremony token and the challenge.
+func passkeyBegin(t *testing.T, s *Service, ip string) (string, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	httpx.Handler(s.handlePasskeyLoginBegin)(rec, passkeyReq("POST", "/api/auth/passkey/login/begin", ip, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("begin from %s: %d %s", ip, rec.Code, rec.Body)
+	}
+	var out struct {
+		Ceremony string `json:"ceremony"`
+		Options  struct {
+			PublicKey struct {
+				Challenge string `json:"challenge"`
+			} `json:"publicKey"`
+		} `json:"options"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Ceremony, out.Options.PublicKey.Challenge
+}
+
+// testAuthenticator is a minimal software passkey (ES256) registered for
+// the localhost RP.
+type testAuthenticator struct {
+	key    *ecdsa.PrivateKey
+	id     []byte
+	handle []byte
+	count  uint32
+}
+
+func newTestAuthenticator(t *testing.T, s *Service) *testAuthenticator {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := s.userHandle(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := key.PublicKey.ECDH()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := pub.Bytes() // 0x04 || X || Y
+	cose, err := webauthncbor.Marshal(webauthncose.EC2PublicKeyData{
+		PublicKeyData: webauthncose.PublicKeyData{KeyType: int64(webauthncose.EllipticKey), Algorithm: int64(webauthncose.AlgES256)},
+		Curve:         int64(webauthncose.P256), XCoord: raw[1:33], YCoord: raw[33:],
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &testAuthenticator{key: key, id: []byte("test-credential-id"), handle: handle}
+	data, _ := json.Marshal(webauthn.Credential{ID: a.id, PublicKey: cose})
+	if _, err := s.st.DB.Exec(`INSERT INTO webauthn_credentials(id, name, data, rp_id, created_at) VALUES(?,?,?,?,0)`,
+		base64.RawURLEncoding.EncodeToString(a.id), "Test", string(data), "localhost"); err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// assert returns an assertion body for challenge.
+func (a *testAuthenticator) assert(t *testing.T, challenge string) string {
+	t.Helper()
+	a.count++
+	cdj, _ := json.Marshal(map[string]string{"type": "webauthn.get", "challenge": challenge, "origin": "http://localhost:2207"})
+	rp := sha256.Sum256([]byte("localhost"))
+	ad := append(rp[:], 0x05, byte(a.count>>24), byte(a.count>>16), byte(a.count>>8), byte(a.count)) // UP|UV
+	ch := sha256.Sum256(cdj)
+	digest := sha256.Sum256(append(append([]byte{}, ad...), ch[:]...))
+	sig, err := ecdsa.SignASN1(rand.Reader, a.key, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := base64.RawURLEncoding.EncodeToString
+	body, _ := json.Marshal(map[string]any{
+		"id": enc(a.id), "rawId": enc(a.id), "type": "public-key",
+		"response": map[string]string{
+			"clientDataJSON": enc(cdj), "authenticatorData": enc(ad), "signature": enc(sig), "userHandle": enc(a.handle),
+		},
+	})
+	return string(body)
+}
+
+func passkeyFinish(s *Service, ip, token, body string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	httpx.Handler(s.handlePasskeyLoginFinish)(rec,
+		passkeyReq("POST", "/api/auth/passkey/login/finish?ceremony="+url.QueryEscape(token), ip, body))
+	return rec
+}
+
+func TestPasskeyLoginCeremonySurvivesFlood(t *testing.T) {
+	s, _ := newTestService(t)
+	token, _ := passkeyBegin(t, s, "192.0.2.1")
+	for i := 0; i < 5000; i++ {
+		passkeyBegin(t, s, fmt.Sprintf("10.%d.%d.1", i/250, i%250))
+	}
+	if _, err := s.openLoginCeremony(passkeyReq("POST", "/", "192.0.2.1", ""), token, "localhost"); err != nil {
+		t.Fatalf("owner's ceremony lost to the flood: %v", err)
+	}
+	s.mu.Lock()
+	nc, nu := len(s.cerem), len(s.usedLogin)
+	s.mu.Unlock()
+	if nc != 0 || nu != 0 {
+		t.Fatalf("flood left server state: %d ceremonies, %d used logins", nc, nu)
+	}
+}
+
+func TestPasskeyLoginCeremonySingleUse(t *testing.T) {
+	s, _ := newTestService(t)
+	a := newTestAuthenticator(t, s)
+	token, challenge := passkeyBegin(t, s, "192.0.2.1")
+	if strings.ContainsAny(token, "+/=") {
+		t.Fatalf("token is not URL-safe: %q", token)
+	}
+	if rec := passkeyFinish(s, "192.0.2.1", token, a.assert(t, challenge)); rec.Code != http.StatusOK {
+		t.Fatalf("first finish: %d %s", rec.Code, rec.Body)
+	}
+	rec := passkeyFinish(s, "192.0.2.1", token, a.assert(t, challenge))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ceremony_expired") {
+		t.Fatalf("replayed ceremony: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestPasskeyLoginCeremonyBoundToIP(t *testing.T) {
+	s, _ := newTestService(t)
+	token, _ := passkeyBegin(t, s, "192.0.2.1")
+	if _, err := s.openLoginCeremony(passkeyReq("POST", "/", "192.0.2.2", ""), token, "localhost"); err == nil {
+		t.Fatal("ceremony opened from another IP")
+	}
+	if _, err := s.openLoginCeremony(passkeyReq("POST", "/", "192.0.2.1", ""), token, "example.com"); err == nil {
+		t.Fatal("ceremony opened for another RP")
+	}
+	// Flip one character in the middle: still valid base64url, so this
+	// reaches the AEAD check rather than failing in the decoder.
+	b := []byte(token)
+	mid := len(b) / 2
+	if b[mid] == 'A' {
+		b[mid] = 'B'
+	} else {
+		b[mid] = 'A'
+	}
+	if _, _, ok := loginTokenKey(string(b)); !ok {
+		t.Fatal("tampered token should still decode")
+	}
+	if _, err := s.openLoginCeremony(passkeyReq("POST", "/", "192.0.2.1", ""), string(b), "localhost"); err == nil {
+		t.Fatal("tampered ceremony accepted")
+	}
+	if _, err := s.openLoginCeremony(passkeyReq("POST", "/", "192.0.2.1", ""), token, "localhost"); err != nil {
+		t.Fatalf("owner's ceremony refused: %v", err)
+	}
+}
+
+func TestPasskeyLoginCeremonyRefusedAfterRestart(t *testing.T) {
+	s, st := newTestService(t)
+	token, _ := passkeyBegin(t, s, "192.0.2.1")
+	// A second Service on the same store is a restarted process: same
+	// install key, empty usedLogin.
+	proxy := httpx.NewProxyTrust(nil)
+	s2 := New(s.cfg, st, audit.New(st, proxy), proxy)
+	_, err := s2.openLoginCeremony(passkeyReq("POST", "/", "192.0.2.1", ""), token, "localhost")
+	var he *httpx.Error
+	if !errors.As(err, &he) || he.Code != "ceremony_expired" {
+		t.Fatalf("token from before the restart: %v", err)
+	}
+}
+
+func TestPasskeyLoginCeremonyExpires(t *testing.T) {
+	s, _ := newTestService(t)
+	token, err := s.sealLogin(sealedLogin{
+		Purpose: loginPurpose, RPID: "localhost", IP: "192.0.2.1", Boot: s.bootID,
+		Expires: time.Now().Add(-time.Second).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.openLoginCeremony(passkeyReq("POST", "/", "192.0.2.1", ""), token, "localhost")
+	var he *httpx.Error
+	if !errors.As(err, &he) || he.Code != "ceremony_expired" {
+		t.Fatalf("expired token: %v", err)
+	}
+	// The same payload, unexpired, opens: the refusal above is the expiry.
+	token, _ = s.sealLogin(sealedLogin{
+		Purpose: loginPurpose, RPID: "localhost", IP: "192.0.2.1", Boot: s.bootID,
+		Expires: time.Now().Add(time.Minute).Unix(),
+	})
+	if _, err := s.openLoginCeremony(passkeyReq("POST", "/", "192.0.2.1", ""), token, "localhost"); err != nil {
+		t.Fatalf("fresh token refused: %v", err)
+	}
 }
