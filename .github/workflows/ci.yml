@@ -39,7 +39,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with: { go-version: "1.26" }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
+        with: { node-version-file: .tool-versions, cache: npm, cache-dependency-path: web/package-lock.json }
       - run: sudo apt-get install -y --no-install-recommends libpam0g-dev
       - run: make web
       - run: go vet ./...
@@ -84,7 +84,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with: { go-version: "1.26" }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
+        with: { node-version-file: .tool-versions, cache: npm, cache-dependency-path: web/package-lock.json }
       - run: make web
       - run: go vet ./...
       # Run tests unprivileged, the way Wargo runs: several security checks
@@ -155,7 +155,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with: { go-version: "1.26" }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
+        with: { node-version-file: .tool-versions, cache: npm, cache-dependency-path: web/package-lock.json }
       - run: make web
       - run: go vet ./...
       - run: go test ./...
