@@ -53,7 +53,7 @@ func Main(args []string) int {
 	if err != nil {
 		return fail("%v", err)
 	}
-	var stdin io.Reader = os.Stdin
+	stdin := defaultStdin(os.Getenv("SUDO_UID"))
 	in, rest, err := parseStdinFile(args, uid)
 	if err != nil {
 		return fail("%v", err)
@@ -69,10 +69,21 @@ func Main(args []string) int {
 	return code
 }
 
+// defaultStdin is the payload reader when no --stdin-file is given. Under
+// sudo, stdin carried the password (and under NOPASSWD that line is still
+// unread), so the operation gets an empty reader instead. wargo-privd runs
+// the helper without SUDO_UID and pipes the payload on stdin.
+func defaultStdin(sudoUID string) io.Reader {
+	if sudoUID != "" {
+		return strings.NewReader("")
+	}
+	return os.Stdin
+}
+
 // stdinFileOwner picks the uid that must own a --stdin-file payload. The
 // option is only meant for the sudo path, so it is refused when SUDO_UID is
-// unset (wargo-privd runs helper as root with no SUDO_UID, and the file
-// removal on close must never act on arbitrary root-owned files).
+// unset (wargo-privd runs helper as root with no SUDO_UID and must never be
+// pointed at arbitrary root-owned files).
 func stdinFileOwner(args []string, sudoUID string, realUID int) (int, error) {
 	if sudoUID == "" {
 		if len(args) > 0 && args[0] == "--stdin-file" {
@@ -93,8 +104,10 @@ const maxStdinFile = 32 << 20
 // parseStdinFile handles the optional leading `--stdin-file <path>`. The
 // unprivileged server spools a payload there so it never shares sudo's
 // stdin with the password. The file must be a regular file (symlinks are
-// refused) owned by uid and at most 32 MiB. The returned reader removes the
-// file when closed. With no option, stdin is nil and args are returned as is.
+// refused) owned by uid and at most 32 MiB. The helper never removes it:
+// removing by name as root would act on whatever the path names by then,
+// and runSudo removes its own spool file. With no option, stdin is nil and
+// args are returned as is.
 func parseStdinFile(args []string, uid int) (io.ReadCloser, []string, error) {
 	if len(args) == 0 || args[0] != "--stdin-file" {
 		return nil, args, nil
@@ -125,18 +138,7 @@ func parseStdinFile(args []string, uid int) (io.ReadCloser, []string, error) {
 		f.Close()
 		return nil, nil, err
 	}
-	return &removeOnClose{File: f, path: path}, rest, nil
-}
-
-type removeOnClose struct {
-	*os.File
-	path string
-}
-
-func (r *removeOnClose) Close() error {
-	err := r.File.Close()
-	os.Remove(r.path)
-	return err
+	return f, rest, nil
 }
 
 // Exec runs one helper operation in the calling process, which must

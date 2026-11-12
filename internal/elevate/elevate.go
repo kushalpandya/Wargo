@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/audit"
+	"github.com/kushalpandya/wargo/internal/fsops"
 	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/store"
@@ -46,6 +47,22 @@ func (s *Service) ErrRequired(action, target string) *httpx.Error {
 }
 
 var errBadPassword = httpx.Errorf(http.StatusUnauthorized, "elevation_failed", "Incorrect sudo password")
+
+// errSymlinkInPath matches the error the file manager returns when it meets
+// a symbolic link itself (files.fsErr), so elevated refusals look the same.
+func errSymlinkInPath() error {
+	return httpx.Errorf(http.StatusBadRequest, "symlink_in_path", "Path contains a symbolic link")
+}
+
+// helperSymlinkRefusal reports whether a failed helper's output says it
+// refused a path because of a symbolic link (fsops.ErrSymlinkInPath).
+func helperSymlinkRefusal(out string) bool {
+	return strings.Contains(out, fsops.ErrSymlinkInPath.Error())
+}
+
+func spoolFailed() error {
+	return httpx.Errorf(http.StatusInternalServerError, "elevation_spool_failed", "Could not prepare the data for the approved command")
+}
 
 // Throttler is satisfied by auth.Throttle.
 type Throttler interface {
@@ -244,7 +261,7 @@ func (s *Service) runSudo(ctx context.Context, password string, argv []string, s
 	defer cancel()
 	if stdin != nil {
 		if len(argv) < 2 || argv[1] != "helper" {
-			return nil, errors.New("payload needs a helper command")
+			return nil, httpx.Errorf(http.StatusBadRequest, "elevation_bad_command", "Only Wargo's own helper can take data with approval")
 		}
 		path, err := s.spool(stdin)
 		if err != nil {
@@ -276,6 +293,9 @@ func (s *Service) runSudo(ctx context.Context, password string, argv []string, s
 				"sudo is blocked by NoNewPrivileges; see docs/SECURITY.md")
 		}
 		slog.Warn("elevated command failed", "argv", argv, "err", err)
+		if helperSymlinkRefusal(string(out)) {
+			return out, errSymlinkInPath()
+		}
 		return out, httpx.Errorf(http.StatusBadGateway, "command_failed", fmt.Sprintf("%s: %s", err, lastLine(out)))
 	}
 	return out, nil
@@ -285,18 +305,23 @@ func (s *Service) runSudo(ctx context.Context, password string, argv []string, s
 // its path. The caller removes it.
 func (s *Service) spool(r io.Reader) (string, error) {
 	if err := s.prepareTempDir(); err != nil {
-		return "", err
+		slog.Warn("elevation temp dir is not usable", "dir", s.tempDir, "err", err)
+		return "", spoolFailed()
 	}
 	f, err := os.CreateTemp(s.tempDir, "elev-*")
 	if err != nil {
-		return "", err
+		slog.Warn("could not create elevation spool file", "err", err)
+		return "", spoolFailed()
 	}
 	const limit = 32 << 20
 	n, err := io.Copy(f, io.LimitReader(r, limit+1))
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
-	if err == nil && n > limit {
+	if err != nil {
+		slog.Warn("could not write elevation spool file", "err", err)
+		err = spoolFailed()
+	} else if n > limit {
 		err = httpx.Errorf(http.StatusRequestEntityTooLarge, "too_large", "That is too large to send with administrator approval")
 	}
 	if err != nil {

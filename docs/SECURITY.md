@@ -146,9 +146,13 @@ updates, restarting the server) ask for approval every time:
   even a compromised Wargo web process can't get root without your
   authenticator. It checks the user of every connection, requires its program,
   settings and their parent folders to be owned by root, refuses package
-  manager programs or settings that root doesn't own and bare package manager
-  names (it needs the full path), and opens upgrade log
-  files itself so planted links can't redirect root's output.
+  manager programs that root doesn't own, that others can change or that live
+  in folders root doesn't own, and bare package manager names (it needs the
+  full path), and opens upgrade log files itself so planted links can't
+  redirect root's output. It only accepts upgrade logs directly in
+  `/var/log/wargo`, `/var/lib/wargo` or `/run/wargo`. With a custom
+  `data_dir` elsewhere, upgrades approved with a passkey can't write their
+  log; approve upgrades with sudo there.
 - Root work is done by `wargo helper <op>`, part of the same program, with a
   fixed set of strictly checked operations. It never runs a shell, keeps file
   operations inside their folder with `os.Root`, refuses symbolic links
@@ -202,7 +206,8 @@ differently from a native install:
   Update checks, `docker compose` and container shells run on the host as you,
   through `nsenter` with `setpriv` (or `su`). Host and root terminals use
   `su -l <user>` and the host's own `sudo -i`, which asks for your password in
-  the terminal.
+  the terminal. The Root shell needs util-linux `setpriv` on the host:
+  without it, it falls back to `su`, which drops the terminal sudo needs.
 - **Approving admin actions.** sudo can't run inside the container, but every
   admin action (signalling another user's process, editing files you can't
   write, refreshing or installing updates, restarting the server, compose

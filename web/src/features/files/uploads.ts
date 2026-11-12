@@ -116,8 +116,11 @@ export interface PendingFile {
 
 export function enqueue(root: RootId, dir: string, files: PendingFile[]) {
   for (const { file, rel } of files) {
-    // Re-selecting a file for an interrupted upload resumes it.
-    const resumable = items.find((i) => i.state === "interrupted" && i.root === root && i.dir === dir && i.name === rel && i.size === file.size);
+    // Re-selecting a file for an interrupted upload resumes it. A file with
+    // a different modification time is a different file: it starts fresh.
+    const resumable = items.find(
+      (i) => i.state === "interrupted" && i.root === root && i.dir === dir && i.name === rel && i.size === file.size && i.lastModified === file.lastModified,
+    );
     if (resumable) {
       update(resumable.key, { file, state: "queued", error: undefined });
       continue;
@@ -141,12 +144,20 @@ export function enqueue(root: RootId, dir: string, files: PendingFile[]) {
   pump();
 }
 
-/** Attach files picked by the user to interrupted uploads (by name+size). */
+/** Attach files picked by the user to interrupted uploads (by name, size and modification time). */
 export function resumeWith(key: string, file: File) {
   const it = get(key);
   if (!it) return;
   if (file.size !== it.size || !it.name.endsWith(file.name)) {
     update(key, { error: "That is not the same file (name or size differ)" });
+    return;
+  }
+  if (file.lastModified !== it.lastModified) {
+    // Same name and size but a different file: drop the old partial upload
+    // and start this one from zero.
+    if (it.uploadId) api.del(`/api/files/upload/${encodeURIComponent(it.uploadId)}`).catch(() => {});
+    update(key, { file, lastModified: file.lastModified, uploadId: undefined, received: 0, state: "queued", error: undefined });
+    pump();
     return;
   }
   update(key, { file, state: "queued", error: undefined });

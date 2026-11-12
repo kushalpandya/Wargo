@@ -392,8 +392,9 @@ func Move(root *os.Root, src, dst string) error {
 
 // MoveBetween moves src inside srcRoot to dst inside dstRoot without
 // replacing anything at dst. Across devices it copies and then deletes
-// what was copied: special files (which are never copied) stay in src,
-// together with the folders holding them. The caller must rule out moving
+// what was copied: special files (which are never copied) and entries
+// created or changed while the copy ran stay in src, together with the
+// folders holding them. The caller must rule out moving
 // a folder into itself.
 func MoveBetween(srcRoot *os.Root, src string, dstRoot *os.Root, dst string) error {
 	src, dst = Clean(src), Clean(dst)
@@ -402,8 +403,9 @@ func MoveBetween(srcRoot *os.Root, src string, dstRoot *os.Root, dst string) err
 	}
 	if dfi, err := dstRoot.Lstat(dst); err == nil {
 		// On a case-insensitive drive "Photo.jpg" and "photo.jpg" name the
-		// same entry: renaming one to the other is not a clash.
-		if sfi, err := srcRoot.Lstat(src); err == nil && os.SameFile(sfi, dfi) {
+		// same entry: renaming one to the other is not a clash. Any other
+		// pair of names for one inode is two hard links, which is.
+		if sfi, err := srcRoot.Lstat(src); err == nil && os.SameFile(sfi, dfi) && caseVariants(path.Base(src), path.Base(dst)) {
 			return renameSameFile(srcRoot, src, dstRoot, dst, sfi)
 		}
 		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
@@ -419,6 +421,11 @@ func MoveBetween(srcRoot *os.Root, src string, dstRoot *os.Root, dst string) err
 		return err
 	}
 	return err
+}
+
+// caseVariants reports whether a and b differ only in letter case.
+func caseVariants(a, b string) bool {
+	return a != b && strings.EqualFold(a, b)
 }
 
 // renameSameFile renames src to dst when both already name the inode st:

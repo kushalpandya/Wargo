@@ -36,6 +36,9 @@ cd web && npx tsc -b
 node scripts/audit.mjs http://127.0.0.1:5173/<page>   # layout + accessibility (uses Chrome)
 ```
 
+`web/scripts/shot.mjs` takes screenshots at phone, tablet and desktop sizes in
+light and dark themes. Please check both themes for UI changes.
+
 ### Testing on macOS with Colima
 
 The Go code only builds on Linux. On a Mac, create a dedicated Colima profile that mounts only this repo
@@ -43,9 +46,6 @@ The Go code only builds on Linux. On a Mac, create a dedicated Colima profile th
 to run vet and `go test -race` on Linux, `scripts/colima-dev.sh deploy` to rebuild and restart a `wargo`
 container (data kept in the `wargo-data` volume), and `scripts/colima-dev.sh logs` to follow its output.
 Your Docker context is left untouched.
-
-`web/scripts/shot.mjs` takes screenshots at phone, tablet and desktop sizes in
-light and dark themes. Please check both themes for UI changes.
 
 ## Guidelines
 

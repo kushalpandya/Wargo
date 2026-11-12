@@ -861,6 +861,9 @@ func (s *Service) reauth(r *http.Request, password string) error {
 	if err := s.checkPassword(r, s.cfg.Auth.User, password); err != nil {
 		return err
 	}
+	// Clearing this IP's backoff is fine here: reauth only runs for a signed
+	// in user with a live session, who already passed every factor, so a
+	// correct password cannot help an attacker guess sign-ins faster.
 	s.throttle.Success(s.proxy.ClientIP(r))
 	return nil
 }

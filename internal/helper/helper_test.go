@@ -332,8 +332,24 @@ func TestHelperStdinFileRejectsSymlinkAndForeignOwner(t *testing.T) {
 		t.Fatalf("got %q %v", b, rest)
 	}
 	in.Close()
-	if _, err := os.Stat(good); !os.IsNotExist(err) {
-		t.Error("file not removed after close")
+	// The helper never removes the payload by name as root (the path could
+	// be swapped meanwhile); runSudo removes its own spool file.
+	if _, err := os.Stat(good); err != nil {
+		t.Errorf("helper removed the stdin file: %v", err)
+	}
+}
+
+func TestDefaultStdinUnderSudoIsEmpty(t *testing.T) {
+	// Under sudo (NOPASSWD) the unread password line is still on stdin.
+	r := defaultStdin("1000")
+	if r == os.Stdin {
+		t.Fatal("sudo run reads os.Stdin")
+	}
+	if b, _ := io.ReadAll(r); len(b) != 0 {
+		t.Fatalf("got %q", b)
+	}
+	if defaultStdin("") != os.Stdin {
+		t.Error("privd run does not read os.Stdin")
 	}
 }
 

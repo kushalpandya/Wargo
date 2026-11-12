@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/fsops"
 	"github.com/kushalpandya/wargo/internal/helper"
 	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
@@ -152,6 +153,9 @@ func (s *Service) runApproved(ctx context.Context, argv []string, stdin io.Reade
 	}
 	if err != nil {
 		slog.Warn("elevated command failed", "argv", argv, "err", err)
+		if errors.Is(err, fsops.ErrSymlinkInPath) {
+			return out, errSymlinkInPath()
+		}
 		msg := err.Error()
 		if l := strings.TrimSpace(lastLine(out)); l != "" {
 			msg += ": " + l

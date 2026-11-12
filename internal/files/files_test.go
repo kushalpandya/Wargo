@@ -540,7 +540,7 @@ func TestTarExtractStopsBeforeReserve(t *testing.T) {
 	tw.Close()
 	must(t, os.WriteFile(filepath.Join(e.dir, "a.tar"), buf.Bytes(), 0o644))
 	old := freeSpaceIn
-	freeSpaceIn = func(*os.Root, string) (uint64, bool) { return extractReserve + 10, true }
+	freeSpaceIn = func(*os.Root, string) (uint64, uint64, bool) { return maxExtractReserve + 10, 1 << 40, true }
 	defer func() { freeSpaceIn = old }()
 
 	w := e.do("POST", "/api/files/extract", map[string]string{"path": "a.tar", "dest": "out"})
@@ -560,6 +560,54 @@ func TestTarExtractStopsBeforeReserve(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.dir, "mine")); err != nil {
 		t.Fatal("existing destination folder removed")
+	}
+}
+
+func TestExtractReserveScalesWithDrive(t *testing.T) {
+	if got := extractReserve(1 << 40); got != maxExtractReserve {
+		t.Errorf("1 TiB drive: reserve %d, want 1 GiB", got)
+	}
+	if got := extractReserve(4 << 30); got != (4<<30)/20 {
+		t.Errorf("4 GiB drive: reserve %d, want 5%%", got)
+	}
+}
+
+// On a small drive the reserve is 5% of its size, not 1 GiB, and folder
+// entries (no data) are never refused for space.
+func TestTarExtractSmallDriveReserve(t *testing.T) {
+	e := newEnv(t)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	tw.WriteHeader(&tar.Header{Name: "d/", Mode: 0o755, Typeflag: tar.TypeDir})
+	tw.WriteHeader(&tar.Header{Name: "d/f.bin", Mode: 0o644, Size: 1 << 20, Typeflag: tar.TypeReg})
+	tw.Write(make([]byte, 1<<20))
+	tw.Close()
+	must(t, os.WriteFile(filepath.Join(e.dir, "a.tar"), buf.Bytes(), 0o644))
+	old := freeSpaceIn
+	defer func() { freeSpaceIn = old }()
+
+	// A 2 GiB drive with 200 MiB free: the reserve is about 102 MiB.
+	freeSpaceIn = func(*os.Root, string) (uint64, uint64, bool) { return 200 << 20, 2 << 30, true }
+	w := e.do("POST", "/api/files/extract", map[string]string{"path": "a.tar", "dest": "out"})
+	res := decodeJSON[struct{ JobID string }](t, w)
+	if s := waitJob(t, e.svc.jobs, res.JobID); s.State == jobs.Failed {
+		t.Fatalf("job = %+v", s)
+	}
+
+	// Only folders, with less than the reserve free: still extracts.
+	buf.Reset()
+	tw = tar.NewWriter(&buf)
+	tw.WriteHeader(&tar.Header{Name: "only/", Mode: 0o755, Typeflag: tar.TypeDir})
+	tw.Close()
+	must(t, os.WriteFile(filepath.Join(e.dir, "dirs.tar"), buf.Bytes(), 0o644))
+	freeSpaceIn = func(*os.Root, string) (uint64, uint64, bool) { return 1 << 20, 1 << 40, true }
+	w = e.do("POST", "/api/files/extract", map[string]string{"path": "dirs.tar", "dest": "out2"})
+	res = decodeJSON[struct{ JobID string }](t, w)
+	if s := waitJob(t, e.svc.jobs, res.JobID); s.State == jobs.Failed {
+		t.Fatalf("folders only: job = %+v", s)
+	}
+	if fi, err := os.Stat(filepath.Join(e.dir, "out2", "only")); err != nil || !fi.IsDir() {
+		t.Fatalf("folder not extracted: %v", err)
 	}
 }
 

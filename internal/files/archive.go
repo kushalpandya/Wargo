@@ -310,7 +310,7 @@ var errTooBig = errors.New("archive exceeds the extraction size limit")
 // errNoRoom stops an extraction that would leave less than extractReserve
 // free on the drive.
 var errNoRoom = httpx.Errorf(http.StatusInsufficientStorage, "insufficient_space",
-	"Not enough free space to extract this archive (at least 1 GiB must stay free)")
+	"Not enough free space to extract this archive (some space must stay free on the drive)")
 
 // entry is called before each archive entry of size bytes.
 func (x *extractor) entry(size int64) error {
@@ -321,7 +321,11 @@ func (x *extractor) entry(size int64) error {
 	if x.entries > maxExtractFiles {
 		return fmt.Errorf("archive has more than %d entries", maxExtractFiles)
 	}
-	if free, ok := freeSpaceIn(x.root, x.dest); ok && free < uint64(max(size, 0))+extractReserve {
+	// Folders (and empty files) hold no data: never refuse them for space.
+	if size <= 0 {
+		return nil
+	}
+	if free, total, ok := freeSpaceIn(x.root, x.dest); ok && free < uint64(size)+extractReserve(total) {
 		return errNoRoom
 	}
 	return nil
@@ -449,7 +453,7 @@ func extractZip(x *extractor, ra io.ReaderAt, size int64) error {
 	}
 	// The declared sizes are known up front (and enforced by archive/zip
 	// while reading), so refuse early instead of filling the disk.
-	if free, ok := freeSpaceIn(x.root, x.dest); ok && free < uint64(x.total)+extractReserve {
+	if free, total, ok := freeSpaceIn(x.root, x.dest); ok && x.total > 0 && free < uint64(x.total)+extractReserve(total) {
 		return errNoRoom
 	}
 	for _, zf := range zr.File {
@@ -513,28 +517,34 @@ func extractTar(x *extractor, r io.Reader) error {
 	}
 }
 
-// extractReserve is the free space extraction always leaves on the drive.
-const extractReserve = 1 << 30
+// maxExtractReserve caps the free space extraction always leaves on a drive.
+const maxExtractReserve = 1 << 30
+
+// extractReserve is the free space extraction leaves on a drive of total
+// bytes: 1 GiB, or 5% of the drive when that is smaller.
+func extractReserve(total uint64) uint64 {
+	return min(maxExtractReserve, total/20)
+}
 
 // archiveRename moves a finished archive into place without replacing
 // anything (tests replace it to create the name at the last moment).
 var archiveRename = fsops.RenameBetweenNoReplace
 
-// freeSpaceIn reports the space available to unprivileged users on the
-// filesystem holding dir inside root (tests replace it).
+// freeSpaceIn reports the space available to unprivileged users and the
+// total size of the filesystem holding dir inside root (tests replace it).
 var freeSpaceIn = freeSpaceInDir
 
-func freeSpaceInDir(root *os.Root, dir string) (uint64, bool) {
+func freeSpaceInDir(root *os.Root, dir string) (free, total uint64, ok bool) {
 	d, err := openDir(root, dir)
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 	defer d.Close()
 	var st syscall.Statfs_t
 	if syscall.Fstatfs(int(d.Fd()), &st) != nil {
-		return 0, false
+		return 0, 0, false
 	}
-	return st.Bavail * uint64(st.Bsize), true
+	return st.Bavail * uint64(st.Bsize), st.Blocks * uint64(st.Bsize), true
 }
 
 type countingReader struct {

@@ -103,6 +103,9 @@ func (c *PrivdClient) Run(ctx context.Context, req PrivdRequest, stdin io.Reader
 		return nil, errPasskeyRejected
 	}
 	if !resp.OK {
+		if helperSymlinkRefusal(resp.Error) || helperSymlinkRefusal(string(resp.Output)) {
+			return resp.Output, errSymlinkInPath()
+		}
 		return resp.Output, httpx.Errorf(http.StatusBadGateway, "command_failed", resp.Error)
 	}
 	return resp.Output, nil

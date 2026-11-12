@@ -154,15 +154,32 @@ func TestMoveCaseOnlyRenameOnSameInode(t *testing.T) {
 	}
 }
 
-// The case-insensitive path itself: src and dst resolve to one entry (two
-// roots on one folder stand in for two spellings), so the rename goes
-// through a temporary name and lands back on dst.
-func TestMoveSameEntryThroughTwoRoots(t *testing.T) {
+// Two names of one inode that are not case variants of each other are two
+// hard links: moving one onto the other is a conflict, and both stay.
+func TestMoveOntoHardLinkIsConflict(t *testing.T) {
+	dir := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(dir, "a"), []byte("data"), 0o644))
+	must(t, os.Link(filepath.Join(dir, "a"), filepath.Join(dir, "b")))
+	root := openTestRoot(t, dir)
+	if err := Move(root, "a", "b"); !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("move onto a hard link: %v, want ErrExist", err)
+	}
+	for _, n := range []string{"a", "b"} {
+		if got, err := os.ReadFile(filepath.Join(dir, n)); err != nil || string(got) != "data" {
+			t.Errorf("%s = %q, %v", n, got, err)
+		}
+	}
+}
+
+// The same name reached through two roots (two folders holding hard links
+// under one name look exactly like this) is a conflict too: only case
+// variants take the same-entry path.
+func TestMoveSameNameThroughTwoRootsIsConflict(t *testing.T) {
 	dir := t.TempDir()
 	must(t, os.WriteFile(filepath.Join(dir, "x"), []byte("data"), 0o644))
 	a, b := openTestRoot(t, dir), openTestRoot(t, dir)
-	if err := MoveBetween(a, "x", b, "x"); err != nil {
-		t.Fatal(err)
+	if err := MoveBetween(a, "x", b, "x"); !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("got %v, want ErrExist", err)
 	}
 	if got, _ := os.ReadFile(filepath.Join(dir, "x")); string(got) != "data" {
 		t.Errorf("x = %q", got)

@@ -4,10 +4,14 @@ package elevate
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
 // fakeSudo puts a "sudo" script first on PATH that records its stdin and argv.
@@ -114,4 +118,69 @@ func TestRunSudoBadArgvWritesNothing(t *testing.T) {
 	if ents, _ := os.ReadDir(tmp); len(ents) != 0 {
 		t.Errorf("spooled before argv check: %v", ents)
 	}
+}
+
+// failingSudo puts a "sudo" script first on PATH that prints msg to stderr
+// and exits 1, like a helper that refused an operation.
+func failingSudo(t *testing.T, msg string) {
+	t.Helper()
+	bin := t.TempDir()
+	script := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' \"$MSG\" >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "sudo"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MSG", msg)
+}
+
+func wantHTTPErr(t *testing.T, err error, status int, code string) {
+	t.Helper()
+	var he *httpx.Error
+	if !errors.As(err, &he) || he.Status != status || he.Code != code {
+		t.Fatalf("err = %#v, want %d %s", err, status, code)
+	}
+}
+
+func TestRunSudoSymlinkRefusalIsBadRequest(t *testing.T) {
+	failingSudo(t, "wargo helper: path contains a symbolic link")
+	s := (&Service{exe: "/usr/bin/wargo"}).WithTempDir(filepath.Join(t.TempDir(), "tmp"))
+	_, err := s.runSudo(context.Background(), "pw", s.Helper("fs", "remove", "/r", "a/b"), nil)
+	wantHTTPErr(t, err, http.StatusBadRequest, "symlink_in_path")
+}
+
+func TestRunSudoOtherFailureIsCommandFailed(t *testing.T) {
+	failingSudo(t, "wargo helper: something else broke")
+	s := (&Service{exe: "/usr/bin/wargo"}).WithTempDir(filepath.Join(t.TempDir(), "tmp"))
+	_, err := s.runSudo(context.Background(), "pw", s.Helper("fs", "remove", "/r", "a/b"), nil)
+	wantHTTPErr(t, err, http.StatusBadGateway, "command_failed")
+}
+
+func TestRunApprovedSymlinkRefusalIsBadRequest(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "real", "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{exe: "/usr/bin/wargo"}
+	_, err := s.runApproved(context.Background(), s.Helper("fs", "remove", root, "link/f"), nil)
+	wantHTTPErr(t, err, http.StatusBadRequest, "symlink_in_path")
+	if _, err := os.Stat(filepath.Join(root, "real", "f")); err != nil {
+		t.Errorf("file behind the link was touched: %v", err)
+	}
+}
+
+func TestRunSudoSpoolErrorsAreAPIErrors(t *testing.T) {
+	fakeSudo(t)
+	s := &Service{exe: "/usr/bin/wargo"}
+	_, err := s.runSudo(context.Background(), "pw", []string{"/bin/sh"}, strings.NewReader("x"))
+	wantHTTPErr(t, err, http.StatusBadRequest, "elevation_bad_command")
+
+	// No usable temp dir: the payload cannot be spooled.
+	_, err = s.runSudo(context.Background(), "pw", s.Helper("fs", "write", "/r", "f"), strings.NewReader("x"))
+	wantHTTPErr(t, err, http.StatusInternalServerError, "elevation_spool_failed")
 }
