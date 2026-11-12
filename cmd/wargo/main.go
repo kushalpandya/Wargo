@@ -123,6 +123,10 @@ func loadConfigChecked(args []string, preflight bool) config.Config {
 }
 
 func serve(args []string) {
+	if err := platformPreflight(); err != nil {
+		fmt.Fprintln(os.Stderr, "wargo:", err)
+		os.Exit(1)
+	}
 	cfg := loadConfigChecked(args, true)
 	if os.Geteuid() == 0 && !host.Container() {
 		slog.Warn("running as root is not recommended; run wargo as the admin user")

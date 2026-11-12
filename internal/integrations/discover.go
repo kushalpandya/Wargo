@@ -289,7 +289,7 @@ func openConfigFile(root, rel string) (*os.File, error) {
 		} else {
 			flags |= syscall.O_NONBLOCK | syscall.O_NOCTTY
 		}
-		next, err := syscall.Openat(fd, name, flags, 0)
+		next, err := openat(fd, name, flags)
 		syscall.Close(fd)
 		if err != nil {
 			sub := filepath.Join(parts[:i+1]...)

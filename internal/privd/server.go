@@ -97,28 +97,6 @@ func binding(action, target, origin string) [32]byte {
 	return out
 }
 
-func peerUID(c net.Conn) (int, error) {
-	uc, ok := c.(*net.UnixConn)
-	if !ok {
-		return -1, errors.New("not a unix socket")
-	}
-	raw, err := uc.SyscallConn()
-	if err != nil {
-		return -1, err
-	}
-	var cred *syscall.Ucred
-	var serr error
-	if err := raw.Control(func(fd uintptr) {
-		cred, serr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-	}); err != nil {
-		return -1, err
-	}
-	if serr != nil {
-		return -1, serr
-	}
-	return int(cred.Uid), nil
-}
-
 // Serve accepts connections until ln is closed.
 func (s *Server) Serve(ln net.Listener) error {
 	for {
