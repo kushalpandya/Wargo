@@ -26,7 +26,7 @@ sign-in needs `/etc/pam.d/wargo` (from `deploy/pam/wargo`).
 | Containers (list, health, ports, usage, logs, update check) | Done | Real Docker (read only) |
 | Container start, stop, restart and update with rollback | Done | Fake Docker API, and a real update of a Transmission container behind Gluetun |
 | Wargo updating its own container (helper container, health check, rollback) | Done | Real Docker with a local registry: an update, a forced rollback and the browser flow |
-| Terminal (host, root and container shells, tabs, reconnect) | Done | Host shell live; root and container commands by unit test |
+| Terminal (host, root and container shells, tabs, reconnect) | Done | Host shell live; root and container shells (with a real terminal, tmux included) in container mode |
 | File manager (browse, preview, edit, upload, archives, permissions) | Done | Test folder; home folder browsed read only |
 | OS updates (check, background check, upgrade through systemd-run, restart detection) | Done | Real `pamac checkupdates`; upgrades only with a simulated script |
 | Prowlarr search, magnet, .torrent, queue | Done | Real Prowlarr (search and magnet read only); queue with fakes |
@@ -80,8 +80,7 @@ load only when needed.
   Wargo's audit log. Natively, system and kernel messages need your account
   in `systemd-journal`, `adm` or `wheel`. Container health changes seen only
   by Wargo's own check ("Not responding") aren't recorded yet.
-- **Terminal:** tmux mode hasn't been tried (tmux isn't installed here). Tab
-  names are saved per browser.
+- **Terminal:** tab names are saved per browser.
 - **Torrents:** some indexers give a .torrent link that actually redirects to
   a magnet link; the button is disabled after the first try.
 - **privd:** the socket-activated unit needs `SocketGroup` set by hand; the

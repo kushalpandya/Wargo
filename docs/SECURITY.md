@@ -70,7 +70,10 @@ This section describes the native install. See
   group (`wheel` or `sudo`, detected automatically).
 - Ways to sign in:
   1. **Passkey** (WebAuthn, with user verification). This counts as two
-     factors on its own.
+     factors on its own. Sign-in challenges are sealed tokens bound to the
+     visitor's address and the running Wargo process, and each works only
+     once. Nothing is kept per attempt, so a flood of sign-in attempts can't
+     push out the owner's.
   2. **Server password plus a two-factor code (TOTP).** Setting up the code
      is required on first sign-in when `auth.require_totp = true` (the
      default); until then, the session can only reach the setup pages. Each
@@ -131,7 +134,10 @@ updates, restarting the server) ask for approval every time:
 - **sudo (default).** The browser asks for your password. It is sent once, in
   the `X-Wargo-Elevation` header of that one request, passed to
   `sudo -k -S` (so sudo never reuses an earlier approval) and then wiped. It
-  is never written to disk or to logs. Attempts are slowed down, and sudo
+  is never written to disk or to logs. sudo's input carries only the
+  password: payloads such as edited file content go to the root helper
+  through a private temporary file in the data directory, readable only by
+  Wargo's account. Attempts are slowed down, and sudo
   itself uses the normal `system-auth` rules, including `pam_faillock`.
 - **Passkey through `wargo-privd` (optional).** A small root service on a
   local socket. It keeps its own list of trusted passkeys (written once, with
@@ -139,11 +145,14 @@ updates, restarting the server) ask for approval every time:
   target, checks it itself, and only then runs a command from a fixed list. So
   even a compromised Wargo web process can't get root without your
   authenticator. It checks the user of every connection, requires its program,
-  settings and their parent folders to be owned by root, and opens upgrade log
+  settings and their parent folders to be owned by root, refuses package
+  manager programs or settings that root doesn't own and bare package manager
+  names (it needs the full path), and opens upgrade log
   files itself so planted links can't redirect root's output.
 - Root work is done by `wargo helper <op>`, part of the same program, with a
   fixed set of strictly checked operations. It never runs a shell, keeps file
-  operations inside their folder with `os.Root`, only reads regular files
+  operations inside their folder with `os.Root`, refuses symbolic links
+  anywhere in a path, only reads regular files
   (without blocking), replaces files in one step without following links, and
   pins signals to the chosen process with a pidfd.
 - The root terminal (`sudo -i`) asks for your password inside the terminal
@@ -152,7 +161,8 @@ updates, restarting the server) ask for approval every time:
 ## File manager
 
 Every operation goes through Go's `os.Root` and stays inside the folders set
-in `files.roots`; `..`, absolute paths and symlinks can't escape. Uploads are
+in `files.roots`; `..`, absolute paths and symlinks can't escape. Admin
+actions on files refuse symbolic links anywhere in the path. Uploads are
 sent in resumable pieces (so they fit Cloudflare's 100 MB limit), archive
 extraction has size and file-count limits, previews are served with
 `Content-Security-Policy: sandbox`, and HTML and SVG are never run as active
@@ -297,6 +307,11 @@ Highlights of what was fixed:
 - In container mode nothing separates Wargo from the host.
 - Correct throttling and audit IPs behind a proxy depend on the proxy setting
   `X-Forwarded-For`.
+- On a native install, any program on the server can connect to Wargo's
+  loopback port and send its own `X-Forwarded-For`, because loopback is a
+  trusted proxy by default. Another local account can therefore make its
+  sign-in attempts look like they come from another address. Remove loopback
+  from `auth.trusted_proxies` if nothing on the server proxies Wargo.
 - Signed-in users may see internal error text in API errors.
 - PDF previews are served without the `sandbox` CSP rule, because browsers'
   PDF viewers refuse to run in a sandbox.

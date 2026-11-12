@@ -24,6 +24,8 @@ REPO="kushalpandya/wargo"
 VERSION="${WARGO_VERSION:-}"
 TARGET_USER="${WARGO_USER:-}"
 PORT="${WARGO_PORT:-2207}"
+PORT_SET=0
+[ -z "${WARGO_PORT:-}" ] || PORT_SET=1
 START=1
 ARCHIVE=""
 DRY=0
@@ -45,7 +47,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION="${2:?}"; shift 2 ;;
     --user) TARGET_USER="${2:?}"; shift 2 ;;
-    --port) PORT="${2:?}"; shift 2 ;;
+    --port) PORT="${2:?}"; PORT_SET=1; shift 2 ;;
     --archive) ARCHIVE="${2:?}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --no-start) START=0; shift ;;
@@ -210,6 +212,15 @@ if [ "$DRY" -eq 1 ]; then
   exit 0
 fi
 if [ "$START" -eq 1 ]; then
+  # On upgrade the existing config decides the port, unless one was given.
+  if [ "$UPGRADE" -eq 1 ] && [ "$PORT_SET" -eq 0 ]; then
+    OLD_LISTEN=$(as_root cat "$CONF_DIR/config.toml" 2>/dev/null | sed -n 's/^listen *= *"\(.*\)"/\1/p' | head -n 1)
+    OLD_PORT=${OLD_LISTEN##*:}
+    case "$OLD_PORT" in
+      ''|*[!0-9]*) ;;
+      *) PORT=$OLD_PORT ;;
+    esac
+  fi
   if [ "$UPGRADE" -eq 1 ]; then
     as_root systemctl restart "wargo@$TARGET_USER"
   else

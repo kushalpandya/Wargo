@@ -30,6 +30,10 @@ origins = [
 # Reverse proxies whose X-Forwarded-For / CF-Connecting-IP / X-Forwarded-Proto
 # headers are trusted. cloudflared and nginx on the same host connect from
 # loopback.
+# Note: on a native install, any program on the server can connect to Wargo's
+# loopback port and send its own X-Forwarded-For, so another local account can
+# make its sign-in attempts look like they come from another address. Remove
+# loopback from this list if nothing on the server proxies Wargo.
 trusted_proxies = ["127.0.0.1/32", "::1/128"]
 
 [files]
