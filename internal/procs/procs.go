@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Package procs lists host processes from /proc, computes CPU usage between
+// Package procs lists host processes (Linux /proc, macOS libproc), computes CPU usage between
 // samples and lets the user signal them (elevated for foreign processes).
 package procs
 

@@ -201,7 +201,11 @@ export function AdminApprovals() {
       <CardHeader title="Admin approvals" icon={<ShieldAlert />} />
       <CardBody className="flex flex-col gap-3">
         <p className="text-sm text-muted">
-          Wargo never keeps root. Privileged actions (signalling other users' processes, system updates, reboot) ask for approval every time.
+          Wargo never keeps root. Privileged actions{" "}
+          {methods?.privd === false
+            ? "(signalling other users' processes, editing files you can't write)"
+            : "(signalling other users' processes, system updates, reboot)"}{" "}
+          ask for approval every time.
         </p>
         {ml || (privdOn && sl) ? (
           <Skeleton className="h-24" />

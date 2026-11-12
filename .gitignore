@@ -16,3 +16,4 @@ web/test-results/
 .env
 .DS_Store
 web/*.tsbuildinfo
+/wargo

@@ -127,12 +127,41 @@ func New(al *audit.Log, proxy *httpx.ProxyTrust, t Throttler, privdSocket string
 	return &Service{audit: al, proxy: proxy, throttle: t, privd: NewPrivdClient(privdSocket), exe: exe}
 }
 
+// darwinSudo is the fixed sudo on macOS: the login PATH can include
+// user-writable dirs (Homebrew), and sudo receives the admin password.
+const darwinSudo = "/usr/bin/sudo"
+
+// sudoBin is the sudo to run: the fixed system one on macOS, else via PATH.
+func sudoBin() string {
+	if sudoOverride != "" {
+		return sudoOverride
+	}
+	if runtime.GOOS == "darwin" {
+		return darwinSudo
+	}
+	return "sudo"
+}
+
+// sudoOverride lets tests point at a fake sudo on macOS.
+var sudoOverride string
+
+func lookSudo() (string, error) {
+	if sudoOverride != "" {
+		return sudoOverride, nil
+	}
+	if runtime.GOOS == "darwin" {
+		_, err := os.Stat(darwinSudo)
+		return darwinSudo, err
+	}
+	return exec.LookPath("sudo")
+}
+
 // Methods reports which elevation methods can work on this host.
 func (s *Service) Methods() map[string]any {
 	if s.containerMode() {
 		return s.containerMethods()
 	}
-	_, sudoErr := exec.LookPath("sudo")
+	_, sudoErr := lookSudo()
 	nnp := noNewPrivs()
 	return map[string]any{
 		"sudo":           sudoErr == nil && !nnp,
@@ -274,7 +303,7 @@ func (s *Service) runSudo(ctx context.Context, password string, argv []string, s
 		argv = append(append(append([]string{}, argv[:2]...), "--stdin-file", path), argv[2:]...)
 	}
 	args := append([]string{"-k", "-S", "-p", "", "--"}, argv...)
-	cmd := exec.CommandContext(ctx, "sudo", args...)
+	cmd := exec.CommandContext(ctx, sudoBin(), args...)
 	// Only the password goes to sudo's stdin: the payload travels in a file.
 	cmd.Stdin = strings.NewReader(password + "\n")
 	var buf bytes.Buffer

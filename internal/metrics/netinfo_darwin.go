@@ -33,7 +33,7 @@ func hardwarePorts() map[string]string {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		ports = map[string]string{}
-		if out, err := host.Command(ctx, "networksetup", "-listallhardwareports").Output(); err == nil {
+		if out, err := host.Command(ctx, "/usr/sbin/networksetup", "-listallhardwareports").Output(); err == nil {
 			ports = parseHardwarePorts(out)
 		}
 	})
@@ -78,7 +78,7 @@ func primaryIf() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	prim = ""
-	if out, err := host.Command(ctx, "route", "-n", "get", "default").Output(); err == nil {
+	if out, err := host.Command(ctx, "/sbin/route", "-n", "get", "default").Output(); err == nil {
 		prim = parseRouteGet(out)
 	}
 	primAt = time.Now()

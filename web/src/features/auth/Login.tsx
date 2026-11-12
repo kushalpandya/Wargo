@@ -198,7 +198,7 @@ export function Login() {
       </form>
       {state && !state.secure && (
         <Notice tone="warn" className="mt-4">
-          This connection isn't HTTPS. Passkeys are unavailable and your password travels unencrypted — use a reverse proxy with TLS.
+          This connection isn't HTTPS. Passkeys are unavailable and your password travels unencrypted, so use a reverse proxy with TLS.
         </Notice>
       )}
       {state && !state.pam && (

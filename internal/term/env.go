@@ -72,9 +72,28 @@ func runLogin(ctx context.Context, argv, env []string) ([]byte, error) {
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 500 * time.Millisecond
 	var buf bytes.Buffer
-	cmd.Stdout = &buf
+	cmd.Stdout = &cappedWriter{w: &buf, left: maxLoginOutput}
 	err := cmd.Run()
 	return buf.Bytes(), err
+}
+
+// maxLoginOutput caps the login-shell output we keep.
+const maxLoginOutput = 64 << 10
+
+// cappedWriter writes up to left bytes and silently drops the rest.
+type cappedWriter struct {
+	w    *bytes.Buffer
+	left int
+}
+
+func (c *cappedWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if c.left < len(p) {
+		p = p[:c.left]
+	}
+	c.w.Write(p)
+	c.left -= len(p)
+	return n, nil
 }
 
 // lookIn returns the first executable dir/name for dir in path.

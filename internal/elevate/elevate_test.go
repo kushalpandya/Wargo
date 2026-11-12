@@ -23,6 +23,8 @@ func fakeSudo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sudoOverride = filepath.Join(bin, "sudo")
+	t.Cleanup(func() { sudoOverride = "" })
 	t.Setenv("OUT", out)
 	return out
 }
@@ -130,6 +132,8 @@ func failingSudo(t *testing.T, msg string) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sudoOverride = filepath.Join(bin, "sudo")
+	t.Cleanup(func() { sudoOverride = "" })
 	t.Setenv("MSG", msg)
 }
 

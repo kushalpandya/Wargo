@@ -134,6 +134,11 @@ if [ -f "$CONFIG" ]; then
 fi
 
 [ -d "$BIN_DIR" ] || as_root install -d -m 0755 "$BIN_DIR"
+BIN_OWNER_WARN=
+if [ -d "$BIN_DIR" ] && [ "$(stat -f %u "$BIN_DIR" 2>/dev/null)" != 0 ]; then
+  BIN_OWNER_WARN="$BIN_DIR is not owned by root, so the user could swap the root-run helper binary there"
+  note "warning: $BIN_OWNER_WARN"
+fi
 as_root install -m 0755 "$SRC_BIN" "$BIN"
 if [ ! -e "$PAM_FILE" ]; then
   as_root install -m 0644 "$ROOT/deploy/pam/wargo-macos" "$PAM_FILE"
@@ -213,6 +218,9 @@ cat <<EOF
     launchctl kickstart -k $DOMAIN/$LABEL      (restart)
   Logs:     $LOG_DIR/wargo.log
 
+${BIN_OWNER_WARN:+  Warning:  $BIN_OWNER_WARN.
+            Fix: sudo chown root:wheel $BIN_DIR
+}
   Optional: Full Disk Access. Without it Wargo can't open Desktop, Documents,
   Downloads, iCloud Drive or external drives. Your organisation's device
   management may not allow it. To grant it:

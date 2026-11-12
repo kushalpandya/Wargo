@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -144,7 +145,15 @@ func lookTools(look func(string) (string, error)) tools {
 		}
 		return s
 	}
-	return tools{Tmux: p("tmux"), Sudo: p("sudo"), Docker: p("docker")}
+	t := tools{Tmux: p("tmux"), Sudo: p("sudo"), Docker: p("docker")}
+	if runtime.GOOS == "darwin" {
+		// Never resolve sudo through the login PATH (user-writable dirs).
+		t.Sudo = ""
+		if _, err := os.Stat("/usr/bin/sudo"); err == nil {
+			t.Sudo = "/usr/bin/sudo"
+		}
+	}
+	return t
 }
 
 // spec is a fully resolved command to run in a PTY.
