@@ -43,6 +43,8 @@ jobs:
       - run: sudo apt-get install -y --no-install-recommends libpam0g-dev
       - run: make web
       - run: go vet ./...
+      # macOS must keep compiling (no cgo needed for vet), at no macOS minutes.
+      - run: GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go vet ./...
       - run: go test -race ./...
       - run: make build privd
 
@@ -137,6 +139,39 @@ jobs:
         with:
           name: wargo-${{ matrix.arch }}
           path: dist/
+          if-no-files-found: error
+
+  # Native macOS build and tests (tags / manual). The artifact name is
+  # outside the release job's wargo-* pattern: nothing is published for
+  # macOS yet, because binaries would need signing and notarization.
+  macos:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with: { go-version: "1.26" }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: make web
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Build (arm64 and amd64)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          case "$GITHUB_REF" in refs/tags/v*) ;; *) VERSION="0.0.0-dev+${GITHUB_SHA::7}";; esac
+          LDFLAGS="-s -w -X github.com/kushalpandya/wargo/internal/server.Version=$VERSION"
+          CGO_ENABLED=1 go build -trimpath -ldflags "$LDFLAGS" -o dist/macos/wargo_darwin_arm64 ./cmd/wargo
+          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -trimpath -ldflags "$LDFLAGS" -o dist/macos/wargo_darwin_amd64 ./cmd/wargo
+          file dist/macos/wargo_darwin_arm64 | grep -q 'arm64'
+          file dist/macos/wargo_darwin_amd64 | grep -q 'x86_64'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-binaries
+          path: dist/macos/
           if-no-files-found: error
 
   # GitHub Release with the tarballs, packages and one SHA256SUMS file.
