@@ -203,7 +203,7 @@ export function Login() {
       )}
       {state && !state.pam && (
         <Notice tone="crit" className="mt-4">
-          This build has no PAM support, so password sign-in is unavailable.
+          {state.pamError || "This build has no PAM support, so password sign-in is unavailable."}
         </Notice>
       )}
     </AuthShell>

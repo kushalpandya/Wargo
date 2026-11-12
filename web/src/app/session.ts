@@ -6,6 +6,7 @@ export interface AuthState {
   authenticated: boolean;
   dev: boolean;
   pam: boolean;
+  pamError?: string;
   passkeys: boolean;
   secure: boolean;
 }

@@ -1,0 +1,7 @@
+# Wargo password check on macOS (OpenPAM). Install with:
+#   sudo install -m 0644 deploy/pam/wargo-macos /etc/pam.d/wargo
+# Deliberately minimal: it omits pam_tid (Touch ID), pam_smartcard and
+# nullok, so only a real account password is accepted. Wargo throttles
+# sign-in attempts itself.
+auth     required  pam_opendirectory.so
+account  required  pam_opendirectory.so

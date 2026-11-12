@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//go:build linux && cgo
+//go:build (linux || darwin) && cgo
 
 package auth
 

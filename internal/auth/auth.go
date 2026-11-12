@@ -121,6 +121,9 @@ func New(cfg config.Config, st *store.Store, al *audit.Log, proxy *httpx.ProxyTr
 			slog.Error("dev.auth_bypass ignored: listen address is not loopback")
 		}
 	}
+	if msg := s.pamProblem(); msg != "" {
+		slog.Warn(msg)
+	}
 	return s
 }
 
@@ -148,12 +151,12 @@ func (s *Service) AdminGroup() string {
 	if s.cfg.Auth.AdminGroup != "" {
 		return s.cfg.Auth.AdminGroup
 	}
-	for _, g := range []string{"wheel", "sudo", "admin"} {
+	for _, g := range adminGroups {
 		if _, err := host.LookupGroup(g); err == nil {
 			return g
 		}
 	}
-	return "wheel"
+	return adminGroups[0]
 }
 
 func (s *Service) userIsAdmin(name string) error {
@@ -591,12 +594,14 @@ func (s *Service) handleState(w http.ResponseWriter, r *http.Request) error {
 			authed = true
 		}
 	}
+	pamProblem := s.pamProblem()
 	var n int
 	s.st.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM webauthn_credentials`).Scan(&n)
 	httpx.OK(w, map[string]any{
 		"authenticated": authed,
 		"dev":           s.bypassFor(r),
-		"pam":           passwordAvailable(),
+		"pam":           passwordAvailable() && pamProblem == "",
+		"pamError":      pamProblem,
 		"container":     host.Container(),
 		"passkeys":      n > 0,
 		"secure":        s.secureContext(r),
