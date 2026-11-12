@@ -345,7 +345,7 @@ func writeReplace(root *os.Root, p string, data []byte) error {
 		if !st.Mode().IsRegular() {
 			return fmt.Errorf("%s is not a regular file", p)
 		}
-		mode = st.Mode().Perm()
+		mode = st.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
 		if sys, ok := st.Sys().(*syscall.Stat_t); ok {
 			uid, gid = int(sys.Uid), int(sys.Gid)
 		}

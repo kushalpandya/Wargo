@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kushalpandya/wargo/internal/fsops"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
@@ -204,6 +205,18 @@ func writeAtomic(root *os.Root, p string, data []byte, st fs.FileInfo) error {
 	if lst, err := root.Lstat(p); err == nil && lst.Mode()&fs.ModeSymlink != 0 {
 		inPlace = true
 	}
+	// A file owned by someone else (writable through its group) can't be
+	// replaced without handing it to us, so rewrite its contents instead.
+	var uid, gid int
+	haveOwner := false
+	if st != nil {
+		if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+			uid, gid, haveOwner = int(sys.Uid), int(sys.Gid), true
+			if done, err := foreignWrite(root, p, data, st, inPlace); done {
+				return err
+			}
+		}
+	}
 	if !inPlace {
 		b := make([]byte, 6)
 		rand.Read(b)
@@ -217,13 +230,20 @@ func writeAtomic(root *os.Root, p string, data []byte, st fs.FileInfo) error {
 			if cerr := f.Close(); err == nil {
 				err = cerr
 			}
-			if err == nil {
+			// Chown first: it clears setuid and setgid, so the mode comes last.
+			chownFailed := false
+			if err == nil && haveOwner {
+				if cerr := root.Lchown(tmp, uid, gid); cerr != nil {
+					chownFailed = true
+				}
+			}
+			if err == nil && !chownFailed {
 				err = root.Chmod(tmp, mode)
 			}
-			if err == nil && st != nil {
-				if sys, ok := st.Sys().(*syscall.Stat_t); ok {
-					_ = root.Lchown(tmp, int(sys.Uid), int(sys.Gid)) // only works when unchanged or privileged
-				}
+			if chownFailed {
+				// We can't keep the owner or group, so rewrite in place.
+				root.Remove(tmp)
+				return writeInPlaceNoFollow(root, p, data)
 			}
 			if err == nil {
 				err = root.Rename(tmp, p)
@@ -249,11 +269,64 @@ func writeAtomic(root *os.Root, p string, data []byte, st fs.FileInfo) error {
 		}
 		return err
 	}
+	return writeInPlace(root, p, data)
+}
+
+func writeInPlace(root *os.Root, p string, data []byte) error {
 	f, err := root.OpenFile(p, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
 		return err
 	}
 	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// foreignWrite handles a file owned by someone other than the acting user.
+// It reports done=false without writing when the file is ours (or a
+// symlink), so the caller carries on. A foreign file with setuid or setgid set is refused
+// with a permission error: the kernel drops those bits when a non-owner
+// writes, so only the elevated replace can keep them.
+func foreignWrite(root *os.Root, p string, data []byte, st fs.FileInfo, symlink bool) (done bool, err error) {
+	sys, ok := st.Sys().(*syscall.Stat_t)
+	if !ok || symlink || int(sys.Uid) == host.AdminUID() {
+		return false, nil
+	}
+	if st.Mode()&(fs.ModeSetuid|fs.ModeSetgid) != 0 {
+		return true, &fs.PathError{Op: "write", Path: p, Err: fs.ErrPermission}
+	}
+	return true, writeInPlaceNoFollow(root, p, data)
+}
+
+// writeInPlaceNoFollow truncates and rewrites p without following a link at
+// the last component, keeping its owner, group and mode.
+func writeInPlaceNoFollow(root *os.Root, p string, data []byte) error {
+	var f *os.File
+	parent, base, err := fsops.PinParent(root, p)
+	switch {
+	case err == nil:
+		defer parent.Close()
+		f, err = fsops.OpenNoFollow(parent, base, os.O_WRONLY|os.O_TRUNC)
+	case errors.Is(err, fsops.ErrSymlinkInPath):
+		// A folder on the way is a link: stay inside the root, with our own
+		// permissions, and still refuse a link at the last component.
+		var lst fs.FileInfo
+		if lst, err = root.Lstat(p); err == nil && lst.Mode()&fs.ModeSymlink != 0 {
+			err = fsops.ErrSymlinkInPath
+		}
+		if err == nil {
+			f, err = root.OpenFile(p, os.O_WRONLY|os.O_TRUNC, 0)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -762,5 +763,84 @@ func TestUniqueName(t *testing.T) {
 	}
 	if s, x := splitExt("x.tar.gz"); s != "x" || x != ".tar.gz" {
 		t.Error(s, x)
+	}
+}
+
+func TestSaveKeepsModeAfterChown(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	f, err := root.OpenFile("a.sh", os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if err := root.Chmod("a.sh", 0o775|os.ModeSetgid); err != nil {
+		t.Fatal(err)
+	}
+	st, err := root.Lstat("a.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomic(root, "a.sh", []byte("new"), st); err != nil {
+		t.Fatal(err)
+	}
+	after, err := root.Lstat("a.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Mode() != st.Mode() {
+		t.Fatalf("mode = %v, want %v", after.Mode(), st.Mode())
+	}
+}
+
+type fakeInfo struct {
+	fs.FileInfo
+	mode fs.FileMode
+	sys  *syscall.Stat_t
+}
+
+func (f fakeInfo) Mode() fs.FileMode { return f.mode }
+func (f fakeInfo) Sys() any          { return f.sys }
+
+func TestForeignSetgidFileNeedsElevation(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	foreign := fakeInfo{mode: 0o775 | fs.ModeSetgid, sys: &syscall.Stat_t{Uid: uint32(os.Getuid()) + 1}}
+	done, err := foreignWrite(root, "x", []byte("y"), foreign, false)
+	if !done || !isPerm(err) {
+		t.Fatalf("done=%v err=%v, want a permission error", done, err)
+	}
+	own := fakeInfo{mode: 0o775 | fs.ModeSetgid, sys: &syscall.Stat_t{Uid: uint32(os.Getuid())}}
+	if done, err := foreignWrite(root, "x", []byte("y"), own, false); done || err != nil {
+		t.Fatalf("own file: done=%v err=%v", done, err)
+	}
+}
+
+func TestWriteInPlaceThroughSymlinkedFolder(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	os.Mkdir(dir+"/real", 0o755)
+	os.WriteFile(dir+"/real/f", []byte("old"), 0o644)
+	os.Symlink("real", dir+"/link")
+	if err := writeInPlaceNoFollow(root, "link/f", []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dir + "/real/f"); string(b) != "new" {
+		t.Fatalf("got %q", b)
+	}
+	os.Symlink("f", dir+"/real/l")
+	if err := writeInPlaceNoFollow(root, "link/l", []byte("z")); err == nil {
+		t.Fatal("final symlink followed")
 	}
 }

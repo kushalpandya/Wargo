@@ -444,3 +444,19 @@ func TestResolvePackageManagerSymlinkedHostRoot(t *testing.T) {
 		t.Fatalf("symlinked host root: %v", err)
 	}
 }
+
+func TestFsWriteKeepsSetgid(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "x")
+	os.WriteFile(f, []byte("old"), 0o644)
+	if err := os.Chmod(f, 0o775|os.ModeSetgid); err != nil {
+		t.Fatal(err)
+	}
+	if err := fsOp([]string{"write", dir, "x"}, strings.NewReader("new"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := os.Stat(f)
+	if st.Mode()&os.ModeSetgid == 0 || st.Mode().Perm() != 0o775 {
+		t.Fatalf("mode = %v", st.Mode())
+	}
+}
