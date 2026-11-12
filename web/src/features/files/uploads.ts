@@ -26,6 +26,8 @@ export interface UploadItem {
   /** Bytes per second (smoothed). */
   speed: number;
   startedAt?: number;
+  /** Bumped by pause and cancel; a run that sees it change stops at once. */
+  runId: number;
 }
 
 const STORAGE_KEY = "wargo.files.uploads";
@@ -58,7 +60,7 @@ function restore() {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as Partial<UploadItem>[];
     items = (Array.isArray(raw) ? raw : [])
       .filter((r) => r && typeof r.key === "string" && typeof r.name === "string" && typeof r.dir === "string" && typeof r.uploadId === "string" && Number.isFinite(r.size))
-      .map((r) => ({ ...(r as UploadItem), root: String(r.root ?? "0"), received: Number(r.received) || 0, state: "interrupted", speed: 0 }));
+      .map((r) => ({ ...(r as UploadItem), root: String(r.root ?? "0"), received: Number(r.received) || 0, state: "interrupted", speed: 0, runId: 0 }));
   } catch {
     items = [];
   }
@@ -132,6 +134,7 @@ export function enqueue(root: RootId, dir: string, files: PendingFile[]) {
       state: "queued",
       overwrite: false,
       speed: 0,
+      runId: 0,
     });
   }
   emit();
@@ -158,7 +161,8 @@ function pump() {
 
 export function pause(key: string) {
   const c = controllers.get(key);
-  update(key, { state: "paused", speed: 0 });
+  const it = get(key);
+  update(key, { state: "paused", speed: 0, runId: (it?.runId ?? 0) + 1 });
   c?.abort();
 }
 
@@ -174,7 +178,7 @@ export function cancel(key: string) {
   const it = get(key);
   if (!it) return;
   controllers.get(key)?.abort();
-  update(key, { state: "canceled", speed: 0 });
+  update(key, { state: "canceled", speed: 0, runId: it.runId + 1 });
   if (it.uploadId) api.del(`/api/files/upload/${encodeURIComponent(it.uploadId)}`).catch(() => {});
   window.setTimeout(() => {
     items = items.filter((i) => i.key !== key);
@@ -247,6 +251,9 @@ async function run(key: string) {
   if (!it?.file) return;
   update(key, { state: "uploading", startedAt: Date.now(), speed: 0 });
   const file = it.file;
+  const runId = it.runId;
+  // True once a pause or cancel has replaced this run.
+  const stale = () => get(key)?.runId !== runId;
   let failures = 0;
   try {
     const init = await api.post<{ uploadId: string; chunkSize: number; received: number }>("/api/files/upload/init", {
@@ -255,7 +262,10 @@ async function run(key: string) {
       name: it.name,
       size: it.size,
       overwrite: it.overwrite,
+      // Only for an upload we already know: a fresh one never resumes by guess.
+      uploadId: it.uploadId,
     });
+    if (stale()) return;
     let offset = init.received;
     update(key, { uploadId: init.uploadId, received: offset });
     let lastT = performance.now();
@@ -263,10 +273,12 @@ async function run(key: string) {
     let speed = 0;
     while (offset < it.size) {
       it = get(key);
-      if (!it || it.state !== "uploading") return; // paused / canceled
+      if (!it || it.state !== "uploading" || stale()) return; // paused / canceled
       const end = Math.min(it.size, offset + init.chunkSize);
       const buf = await file.slice(offset, end).arrayBuffer();
+      if (stale()) return;
       const hash = await sha256Hex(buf);
+      if (stale()) return;
       try {
         const base = offset;
         offset = await putChunk(key, init.uploadId, offset, buf, hash, (n) => {
@@ -285,7 +297,7 @@ async function run(key: string) {
         update(key, { received: offset });
       } catch (e) {
         const ce = e as ChunkError;
-        if (ce.code === "aborted") return;
+        if (stale() || ce.code === "aborted") return;
         if (ce.code === "offset_mismatch" && typeof ce.data?.offset === "number") {
           offset = ce.data.offset;
           continue;
@@ -295,6 +307,7 @@ async function run(key: string) {
         if (++failures > 6) throw ce;
         update(key, { error: `Retrying… (${ce.message})` });
         await sleep(Math.min(15000, 500 * 2 ** failures));
+        if (stale()) return;
         update(key, { error: undefined });
       }
     }
@@ -303,11 +316,12 @@ async function run(key: string) {
     const done = get(key);
     if (done) doneCallbacks.forEach((cb) => cb(done));
   } catch (e) {
+    if (stale()) return;
     const err = e as ApiError | ChunkError;
     if (err.code === "exists") update(key, { state: "conflict", error: `${joinPath(it!.dir, it!.name)} already exists`, speed: 0 });
     else update(key, { state: "error", error: err.message, speed: 0 });
   } finally {
-    controllers.delete(key);
+    if (!stale()) controllers.delete(key);
     pump();
   }
 }

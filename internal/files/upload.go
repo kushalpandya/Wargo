@@ -197,6 +197,11 @@ func (s *Service) handleUploadInit(w http.ResponseWriter, r *http.Request) error
 		Name      string `json:"name"`
 		Size      int64  `json:"size"`
 		Overwrite bool   `json:"overwrite"`
+		// UploadID asks to resume that upload. It is honoured only when it
+		// names an unfinished upload with the same root, dir, name and size;
+		// without it a new upload is always created, so a different file of
+		// the same size never inherits old bytes.
+		UploadID string `json:"uploadId"`
 	}
 	if err := httpx.Decode(r, &req); err != nil {
 		return err
@@ -235,11 +240,9 @@ func (s *Service) handleUploadInit(w http.ResponseWriter, r *http.Request) error
 	s.uploads.mu.Lock()
 	s.uploads.load()
 	var up *upload
-	for _, x := range s.uploads.m {
-		if x.RootPath == ref.Path && x.Dir == dir && x.Name == name && x.Size == req.Size {
-			up = x
-			break
-		}
+	if x := s.uploads.m[req.UploadID]; req.UploadID != "" && x != nil &&
+		x.RootPath == ref.Path && x.Dir == dir && x.Name == name && x.Size == req.Size {
+		up = x
 	}
 	if up != nil {
 		up.Overwrite = req.Overwrite

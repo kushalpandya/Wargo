@@ -289,8 +289,8 @@ func TestUploadResume(t *testing.T) {
 	expectErr(t, w, 422, "checksum_mismatch")
 	// Completing early fails.
 	expectErr(t, e.do("POST", base+"/complete", nil), 409, "offset_mismatch")
-	// "Reload": init again resumes the same upload.
-	w = e.do("POST", "/api/files/upload/init", initReq)
+	// "Reload": init again with the upload id resumes the same upload.
+	w = e.do("POST", "/api/files/upload/init", map[string]any{"dir": "docs", "name": "up.bin", "size": len(data), "uploadId": in.UploadID})
 	in2 := decodeJSON[initRes](t, w)
 	if in2.UploadID != in.UploadID || in2.Received != 4000 || !in2.Resumed {
 		t.Fatalf("resume = %+v", in2)
@@ -319,6 +319,36 @@ func TestUploadResume(t *testing.T) {
 	expectErr(t, e.do("POST", "/api/files/upload/init", initReq), 409, "exists")
 	initReq["overwrite"] = true
 	if w := e.do("POST", "/api/files/upload/init", initReq); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+}
+
+func TestUploadInitResumesOnlyWithID(t *testing.T) {
+	e := newEnv(t)
+	data := bytes.Repeat([]byte("abcdefghij"), 1000)
+	req := map[string]any{"dir": "docs", "name": "r.bin", "size": len(data)}
+	a := decodeJSON[initRes](t, e.do("POST", "/api/files/upload/init", req))
+	if w := e.do("PUT", "/api/files/upload/"+a.UploadID+"?offset=0", data[:5000]); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	b := decodeJSON[initRes](t, e.do("POST", "/api/files/upload/init", req))
+	if b.UploadID == a.UploadID || b.Received != 0 || b.Resumed {
+		t.Fatalf("no id must start a new upload: %+v", b)
+	}
+	c := decodeJSON[initRes](t, e.do("POST", "/api/files/upload/init", map[string]any{"dir": "docs", "name": "r.bin", "size": len(data), "uploadId": a.UploadID}))
+	if c.UploadID != a.UploadID || c.Received != 5000 || !c.Resumed {
+		t.Fatalf("resume with id = %+v", c)
+	}
+	// An id for a different file is not honoured.
+	d := decodeJSON[initRes](t, e.do("POST", "/api/files/upload/init", map[string]any{"dir": "docs", "name": "other.bin", "size": len(data), "uploadId": a.UploadID}))
+	if d.UploadID == a.UploadID || d.Received != 0 {
+		t.Fatalf("mismatched id = %+v", d)
+	}
+	// The new upload completes even though the old one is still unfinished.
+	if w := e.do("PUT", "/api/files/upload/"+b.UploadID+"?offset=0", data); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if w := e.do("POST", "/api/files/upload/"+b.UploadID+"/complete", nil); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
 }
