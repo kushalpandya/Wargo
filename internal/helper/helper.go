@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -181,8 +182,9 @@ func Exec(args []string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 }
 
 // kill <SIGNAL> <pid> [starttime]: starttime is the expected process
-// start (/proc/<pid>/stat field 22, clock ticks since boot); when given,
-// the signal is only delivered to that exact process (pid-reuse safe).
+// start (on Linux /proc/<pid>/stat field 22, clock ticks since boot; on
+// macOS microseconds since the epoch, from kern.proc.pid); when given, the
+// signal is only delivered to that exact process (pid-reuse safe).
 func kill(args []string) error {
 	if len(args) != 2 && len(args) != 3 {
 		return errors.New("usage: kill <SIGNAL> <pid> [starttime]")
@@ -406,6 +408,9 @@ func writeReplace(root *os.Root, p string, data []byte) error {
 func power(args []string) error {
 	if len(args) != 1 || (args[0] != "reboot" && args[0] != "poweroff") {
 		return errors.New("usage: power reboot|poweroff")
+	}
+	if runtime.GOOS == "darwin" {
+		return errors.New("power actions are not supported on macOS")
 	}
 	return host.Command(nil, "systemctl", args[0]).Run()
 }
