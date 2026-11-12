@@ -3,7 +3,6 @@
 package metrics
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"net"
@@ -93,7 +92,8 @@ func computeStatic() Specs {
 		s.Locale = hostLocale()
 	} else {
 		if u, err := user.Current(); err == nil {
-			s.Shell = loginShell(u.Username)
+			uid, _ := strconv.Atoi(u.Uid)
+			s.Shell = loginShell(u.Username, uid)
 		}
 		s.Locale = os.Getenv("LANG")
 	}
@@ -102,18 +102,9 @@ func computeStatic() Specs {
 	return s
 }
 
-func loginShell(name string) string {
-	f, err := os.Open("/etc/passwd")
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		parts := strings.Split(sc.Text(), ":")
-		if len(parts) >= 7 && parts[0] == name {
-			return filepath.Base(parts[6])
-		}
+func loginShell(name string, uid int) string {
+	if sh := hostfs.LoginShell(name, uid); sh != "" {
+		return filepath.Base(sh)
 	}
 	return ""
 }

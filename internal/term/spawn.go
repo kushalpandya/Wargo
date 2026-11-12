@@ -3,10 +3,8 @@
 package term
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -38,7 +36,8 @@ type account struct {
 }
 
 // currentAccount resolves user, home and login shell. The shell comes from
-// $SHELL, then the passwd entry, then /bin/sh.
+// $SHELL, then the login shell (passwd entry or Directory Services), then
+// /bin/sh.
 func currentAccount(getenv func(string) string) account {
 	if host.Container() {
 		return containerAccount()
@@ -46,10 +45,8 @@ func currentAccount(getenv func(string) string) account {
 	a := account{User: getenv("USER"), Home: getenv("HOME")}
 	if u, err := user.Current(); err == nil {
 		a.User, a.Home = u.Username, u.HomeDir
-		if f, err := os.Open("/etc/passwd"); err == nil {
-			a.Shell = passwdShell(f, u.Uid)
-			f.Close()
-		}
+		uid, _ := strconv.Atoi(u.Uid)
+		a.Shell = host.LoginShell(u.Username, uid)
 	}
 	if s := getenv("SHELL"); isExecutable(s) {
 		a.Shell = s
@@ -75,18 +72,6 @@ func containerAccount() account {
 		}
 	}
 	return a
-}
-
-// passwdShell returns the shell field for uid from a passwd(5) stream.
-func passwdShell(r io.Reader, uid string) string {
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		f := strings.Split(sc.Text(), ":")
-		if len(f) >= 7 && f[2] == uid {
-			return f[6]
-		}
-	}
-	return ""
 }
 
 func isExecutable(p string) bool {

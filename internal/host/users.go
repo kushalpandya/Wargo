@@ -410,14 +410,6 @@ func fromOS(u *user.User) *User {
 	uid, _ := strconv.Atoi(u.Uid)
 	gid, _ := strconv.Atoi(u.Gid)
 	out := &User{Name: u.Username, UID: uid, GID: gid, Gecos: u.Name, Home: u.HomeDir}
-	if f, err := os.Open("/etc/passwd"); err == nil {
-		for _, pu := range ParsePasswd(f) {
-			if pu.UID == uid && pu.Name == u.Username {
-				out.Shell = pu.Shell
-				break
-			}
-		}
-		f.Close()
-	}
+	out.Shell = LoginShell(u.Username, uid)
 	return out
 }

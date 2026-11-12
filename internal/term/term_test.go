@@ -84,16 +84,6 @@ func TestBuildEnv(t *testing.T) {
 	}
 }
 
-func TestPasswdShell(t *testing.T) {
-	p := "root:x:0:0:root:/root:/bin/bash\nkushal:x:1000:1001:K P:/home/kushal:/usr/bin/zsh\nbad line\n"
-	if got := passwdShell(strings.NewReader(p), "1000"); got != "/usr/bin/zsh" {
-		t.Fatal(got)
-	}
-	if got := passwdShell(strings.NewReader(p), "42"); got != "" {
-		t.Fatal(got)
-	}
-}
-
 func TestValidContainer(t *testing.T) {
 	ok := []string{"jellyfin", "a", "my_app.1-2", "3f2a9c0d1e", strings.Repeat("a", 128)}
 	bad := []string{"", "-rm", ".x", "a b", "a;b", "$(id)", "a/b", "--privileged", strings.Repeat("a", 129), "ünï"}

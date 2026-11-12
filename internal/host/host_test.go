@@ -353,3 +353,15 @@ func TestCheckFailsCleanly(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestParseDsclShell(t *testing.T) {
+	if got := parseDsclShell([]byte("UserShell: /bin/zsh\n")); got != "/bin/zsh" {
+		t.Fatal(got)
+	}
+	if got := parseDsclShell([]byte("No such key: UserShell\n")); got != "" {
+		t.Fatal(got)
+	}
+	if got := parseDsclShell([]byte("UserShell: relative/sh\n")); got != "" {
+		t.Fatal(got)
+	}
+}
