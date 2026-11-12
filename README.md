@@ -36,7 +36,8 @@ curl -fsSL https://raw.githubusercontent.com/kushalpandya/wargo/main/install.sh 
 
 Then open **http://127.0.0.1:2207** on the server and sign in with your usual
 Linux username and password. Prefer Docker? See the
-[install guide](docs/INSTALL.md#docker-install).
+[install guide](docs/INSTALL.md#docker-install). On a Mac, Wargo is built locally and runs
+as a LaunchAgent: see [macOS](docs/INSTALL.md#macos).
 
 To use Wargo from other devices, put it behind HTTPS (Cloudflare Tunnel, Caddy
 or nginx). [Here's how](docs/INSTALL.md#access-from-anywhere).

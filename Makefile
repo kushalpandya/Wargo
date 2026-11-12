@@ -5,9 +5,14 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.
 export CGO_CFLAGS ?= -O2 -g -D_GNU_SOURCE
 LDFLAGS := -s -w -X github.com/kushalpandya/wargo/internal/server.Version=$(VERSION)
 
-.PHONY: all web build privd test lint dev clean
+.PHONY: all web build privd install-macos test lint dev clean
 
+# wargo-privd is Linux only (systemd socket activation).
+ifeq ($(shell uname -s),Darwin)
+all: web build
+else
 all: web build privd
+endif
 
 web:
 	cd web && npm ci --no-audit --no-fund && npm run build
@@ -17,6 +22,10 @@ build:
 
 privd:
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/wargo-privd ./cmd/wargo-privd
+
+# Install the per-user LaunchAgent on macOS (asks for sudo for /usr/local/bin).
+install-macos: web build
+	sh deploy/launchd/install.sh
 
 test:
 	go test ./...

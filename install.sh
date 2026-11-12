@@ -20,6 +20,11 @@
 #   --purge            with --uninstall, also delete data and config
 set -eu
 
+if [ "$(uname -s)" = Darwin ]; then
+  printf 'error: on macOS use deploy/launchd/install.sh (make install-macos); see docs/INSTALL.md#macos\n' >&2
+  exit 1
+fi
+
 REPO="kushalpandya/wargo"
 VERSION="${WARGO_VERSION:-}"
 TARGET_USER="${WARGO_USER:-}"

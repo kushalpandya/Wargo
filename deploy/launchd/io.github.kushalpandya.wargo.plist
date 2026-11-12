@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: deploy/launchd/install.sh replaces @BIN@, @CONFIG@ and @LOGDIR@
+     with absolute paths (launchd expands no shortcuts). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.kushalpandya.wargo</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@BIN@</string>
+    <string>serve</string>
+    <string>-config</string>
+    <string>@CONFIG@</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>@LOGDIR@/wargo.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGDIR@/wargo.log</string>
+</dict>
+</plist>

@@ -9,6 +9,8 @@ instead of a public issue.
 
 Requirements: Go 1.26+, Node.js 22+, a C compiler and PAM headers
 (`pam` on Arch, `libpam0g-dev` on Debian/Ubuntu, `pam-devel` on Fedora).
+On macOS you need the Xcode Command Line Tools (`xcode-select --install`) instead of PAM headers, and
+If Go is managed with mise, use `mise exec go@1.26.10 -- go ...`.
 
 ```sh
 git clone https://github.com/kushalpandya/wargo && cd wargo

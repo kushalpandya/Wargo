@@ -63,6 +63,49 @@ sudo systemctl restart wargo@$USER  # after editing /etc/wargo/config.toml
 
 ---
 
+## macOS
+
+Wargo runs on macOS as a per-user LaunchAgent: it starts when you log in and
+stops when you log out. It is **built locally, never downloaded**: a prebuilt
+binary is not notarized, so Gatekeeper would block it. You need the Xcode
+Command Line Tools (`xcode-select --install`), Go 1.26+ and Node.js 22+, and
+you must be an administrator (the `admin` group).
+
+```sh
+git clone https://github.com/kushalpandya/wargo && cd wargo
+make install-macos          # builds the web UI and bin/wargo, then installs
+```
+
+(With Go managed by mise: `mise exec go@1.26.10 -- make install-macos`.) The
+installer asks for your password with `sudo` to copy the binary to
+`/usr/local/bin/wargo` and to add `/etc/pam.d/wargo` if it is missing. It
+writes `~/Library/Application Support/wargo/config.toml`, puts logs in
+`~/Library/Logs/wargo/wargo.log`, and installs
+`~/Library/LaunchAgents/io.github.kushalpandya.wargo.plist`. Options:
+`--port N`, `--no-start`, `--dry-run`, `--uninstall` and `--purge`, for
+example `sh deploy/launchd/install.sh --dry-run`.
+
+Then open **http://127.0.0.1:2207** and sign in with your Mac username and
+password. Re-run `make install-macos` to upgrade; your configuration is kept.
+
+Check or restart it:
+
+```sh
+launchctl print gui/$(id -u)/io.github.kushalpandya.wargo | grep state
+launchctl kickstart -k gui/$(id -u)/io.github.kushalpandya.wargo
+```
+
+**Full Disk Access (optional).** Without it Wargo cannot open Desktop,
+Documents, Downloads, iCloud Drive or external drives. Add
+`/usr/local/bin/wargo` under System Settings, Privacy & Security, Full Disk
+Access, then restart it. Your organisation's device management may not allow
+this. Every upgrade replaces the binary, so grant it again afterwards.
+
+Not available on macOS: OS updates, System Events, sensors and the
+`wargo-privd` helper. Container mode is Linux only. To remove Wargo:
+`sh deploy/launchd/install.sh --uninstall` (add `--purge` to delete its
+config, data and logs).
+
 ## Docker install
 
 ```sh

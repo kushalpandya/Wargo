@@ -252,6 +252,30 @@ nor any folder on the way (each is opened relative to the previous one, so
 it can't be swapped for a link in between). Plex posters are fetched by Wargo and only for Plex
 library image paths, so the browser never needs the Plex token.
 
+## macOS
+
+- **Runs as you.** Wargo is a LaunchAgent in your login session, so it only
+  runs while you are logged in. There is no system-wide service.
+- **Passwords.** Sign-in is checked by `pam_opendirectory`. Directory Services
+  may slow down repeated failures, and Wargo's own throttling still comes
+  first. `/etc/pam.d/wargo` leaves out Touch ID and smart cards on purpose.
+- **Signals.** macOS has no pidfd, so Wargo checks the process start time and
+  then calls `kill(2)`. That leaves a microsecond window in which a pid could
+  be reused.
+- **Privacy permissions (TCC).** A shell or the file manager started from a
+  terminal inherits that terminal's permissions. Under launchd Wargo has only
+  its own, so Desktop, Documents, Downloads, iCloud Drive and external drives
+  need Full Disk Access for `/usr/local/bin/wargo`. This is optional, and your
+  organisation's device management may not allow it. The grant is tied to the
+  binary, so it has to be given again after every rebuild or upgrade.
+- **Paths.** `/etc`, `/tmp` and `/var` are links into `/private`, so admin
+  file actions there need the `/private/...` path.
+- **sudo and Touch ID.** If `pam_tid.so` is enabled in
+  `/etc/pam.d/sudo_local`, sudo shows a Touch ID prompt on the Mac first. A
+  remote admin approval waits for that prompt to time out before your password
+  is used.
+- **Not available:** OS updates, System Events, sensors and `wargo-privd`.
+
 ## Audit log
 
 Sign-ins, account changes, every approved admin action and every change Wargo
