@@ -13,11 +13,16 @@ function read(): ThemeMode {
   return v === "light" || v === "dark" ? v : "auto";
 }
 
+/** The page background (--bg) per theme, also used for the browser and iOS
+ *  status bar colour. public/theme-init.js keeps a copy for first paint. */
+export const THEME_BG = { light: "#f5f5fa", dark: "#06070d" } as const;
+
 function apply(mode: ThemeMode) {
   const dark = mode === "dark" || (mode === "auto" && media.matches);
   const root = document.documentElement;
   root.classList.toggle("dark", dark);
   root.dataset.theme = mode;
+  document.getElementById("theme-color")?.setAttribute("content", dark ? THEME_BG.dark : THEME_BG.light);
   listeners.forEach((l) => l());
 }
 

@@ -401,6 +401,21 @@ html.dark[data-accent="peach"] {
   background-repeat: no-repeat;
 }
 
+/* Phones and tablets (in a browser tab or installed to the Home Screen,
+   where theme-init.js sets data-standalone): the system paints the status
+   bar and Safari's top bar in the flat theme colour, so the page top must be
+   flat too or the two don't meet cleanly. Desktop keeps the wash. */
+[data-standalone] .wargo-canvas,
+[data-standalone] .wargo-canvas.wargo-auth {
+  background: var(--bg);
+}
+@media (pointer: coarse) {
+  .wargo-canvas,
+  .wargo-canvas.wargo-auth {
+    background: var(--bg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
