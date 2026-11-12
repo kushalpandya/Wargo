@@ -54,9 +54,12 @@ export function SensorsCard({ snap, series, className }: { snap: Snapshot | null
   return (
     <Card className={cn("flex flex-col", className)}>
       <CardHeader title="Sensors" icon={<Thermometer />} tint="rose" meta={snap?.temps ? `${snap.temps.length} readings` : undefined} />
-      <div className="shrink-0 px-4 pt-3">
-        <TimeChart label="CPU temperature over time" data={series} height={90} series={[{ label: "CPU", color: "--rose", fill: true }]} yFormat={(v) => `${v}°`} />
-      </div>
+      {/* No readings means no chart: an empty one shows a meaningless axis. */}
+      {!!snap?.temps?.length && (
+        <div className="shrink-0 px-4 pt-3">
+          <TimeChart label="CPU temperature over time" data={series} height={90} series={[{ label: "CPU", color: "--rose", fill: true }]} yFormat={(v) => `${v}°`} />
+        </div>
+      )}
       {!snap && <Skeleton className="m-3.5 h-32" />}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
         {snap && !snap.temps?.length && !snap.fans?.length && <p className="py-6 text-center text-xs text-muted">No temperature or fan sensors were found on this host.</p>}
