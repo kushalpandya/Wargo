@@ -59,8 +59,18 @@ export type SystemInfoWithSpecs = SystemInfo & { specs?: Specs };
 
 const sessionLabel: Record<string, string> = { wayland: "Wayland", x11: "X11", tty: "TTY", mir: "Mir" };
 
-function DistroLogo({ show, className }: { show: boolean; className?: string }) {
+/** Monochrome Apple mark for macOS hosts; follows the text colour. */
+function AppleLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={cn("p-1 text-fg", className)} aria-hidden="true">
+      <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701" />
+    </svg>
+  );
+}
+
+function DistroLogo({ show, osId, className }: { show: boolean; osId?: string; className?: string }) {
   const [failed, setFailed] = useState(false);
+  if (osId === "macos") return <AppleLogo className={className} />;
   if (!show || failed) return <Logo className={className} />;
   return <img src="/api/system/logo" alt="" onError={() => setFailed(true)} className={cn("object-contain", className)} />;
 }
@@ -188,7 +198,7 @@ export function SpecsCard({ snap }: { snap: Snapshot | null }) {
           aria-hidden="true"
         />
         <div className="flex size-14 shrink-0 items-center justify-center rounded-xl border border-border bg-surface p-2">
-          {info ? <DistroLogo show={!!sp?.logo} className="size-full" /> : <Skeleton className="size-full" />}
+          {info ? <DistroLogo show={!!sp?.logo} osId={info.osId} className="size-full" /> : <Skeleton className="size-full" />}
         </div>
         <div className="min-w-0 flex-1">
           {info ? (
