@@ -5,6 +5,7 @@ package elevate
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"testing"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -38,5 +39,12 @@ func TestBuildTrustStore(t *testing.T) {
 	}
 	if _, _, err := s.buildTrustStore(ctx, []string{"zzz"}); err == nil {
 		t.Fatal("unknown id accepted")
+	}
+}
+
+func TestMethodsReportPrivd(t *testing.T) {
+	m := New(nil, nil, nil, "/nonexistent.sock").Methods()
+	if m["privd"] != (runtime.GOOS == "linux") || m["passkey"] != false {
+		t.Fatal(m)
 	}
 }

@@ -15,6 +15,8 @@ import { usePasskeys } from "./hooks";
 interface Methods {
   sudo: boolean;
   passkey: boolean;
+  /** false where wargo-privd doesn't exist (macOS). */
+  privd?: boolean;
   password?: boolean;
   mode?: "container";
   noNewPrivsHint?: boolean;
@@ -167,7 +169,13 @@ sudo systemctl enable --now wargo-privd`}</CodeBlock>
 
 export function AdminApprovals() {
   const { data: methods, isLoading: ml } = useQuery({ queryKey: ["elevate", "methods"], queryFn: () => api.get<Methods>("/api/elevate/methods") });
-  const { data: st, isLoading: sl } = useQuery({ queryKey: ["elevate", "privd"], queryFn: () => api.get<PrivdStatus>("/api/elevate/privd"), refetchInterval: 30_000 });
+  const privdOn = !ml && methods?.privd !== false;
+  const { data: st, isLoading: sl } = useQuery({
+    queryKey: ["elevate", "privd"],
+    queryFn: () => api.get<PrivdStatus>("/api/elevate/privd"),
+    refetchInterval: 30_000,
+    enabled: privdOn,
+  });
   const { data: passkeys } = usePasskeys();
   const [trusting, setTrusting] = useState(false);
 
@@ -193,9 +201,9 @@ export function AdminApprovals() {
       <CardHeader title="Admin approvals" icon={<ShieldAlert />} />
       <CardBody className="flex flex-col gap-3">
         <p className="text-sm text-muted">
-          Wargo never keeps root. Privileged actions — signalling other users' processes, system updates, reboot — ask for approval every time.
+          Wargo never keeps root. Privileged actions (signalling other users' processes, system updates, reboot) ask for approval every time.
         </p>
-        {ml || sl ? (
+        {ml || (privdOn && sl) ? (
           <Skeleton className="h-24" />
         ) : methods?.mode === "container" ? (
           <ContainerApprovals passkey={!!methods.passkey} />
@@ -217,24 +225,26 @@ export function AdminApprovals() {
             >
               <Badge tone={methods?.sudo ? "ok" : "crit"}>{methods?.sudo ? "Available" : "Unavailable"}</Badge>
             </SettingRow>
-            <SettingRow
-              title={
-                <span className="flex items-center gap-2">
-                  <Fingerprint className="size-4 text-muted" aria-hidden="true" /> Passkey via wargo-privd
-                </span>
-              }
-              description={privdDesc}
-            >
-              <Badge tone={privdTone}>{privdLabel}</Badge>
-              {st?.reachable && (
-                <Button size="sm" icon={<BadgeCheck />} disabled={!passkeys?.length} onClick={() => setTrusting(true)}>
-                  {st.credentials > 0 ? "Change trusted passkeys" : "Trust passkeys"}
-                </Button>
-              )}
-            </SettingRow>
+            {privdOn && (
+              <SettingRow
+                title={
+                  <span className="flex items-center gap-2">
+                    <Fingerprint className="size-4 text-muted" aria-hidden="true" /> Passkey via wargo-privd
+                  </span>
+                }
+                description={privdDesc}
+              >
+                <Badge tone={privdTone}>{privdLabel}</Badge>
+                {st?.reachable && (
+                  <Button size="sm" icon={<BadgeCheck />} disabled={!passkeys?.length} onClick={() => setTrusting(true)}>
+                    {st.credentials > 0 ? "Change trusted passkeys" : "Trust passkeys"}
+                  </Button>
+                )}
+              </SettingRow>
+            )}
           </div>
         )}
-        {st && !st.container && !(st.reachable && st.credentials > 0) && (
+        {privdOn && st && !st.container && !(st.reachable && st.credentials > 0) && (
           <details className="group rounded-md border border-border bg-surface-2/50 open:bg-transparent" open={!st.reachable}>
             <summary className="cursor-pointer select-none rounded-md px-3 py-2 text-sm font-medium hover:bg-surface-2">
               {st.reachable ? "How passkey approvals work" : "Set up passkey approvals"}

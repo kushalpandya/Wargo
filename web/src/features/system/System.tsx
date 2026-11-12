@@ -16,6 +16,7 @@ import { ProcessesPanel } from "@/features/processes/Processes";
 import { SummaryTiles } from "./Tiles";
 import { EventsPanel } from "./Events";
 import { LinkIcon, linkDetails, linkName } from "./LinkLabel";
+import { useCapabilities } from "@/app/session";
 
 const toneOf = (p: number) => level(p);
 
@@ -236,15 +237,21 @@ function DiskIOCard({ snap, points }: { snap: Snapshot | null; points: Point[] }
 function ActivityMonitor() {
   const { latest: s, points } = useMetrics();
   const tempSeries = useSeries(points, ["temp"]);
+  // No hwmon (macOS): no Sensors card, the CPU card takes the full row.
+  const sensors = useCapabilities().data?.metrics?.sensors !== false;
   return (
     <>
       <SummaryTiles snap={s} points={points} />
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <CpuMemoryCard snap={s} points={points} />
-        {/* On wide screens the CPU card sets the row height; sensors scroll within it. */}
-        <div className="min-w-0 lg:relative">
-          <SensorsCard snap={s} series={tempSeries} className="lg:absolute lg:inset-0" />
+        <div className={cn("min-w-0", !sensors && "lg:col-span-2")}>
+          <CpuMemoryCard snap={s} points={points} />
         </div>
+        {sensors && (
+          // On wide screens the CPU card sets the row height; sensors scroll within it.
+          <div className="min-w-0 lg:relative">
+            <SensorsCard snap={s} series={tempSeries} className="lg:absolute lg:inset-0" />
+          </div>
+        )}
       </div>
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
         <NetworkCard snap={s} points={points} />
@@ -259,7 +266,9 @@ function ActivityMonitor() {
 
 export default function System() {
   const { "*": sub } = useParams();
-  if (sub && sub !== "processes" && sub !== "events") return <Navigate to="/system" replace />;
+  // No journal (macOS): no Events tab, and its URL falls back to the overview.
+  const events = useCapabilities().data?.events?.supported !== false;
+  if (sub && sub !== "processes" && !(sub === "events" && events)) return <Navigate to="/system" replace />;
   const tab = sub || "activity";
   return (
     <div className="min-w-0">
@@ -278,7 +287,7 @@ export default function System() {
         items={[
           { to: "/system", end: true, label: <><Activity /> Activity Monitor</> },
           { to: "/system/processes", label: <><ListTree /> Processes</> },
-          { to: "/system/events", label: <><ScrollText /> Events</> },
+          ...(events ? [{ to: "/system/events", label: <><ScrollText /> Events</> }] : []),
         ]}
       />
       {tab === "processes" ? <ProcessesPanel embedded /> : tab === "events" ? <EventsPanel /> : <ActivityMonitor />}

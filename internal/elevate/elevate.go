@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -137,6 +138,8 @@ func (s *Service) Methods() map[string]any {
 		"sudo":           sudoErr == nil && !nnp,
 		"passkey":        s.privd.Available(),
 		"noNewPrivsHint": nnp,
+		// wargo-privd (passkey-approved root actions) is Linux-only.
+		"privd": runtime.GOOS == "linux",
 	}
 }
 

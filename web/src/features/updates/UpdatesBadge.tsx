@@ -10,8 +10,9 @@ import { pendingCount, usePkgStatus } from "./api";
  * there is nothing to report. Never triggers a check.
  */
 export function UpdatesBadge({ className }: { className?: string }) {
-  const { data } = usePkgStatus();
-  const dockerOn = !!useCapabilities().data?.docker?.available;
+  const caps = useCapabilities().data;
+  const { data } = usePkgStatus({ enabled: !!caps && caps.pkg?.supported !== false });
+  const dockerOn = !!caps?.docker?.available;
   // Shares the Updates page's cache; light polling, no topic subscription.
   const ctr = useContainerUpdatesStatus({ enabled: dockerOn });
   const running = !!data?.running;

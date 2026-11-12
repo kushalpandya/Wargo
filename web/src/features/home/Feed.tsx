@@ -296,6 +296,8 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
   const events = useQuery({
     queryKey: ["system", "events", "24h", "error"],
     queryFn: () => api.get<EventsResponse>(`/api/system/events${qs({ range: "24h", level: "error" })}`),
+    // No journal (macOS): no System events section on Home.
+    enabled: !!caps && caps.events?.supported !== false,
     staleTime: 2 * 60_000,
     refetchInterval: 5 * 60_000,
   });

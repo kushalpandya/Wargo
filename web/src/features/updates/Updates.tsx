@@ -166,7 +166,7 @@ function Summary({ status, checking }: { status: PkgStatus; checking: boolean })
           label="Pending"
           value={c && !c.error ? n : "—"}
           unit={c && !c.error ? (n === 1 ? "package" : "packages") : undefined}
-          sub={c?.stale ? "outdated — check again" : c ? (n ? "from repositories" : "up to date") : "not checked yet"}
+          sub={c?.stale ? "outdated, check again" : c ? (n ? "from repositories" : "up to date") : "not checked yet"}
         />
         <Stat
           label="Download"
@@ -410,8 +410,11 @@ function Count({ n, loading, tone }: { n?: number; loading?: boolean; tone?: "ac
 /** Updates page: system packages and container images, as tabs. */
 export default function UpdatesPage() {
   const [params, setParams] = useSearchParams();
-  const pkg = usePkgStatus();
-  const docker = useCapabilities().data?.docker;
+  const caps = useCapabilities().data;
+  // macOS has no OS package updates: only the container tab is shown there.
+  const pkgSupported = caps?.pkg?.supported !== false;
+  const pkg = usePkgStatus({ enabled: !!caps && pkgSupported });
+  const docker = caps?.docker;
   const dockerOn = docker?.available !== false;
   const containers = useContainers({ enabled: dockerOn });
   const updates = useContainerUpdates({ enabled: dockerOn });
@@ -420,7 +423,13 @@ export default function UpdatesPage() {
   const ctrN = containers.data ? containers.data.filter((c) => c.updateAvailable).length : undefined;
   const param = params.get("tab");
   // Without an explicit tab, open the one that has something to do.
-  const tab: Tab = param === "containers" || param === "system" ? param : pkgN === 0 && (ctrN ?? 0) > 0 ? "containers" : "system";
+  const tab: Tab = !pkgSupported
+    ? "containers"
+    : param === "containers" || param === "system"
+      ? param
+      : pkgN === 0 && (ctrN ?? 0) > 0
+        ? "containers"
+        : "system";
 
   return (
     <div className="min-w-0">
@@ -428,17 +437,21 @@ export default function UpdatesPage() {
         <PageHeader title="Updates" description="OS packages and container images, installed when you choose." />
         <div className="mb-4 border-b border-border">
           <Tabs.List className="-mb-px flex gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Update sources">
-            <Tabs.Trigger value="system" className={tabCls}>
-              <PackageCheck /> System packages <Count n={pkgN} loading={!!pkg.data?.checking || !!pkg.data?.running} tone="accent" />
-            </Tabs.Trigger>
+            {pkgSupported && (
+              <Tabs.Trigger value="system" className={tabCls}>
+                <PackageCheck /> System packages <Count n={pkgN} loading={!!pkg.data?.checking || !!pkg.data?.running} tone="accent" />
+              </Tabs.Trigger>
+            )}
             <Tabs.Trigger value="containers" className={tabCls}>
               <Boxes /> Containers <Count n={dockerOn ? ctrN : undefined} loading={!!updates.data?.checking} tone="accent" />
             </Tabs.Trigger>
           </Tabs.List>
         </div>
-        <Tabs.Content value="system" className="focus-visible:outline-none">
-          <SystemUpdates />
-        </Tabs.Content>
+        {pkgSupported && (
+          <Tabs.Content value="system" className="focus-visible:outline-none">
+            <SystemUpdates />
+          </Tabs.Content>
+        )}
         <Tabs.Content value="containers" className="focus-visible:outline-none">
           <ContainerUpdates
             docker={docker}

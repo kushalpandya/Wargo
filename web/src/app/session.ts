@@ -34,7 +34,7 @@ export function useMe(enabled = true) {
 
 export interface Capabilities {
   version: string;
-  elevation: { sudo: boolean; passkey: boolean; password?: boolean; mode?: "container"; noNewPrivsHint?: boolean };
+  elevation: { sudo: boolean; passkey: boolean; password?: boolean; mode?: "container"; noNewPrivsHint?: boolean; /** false where wargo-privd doesn't exist (macOS). */ privd?: boolean };
   /** Wargo runs in Docker (container mode). */
   container?: boolean;
   docker?: {
@@ -55,7 +55,12 @@ export interface Capabilities {
   transmission?: { available: boolean; configured: boolean; version?: string; error?: string };
   plex?: { available: boolean; configured: boolean; version?: string; error?: string };
   launcher?: { enabled: boolean; placement: "overview" | "page" };
-  pkg?: { backend: string; available: boolean; distro: string };
+  /** supported: false where OS updates don't exist (macOS). */
+  pkg?: { backend?: string; available: boolean; distro?: string; supported?: boolean };
+  /** System Events; supported: false where there is no journal (macOS). */
+  events?: { available: boolean; supported?: boolean };
+  /** sensors: false where there are no hwmon temperature or fan readings (macOS). */
+  metrics?: { sensors: boolean };
   files?: {
     /** Configured places ("0", "1"…) followed by mounted drives ("m-…") when showMounts is on. */
     roots: { id?: string | number; kind?: "place" | "drive"; name: string; path: string; hidden?: boolean }[];

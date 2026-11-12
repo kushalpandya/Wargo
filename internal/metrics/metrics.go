@@ -124,6 +124,12 @@ type Collector struct {
 	publicIP publicIP
 }
 
+// Capabilities reports what the metrics page can show on this host:
+// temperature and fan sensors come from Linux hwmon only.
+func (c *Collector) Capabilities(context.Context) (string, any) {
+	return "metrics", map[string]any{"sensors": runtime.GOOS == "linux"}
+}
+
 func NewCollector(hub *events.Hub, interval, history time.Duration) *Collector {
 	hub.Sticky(Topic)
 	return &Collector{hub: hub, interval: interval, capacity: int(history / interval)}

@@ -101,6 +101,7 @@ func New(cfg config.Config) (*Server, error) {
 	mc := metrics.NewCollector(hub, cfg.Metrics.Interval.Duration, cfg.Metrics.History.Duration)
 	mc.Register(private)
 	s.runners = append(s.runners, mc)
+	s.capable = append(s.capable, mc)
 
 	for _, f := range features {
 		svc, err := f(d)
