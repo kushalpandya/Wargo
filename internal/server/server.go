@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -82,7 +83,7 @@ func New(cfg config.Config) (*Server, error) {
 	hub.OriginPatterns = au.OriginPatterns()
 	d := &Deps{
 		Cfg: cfg, Store: st, Hub: hub, Jobs: jobs.NewManager(hub), Audit: al, Proxy: proxy, Auth: au,
-		Elevate: elevate.New(al, proxy, auth.NewThrottle(), "").WithStore(st),
+		Elevate: elevate.New(al, proxy, auth.NewThrottle(), "").WithStore(st).WithTempDir(filepath.Join(cfg.DataDir, "tmp")),
 	}
 	if host.Container() {
 		d.Elevate.WithHostAuth(au)

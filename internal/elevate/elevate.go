@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/audit"
@@ -64,6 +65,43 @@ type Service struct {
 	exe      string
 	store    *store.Store
 	ctr      *containerState // container mode (nil natively)
+	tempDir  string          // private spool dir for sudo payloads
+}
+
+// WithTempDir sets the private directory where runSudo spools a command's
+// stdin payload so it never shares sudo's stdin with the password. It is
+// created (or tightened to 0700) now; spool re-checks it on every use.
+func (s *Service) WithTempDir(dir string) *Service {
+	s.tempDir = dir
+	if err := s.prepareTempDir(); err != nil {
+		slog.Warn("elevation temp dir is not usable", "dir", dir, "err", err)
+	}
+	return s
+}
+
+// prepareTempDir makes sure tempDir is a real directory (not a symlink)
+// owned by this user, creating it and chmodding it to 0700 as needed.
+func (s *Service) prepareTempDir() error {
+	if s.tempDir == "" {
+		return errors.New("no temp dir configured")
+	}
+	if err := os.MkdirAll(s.tempDir, 0o700); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(s.tempDir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return errors.New("temp dir is not a directory")
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Getuid() {
+		return errors.New("temp dir is owned by someone else")
+	}
+	if fi.Mode().Perm() != 0o700 {
+		return os.Chmod(s.tempDir, 0o700)
+	}
+	return nil
 }
 
 func New(al *audit.Log, proxy *httpx.ProxyTrust, t Throttler, privdSocket string) *Service {
@@ -204,10 +242,21 @@ func (s *Service) runSudo(ctx context.Context, password string, argv []string, s
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+	if stdin != nil {
+		if len(argv) < 2 || argv[1] != "helper" {
+			return nil, errors.New("payload needs a helper command")
+		}
+		path, err := s.spool(stdin)
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(path)
+		argv = append(append(append([]string{}, argv[:2]...), "--stdin-file", path), argv[2:]...)
+	}
 	args := append([]string{"-k", "-S", "-p", "", "--"}, argv...)
 	cmd := exec.CommandContext(ctx, "sudo", args...)
-	in := io.MultiReader(strings.NewReader(password+"\n"), orEmpty(stdin))
-	cmd.Stdin = in
+	// Only the password goes to sudo's stdin: the payload travels in a file.
+	cmd.Stdin = strings.NewReader(password + "\n")
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -232,10 +281,33 @@ func (s *Service) runSudo(ctx context.Context, password string, argv []string, s
 	return out, nil
 }
 
+// spool copies r into a new 0600 file in the private temp dir and returns
+// its path. The caller removes it.
+func (s *Service) spool(r io.Reader) (string, error) {
+	if err := s.prepareTempDir(); err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp(s.tempDir, "elev-*")
+	if err != nil {
+		return "", err
+	}
+	const limit = 32 << 20
+	n, err := io.Copy(f, io.LimitReader(r, limit+1))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && n > limit {
+		err = httpx.Errorf(http.StatusRequestEntityTooLarge, "too_large", "That is too large to send with administrator approval")
+	}
+	if err != nil {
+		os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
+}
+
 // validPassword rejects empty passwords and ones containing line breaks or
-// NUL: the password is written to sudo's stdin followed by the command's
-// own stdin, so a newline would split it and leak the rest into the
-// privileged command's input.
+// NUL, which sudo would read as separate password attempts.
 func validPassword(pw string) bool {
 	return pw != "" && len(pw) <= 1024 && !strings.ContainsAny(pw, "\r\n\x00")
 }

@@ -286,3 +286,67 @@ func TestHelperFsOpsRefuseSymlinkedParent(t *testing.T) {
 		t.Fatalf("d/m = %q", b)
 	}
 }
+
+func TestHelperStdinFileRejectsSymlinkAndForeignOwner(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good")
+	if err := os.WriteFile(good, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uid := os.Getuid()
+
+	// No option: args pass through untouched.
+	in, rest, err := parseStdinFile([]string{"fs", "read"}, uid)
+	if err != nil || in != nil || len(rest) != 2 {
+		t.Fatalf("passthrough: %v %v %v", in, rest, err)
+	}
+
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(good, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := parseStdinFile([]string{"--stdin-file", link, "fs"}, uid); err == nil {
+		t.Error("symlink accepted")
+	}
+	if _, _, err := parseStdinFile([]string{"--stdin-file", dir, "fs"}, uid); err == nil {
+		t.Error("directory accepted")
+	}
+	if _, _, err := parseStdinFile([]string{"--stdin-file", good, "fs"}, uid+1); err == nil {
+		t.Error("foreign owner accepted")
+	}
+	if _, _, err := parseStdinFile([]string{"--stdin-file", good}, uid); err == nil {
+		t.Error("missing operation accepted")
+	}
+	if _, err := os.Stat(good); err != nil {
+		t.Fatalf("rejected file was removed: %v", err)
+	}
+
+	in, rest, err = parseStdinFile([]string{"--stdin-file", good, "fs", "write"}, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(in)
+	if string(b) != "payload" || len(rest) != 2 || rest[0] != "fs" {
+		t.Fatalf("got %q %v", b, rest)
+	}
+	in.Close()
+	if _, err := os.Stat(good); !os.IsNotExist(err) {
+		t.Error("file not removed after close")
+	}
+}
+
+func TestStdinFileOwnerRequiresSudoUID(t *testing.T) {
+	opt := []string{"--stdin-file", "/x", "fs"}
+	if _, err := stdinFileOwner(opt, "", 0); err == nil {
+		t.Error("--stdin-file accepted without SUDO_UID")
+	}
+	if uid, err := stdinFileOwner([]string{"fs"}, "", 7); err != nil || uid != 7 {
+		t.Errorf("no option, no SUDO_UID: %d %v", uid, err)
+	}
+	if uid, err := stdinFileOwner(opt, "1000", 0); err != nil || uid != 1000 {
+		t.Errorf("SUDO_UID: %d %v", uid, err)
+	}
+	if _, err := stdinFileOwner(opt, "abc", 0); err == nil {
+		t.Error("bad SUDO_UID accepted")
+	}
+}

@@ -49,11 +49,94 @@ func Main(args []string) int {
 	if os.Geteuid() != 0 {
 		return fail("must run as root (via sudo)")
 	}
-	code, err := Exec(args, os.Stdin, os.Stdout, os.Stderr)
+	uid, err := stdinFileOwner(args, os.Getenv("SUDO_UID"), os.Getuid())
+	if err != nil {
+		return fail("%v", err)
+	}
+	var stdin io.Reader = os.Stdin
+	in, rest, err := parseStdinFile(args, uid)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if in != nil {
+		defer in.Close()
+		stdin = in
+	}
+	code, err := Exec(rest, stdin, os.Stdout, os.Stderr)
 	if err != nil {
 		return fail("%v", err)
 	}
 	return code
+}
+
+// stdinFileOwner picks the uid that must own a --stdin-file payload. The
+// option is only meant for the sudo path, so it is refused when SUDO_UID is
+// unset (wargo-privd runs helper as root with no SUDO_UID, and the file
+// removal on close must never act on arbitrary root-owned files).
+func stdinFileOwner(args []string, sudoUID string, realUID int) (int, error) {
+	if sudoUID == "" {
+		if len(args) > 0 && args[0] == "--stdin-file" {
+			return 0, errors.New("--stdin-file is only valid under sudo")
+		}
+		return realUID, nil
+	}
+	n, err := strconv.Atoi(sudoUID)
+	if err != nil || n < 0 {
+		return 0, errors.New("invalid SUDO_UID")
+	}
+	return n, nil
+}
+
+// maxStdinFile bounds a spooled payload (see elevate.runSudo).
+const maxStdinFile = 32 << 20
+
+// parseStdinFile handles the optional leading `--stdin-file <path>`. The
+// unprivileged server spools a payload there so it never shares sudo's
+// stdin with the password. The file must be a regular file (symlinks are
+// refused) owned by uid and at most 32 MiB. The returned reader removes the
+// file when closed. With no option, stdin is nil and args are returned as is.
+func parseStdinFile(args []string, uid int) (io.ReadCloser, []string, error) {
+	if len(args) == 0 || args[0] != "--stdin-file" {
+		return nil, args, nil
+	}
+	if len(args) < 3 {
+		return nil, nil, errors.New("--stdin-file needs a path and an operation")
+	}
+	path, rest := args[1], args[2:]
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open stdin file: %w", err)
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	switch {
+	case !fi.Mode().IsRegular():
+		err = errors.New("stdin file is not a regular file")
+	case !ok || int(st.Uid) != uid:
+		err = errors.New("stdin file has the wrong owner")
+	case fi.Size() > maxStdinFile:
+		err = errors.New("stdin file is too large")
+	}
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	return &removeOnClose{File: f, path: path}, rest, nil
+}
+
+type removeOnClose struct {
+	*os.File
+	path string
+}
+
+func (r *removeOnClose) Close() error {
+	err := r.File.Close()
+	os.Remove(r.path)
+	return err
 }
 
 // Exec runs one helper operation in the calling process, which must
