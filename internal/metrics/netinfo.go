@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build linux
+
 package metrics
 
 import (
@@ -14,19 +16,6 @@ import (
 
 	"github.com/kushalpandya/wargo/internal/host"
 )
-
-// Link describes what an interface is connected to. Wi-Fi details come
-// from the host's own tools (iw, then NetworkManager), so they work the
-// same natively and in container mode (which shares the host network).
-type Link struct {
-	Kind       string  `json:"kind"`                 // wifi | ethernet | vpn | bridge | other
-	Up         bool    `json:"up"`                   // carrier / operstate up
-	SSID       string  `json:"ssid,omitempty"`       // Wi-Fi network name
-	SignalDBm  int     `json:"signalDbm,omitempty"`  // Wi-Fi signal, e.g. -45
-	Band       string  `json:"band,omitempty"`       // "2.4 GHz" | "5 GHz" | "6 GHz"
-	RateMbps   float64 `json:"rateMbps,omitempty"`   // Wi-Fi tx bitrate or Ethernet speed
-	Connection string  `json:"connection,omitempty"` // NetworkManager connection name
-}
 
 var (
 	linksMu sync.Mutex

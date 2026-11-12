@@ -64,14 +64,13 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/system/self", func(w http.ResponseWriter, r *http.Request) {
 		var ms runtime.MemStats
 		runtime.ReadMemStats(&ms)
-		b, _ := os.ReadFile("/proc/self/status")
 		u := os.Getenv("USER")
 		if host.Container() {
 			u = host.AdminName()
 		}
 		out := Self{
 			Version: s.version, GoVersion: runtime.Version(), PID: os.Getpid(),
-			RSSBytes: parseVmRSS(string(b)), HeapBytes: ms.HeapAlloc, Goroutines: runtime.NumGoroutine(),
+			RSSBytes: selfRSS(), HeapBytes: ms.HeapAlloc, Goroutines: runtime.NumGoroutine(),
 			UptimeSec: int64(time.Since(s.started).Seconds()), DataDir: s.dataDir, User: u,
 		}
 		if host.Container() {

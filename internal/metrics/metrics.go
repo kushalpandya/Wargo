@@ -8,7 +8,6 @@ import (
 	"context"
 	"math"
 	"net/http"
-	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -148,21 +147,11 @@ func (c *Collector) Run(ctx context.Context) {
 	}
 }
 
-func physicalDisk(name string) bool {
-	for _, p := range []string{"loop", "ram", "zram", "sr", "fd", "dm-", "md"} {
-		if strings.HasPrefix(name, p) {
-			return false
-		}
-	}
-	_, err := os.Stat(hostfs.Path(filepath.Join("/sys/block", name)))
-	return err == nil
-}
-
 func interestingIf(name string) bool {
 	if name == "lo" {
 		return false
 	}
-	for _, p := range []string{"veth", "br-", "docker", "virbr", "vnet", "cni", "flannel", "kube"} {
+	for _, p := range ifSkipPrefixes {
 		if strings.HasPrefix(name, p) {
 			return false
 		}
@@ -264,9 +253,7 @@ func (c *Collector) sample(ctx context.Context) {
 	if up, err := host.UptimeWithContext(ctx); err == nil {
 		s.Uptime = up
 	}
-	if m, err := load.MiscWithContext(ctx); err == nil {
-		s.Procs = uint64(m.ProcsTotal)
-	}
+	s.Procs = procCount(ctx)
 
 	swapPct := 0.0
 	if s.Memory.SwapTotal > 0 {

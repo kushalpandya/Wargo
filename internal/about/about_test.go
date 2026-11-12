@@ -13,3 +13,9 @@ func TestParseVmRSS(t *testing.T) {
 		t.Fatal("missing")
 	}
 }
+
+func TestSelfRSS(t *testing.T) {
+	if selfRSS() == 0 {
+		t.Fatal("rss 0")
+	}
+}
