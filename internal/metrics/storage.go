@@ -139,7 +139,9 @@ func drives(fs []Filesystem, temps []Temp) []Drive {
 		if sz == 0 {
 			continue
 		}
-		d := Drive{Name: name, Size: uint64(sz) * 512}
+		// Partitions is never null: a disk with a filesystem directly on it
+		// has none, and the UI maps over the list.
+		d := Drive{Name: name, Size: uint64(sz) * 512, Partitions: []Partition{}}
 		d.Model = strings.TrimSpace(readStr(filepath.Join(base, "device", "model")))
 		if d.Model == "" {
 			d.Model = strings.TrimSpace(readStr(filepath.Join(base, "device", "name")))

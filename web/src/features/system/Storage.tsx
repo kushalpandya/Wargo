@@ -112,7 +112,7 @@ export const StorageCard = memo(function StorageCard() {
     }
     const claimed = new Set<string>();
     const groups = (data?.drives ?? []).map((d) => {
-      const parts: PartRow[] = d.partitions.map((p) => {
+      const parts: PartRow[] = (d.partitions ?? []).map((p) => {
         claimed.add(p.name);
         return { name: p.name, size: p.size, label: p.label, fs: byPart.get(p.name) ?? [] };
       });
