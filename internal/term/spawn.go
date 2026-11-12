@@ -23,8 +23,6 @@ const (
 	KindContainer = "container"
 )
 
-const defaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
 var containerRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
 // ValidContainer reports whether s is an acceptable container id/name.
@@ -107,7 +105,7 @@ func buildEnv(environ []string, a account, extra ...string) []string {
 	}
 	lang := src["LANG"]
 	if lang == "" {
-		lang = "C.UTF-8"
+		lang = defaultLang
 	}
 	env = append(env, "LANG="+lang)
 	var lc []string

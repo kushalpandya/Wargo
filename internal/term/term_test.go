@@ -79,7 +79,7 @@ func TestBuildEnv(t *testing.T) {
 	}
 	// Defaults when Wargo's env is empty (e.g. systemd).
 	env = buildEnv(nil, a, "DOCKER_HOST=unix:///x")
-	if !slices.Contains(env, "PATH="+defaultPath) || !slices.Contains(env, "LANG=C.UTF-8") || env[len(env)-1] != "DOCKER_HOST=unix:///x" {
+	if !slices.Contains(env, "PATH="+defaultPath) || !slices.Contains(env, "LANG="+defaultLang) || env[len(env)-1] != "DOCKER_HOST=unix:///x" {
 		t.Fatalf("defaults: %q", env)
 	}
 }

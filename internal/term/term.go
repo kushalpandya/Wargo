@@ -67,18 +67,28 @@ func termEnviron() []string {
 // dockerSocket is the Docker socket Wargo itself uses; container shells are
 // pinned to it so the docker CLI targets the same engine.
 func New(a Auditor, origins []string, dockerSocket string) *Service {
-	return &Service{
+	s := &Service{
 		audit:    a,
 		origins:  origins,
 		max:      defaultMaxSessions,
 		idle:     defaultIdle,
 		acct:     currentAccount(os.Getenv),
-		tools:    lookTools(host.LookPath),
 		env:      termEnviron(),
 		sessions: map[string]*Session{},
 
 		dockerSocket: dockerSocket,
 	}
+	look := host.LookPath
+	if resolvePath && !host.Container() {
+		// macOS: launchd gives Wargo a bare PATH, so terminals and tool
+		// lookup use the user's login PATH (Homebrew and friends).
+		if p := resolveLoginPath(context.Background(), s.acct, runLogin); p != "" {
+			s.env = withPath(s.env, p)
+			look = func(name string) (string, error) { return lookIn(p, name) }
+		}
+	}
+	s.tools = lookTools(look)
+	return s
 }
 
 // extraEnv is the docker environment a session of this kind gets on top of
