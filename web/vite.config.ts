@@ -5,6 +5,10 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 
 const api = process.env.WARGO_API ?? "http://127.0.0.1:2207";
+// scripts/dev.sh --lan serves the UI to other machines. The proxy then adds
+// X-Forwarded-* headers, so the backend sees proxied requests (and refuses
+// dev.auth_bypass for them) instead of treating every visitor as local.
+const xfwd = process.env.WARGO_DEV_LAN === "1";
 
 /** Preloads the main UI font (latin Plus Jakarta Sans) so text doesn't reflow on first paint. */
 function preloadFont(): Plugin {
@@ -28,8 +32,8 @@ export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   server: {
     proxy: {
-      "/api": { target: api, changeOrigin: false },
-      "/ws": { target: api.replace(/^http/, "ws"), ws: true },
+      "/api": { target: api, changeOrigin: false, xfwd },
+      "/ws": { target: api.replace(/^http/, "ws"), ws: true, xfwd },
     },
   },
   build: {

@@ -9,24 +9,24 @@ instead of a public issue.
 
 Requirements: Go 1.26+, Node.js 22+, a C compiler and PAM headers
 (`pam` on Arch, `libpam0g-dev` on Debian/Ubuntu, `pam-devel` on Fedora).
-On macOS you need the Xcode Command Line Tools (`xcode-select --install`) instead of PAM headers, and
-If Go is managed with mise, use `mise exec go@1.26.10 -- go ...`.
+On macOS you need the Xcode Command Line Tools (`xcode-select --install`) instead of PAM headers.
 
 ```sh
 git clone https://github.com/kushalpandya/wargo && cd wargo
-cd web && npm ci && cd ..
-
-# A local config that skips sign-in (only honoured on 127.0.0.1):
-cat > dev.local.toml <<'EOF'
-listen = "127.0.0.1:2207"
-data_dir = "./data"
-[dev]
-auth_bypass = true
-EOF
-
-go run ./cmd/wargo -config dev.local.toml          # backend on :2207
-cd web && WARGO_API=http://127.0.0.1:2207 npm run dev   # UI with live reload on :5173
+scripts/dev.sh          # or: make dev
 ```
+
+This runs the backend and the UI with live reload together; open http://127.0.0.1:5173 and press
+Ctrl+C to stop both. Output is prefixed `[api]` and `[web]`. The first run installs the web
+dependencies and creates `dev.local.toml` (git-ignored), which listens on 127.0.0.1:2207 and skips
+sign-in. Restart the script after changing Go code. If Go is managed with mise and has no global
+version, the script runs the toolchain from `go.mod` through `mise exec`.
+
+`scripts/dev.sh --lan` (or `make dev ARGS=--lan`) also serves the UI on this machine's LAN
+addresses, for testing from a phone or another computer. The backend stays on loopback behind Vite,
+which then marks every request as forwarded, so the sign-in bypass is refused and everyone,
+including you, signs in with a real account password. On macOS that needs the PAM service file:
+`sudo install -m 0644 deploy/pam/wargo-macos /etc/pam.d/wargo`.
 
 `make` builds the embedded UI and both binaries into `bin/`.
 

@@ -35,9 +35,10 @@ lint:
 	go vet ./...
 	cd web && npm run lint --if-present
 
-# Run the backend with a local dev config (see config.example.toml).
+# Run the backend and the live-reload UI together; Ctrl+C stops both.
+# ARGS=--lan also serves the UI on the LAN (sign-in required).
 dev:
-	go run ./cmd/wargo -config dev.local.toml
+	sh scripts/dev.sh $(ARGS)
 
 clean:
 	rm -rf bin web/dist/assets web/dist/index.html
