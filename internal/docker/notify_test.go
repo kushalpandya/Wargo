@@ -49,12 +49,16 @@ func TestContainerEventMapping(t *testing.T) {
 // Center, a Raise while the same (category, key) is open does nothing.
 type fakeNotifier struct {
 	open     map[string]bool
+	cleared  map[string]bool // open items the owner cleared
 	raised   []notify.Occurrence
+	moved    []notify.Occurrence
 	resolved []string // "category key: title"
 	updates  []string // "source automatic: names"
 }
 
-func newFakeNotifier() *fakeNotifier { return &fakeNotifier{open: map[string]bool{}} }
+func newFakeNotifier() *fakeNotifier {
+	return &fakeNotifier{open: map[string]bool{}, cleared: map[string]bool{}}
+}
 
 func (f *fakeNotifier) Raise(_ context.Context, o notify.Occurrence) bool {
 	k := string(o.Category) + " " + o.Key
@@ -72,7 +76,27 @@ func (f *fakeNotifier) Resolve(_ context.Context, cat notify.Category, key, titl
 		return false
 	}
 	delete(f.open, k)
+	delete(f.cleared, k)
 	f.resolved = append(f.resolved, k+": "+title)
+	return true
+}
+
+// Move is Resolve then an item for o that never pushes, cleared when the
+// old one was.
+func (f *fakeNotifier) Move(ctx context.Context, from, title string, o notify.Occurrence) bool {
+	cleared := f.cleared[string(o.Category)+" "+from]
+	if !f.Resolve(ctx, o.Category, from, title) {
+		return false
+	}
+	k := string(o.Category) + " " + o.Key
+	if f.open[k] {
+		return true
+	}
+	f.open[k] = true
+	if cleared {
+		f.cleared[k] = true
+	}
+	f.moved = append(f.moved, o)
 	return true
 }
 
@@ -532,21 +556,21 @@ func TestRenameMovesProblem(t *testing.T) {
 	w := newTestWatch(n, clock)
 	w.event(ctx, "old", "health_status: unhealthy", "")
 	w.event(ctx, "old", "die", "1")
-	pushes := len(n.raised)
+	raised := len(n.raised)
 	w.event(ctx, "new", "rename", "old")
 	if len(n.resolved) != 2 || n.resolved[0] != "container.unhealthy old: old was renamed to new" ||
 		n.resolved[1] != "container.failed old: old was renamed to new" {
 		t.Fatalf("resolved = %v", n.resolved)
 	}
-	// The open problems move to the new name at once, without a push.
+	// The open problems move to the new name at once (Move never pushes).
 	if len(n.open) != 2 || !n.open["container.unhealthy new"] || !n.open["container.failed new"] {
 		t.Fatalf("open after rename: %v", n.open)
 	}
+	if len(n.raised) != raised {
+		t.Errorf("rename raised %+v; want the problems moved", n.raised[raised:])
+	}
 	titles := map[string]string{}
-	for _, o := range n.raised[pushes:] {
-		if !o.Baseline {
-			t.Errorf("rename pushed %s %s", o.Category, o.Key)
-		}
+	for _, o := range n.moved {
 		titles[string(o.Category)] = o.Title
 	}
 	if titles["container.unhealthy"] != "new is unhealthy" || titles["container.failed"] != "new stopped with an error" {
@@ -562,6 +586,21 @@ func TestRenameMovesProblem(t *testing.T) {
 		t.Fatalf("open after rename: %v", n.open)
 	}
 
+	// A problem the owner cleared stays tracked under the new name, and
+	// stays cleared: renaming does not bring it back.
+	n = newFakeNotifier()
+	w = newTestWatch(n, clock)
+	w.event(ctx, "c", "health_status: unhealthy", "")
+	w.event(ctx, "c", "die", "1")
+	n.cleared["container.unhealthy c"] = true
+	w.event(ctx, "d", "rename", "c")
+	if len(n.open) != 2 || !n.open["container.unhealthy d"] || !n.open["container.failed d"] {
+		t.Fatalf("open after renaming a cleared problem: %v", n.open)
+	}
+	if !n.cleared["container.unhealthy d"] || n.cleared["container.failed d"] {
+		t.Fatalf("cleared after rename = %v; want only the unhealthy item", n.cleared)
+	}
+
 	// A stop in progress follows the container to its new name.
 	n = newFakeNotifier()
 	w = newTestWatch(n, clock)
@@ -570,6 +609,40 @@ func TestRenameMovesProblem(t *testing.T) {
 	w.event(ctx, "t", "die", "1")
 	if len(n.raised) != 0 {
 		t.Fatalf("stop after a rename raised %+v", n.raised)
+	}
+}
+
+// A container renamed while it is counting down to "running again",
+// "healthy again" or "was stopped" still resolves, under its new name.
+func TestRenameDuringHoldDownResolves(t *testing.T) {
+	ctx := context.Background()
+	n := newFakeNotifier()
+	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+	w := newTestWatch(n, clock)
+	w.event(ctx, "old", "health_status: unhealthy", "")
+	w.event(ctx, "old", "die", "1")
+	w.event(ctx, "old", "start", "")
+	w.event(ctx, "old", "health_status: healthy", "")
+	w.event(ctx, "x", "health_status: unhealthy", "")
+	w.event(ctx, "x", "kill", "15")
+	w.event(ctx, "x", "die", "143")
+	clock.advance(time.Minute)
+	w.event(ctx, "new", "rename", "old")
+	w.event(ctx, "y", "rename", "x")
+	clock.advance(stableAfter)
+	if len(n.open) != 0 {
+		t.Fatalf("open after the hold-down: %v", n.open)
+	}
+	want := map[string]bool{
+		"container.failed new: new is running again":    true,
+		"container.unhealthy new: new is healthy again": true,
+		"container.unhealthy y: y was stopped":          true,
+	}
+	for _, r := range n.resolved {
+		delete(want, r)
+	}
+	if len(want) != 0 {
+		t.Fatalf("resolved = %v; missing %v", n.resolved, want)
 	}
 }
 

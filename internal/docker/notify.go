@@ -27,6 +27,7 @@ type notifier interface {
 	Raise(ctx context.Context, o notify.Occurrence) bool
 	Resolve(ctx context.Context, cat notify.Category, key, title string) (resolved bool)
 	Reconcile(ctx context.Context, cat notify.Category, current []string, resolvedTitle func(key string) string)
+	Move(ctx context.Context, from, title string, o notify.Occurrence) bool
 	ReportUpdates(ctx context.Context, source string, names []string, automatic bool)
 }
 
@@ -231,13 +232,15 @@ func (w *healthWatch) event(ctx context.Context, name, action, code string) {
 		return
 	case "rename":
 		// code is the old name. Its open items move to the new name: the
-		// old ones are resolved and the same problems raised again under
-		// the new name, without a push. A stop in progress carries over.
+		// old ones are resolved and the same problems opened under the new
+		// name, without a push, and still cleared if the owner cleared
+		// them (Move). A stop in progress and a pending resolve carry over.
 		old := code
 		if old == "" || old == name {
 			return
 		}
 		w.mu.Lock()
+		wasStable, wasHealthy, wasGone := w.stable[old] != nil, w.healthy[old] != nil, w.gone[old] != nil
 		w.cancelLocked(w.stable, old)
 		w.cancelLocked(w.healthy, old)
 		w.cancelLocked(w.gone, old)
@@ -249,10 +252,22 @@ func (w *healthWatch) event(ctx context.Context, name, action, code string) {
 		delete(w.signals, name)
 		w.mu.Unlock()
 		for _, cat := range []notify.Category{notify.ContainerUnhealthy, notify.ContainerFailed} {
-			if w.n.Resolve(ctx, cat, old, old+" was renamed to "+name) {
-				w.n.Raise(ctx, notify.Occurrence{Category: cat, Key: name, Title: problemTitle(cat, name), Link: containerLink(name), Baseline: true})
-			}
+			w.n.Move(ctx, old, old+" was renamed to "+name,
+				notify.Occurrence{Category: cat, Key: name, Title: problemTitle(cat, name), Link: containerLink(name)})
 		}
+		// The hold-down starts over under the new name.
+		bg := context.WithoutCancel(ctx)
+		w.mu.Lock()
+		if wasStable {
+			w.scheduleLocked(bg, w.stable, notify.ContainerFailed, name, resolvedTitle(notify.ContainerFailed, name))
+		}
+		if wasHealthy {
+			w.scheduleLocked(bg, w.healthy, notify.ContainerUnhealthy, name, resolvedTitle(notify.ContainerUnhealthy, name))
+		}
+		if wasGone {
+			w.scheduleLocked(bg, w.gone, notify.ContainerUnhealthy, name, name+" was stopped")
+		}
+		w.mu.Unlock()
 		return
 	case "start":
 		w.mu.Lock()

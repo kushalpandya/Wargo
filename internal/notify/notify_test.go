@@ -169,6 +169,51 @@ func TestClearAndClearAll(t *testing.T) {
 	}
 }
 
+// Move resolves the old key's open item and opens one under the new key
+// without a push; one the owner cleared stays cleared under the new key,
+// and is still open (raising it again does nothing).
+func TestMoveKeepsCleared(t *testing.T) {
+	e := newTestCenter(t)
+	ctx := context.Background()
+	e.raise(unhealthy("a"))
+	e.raise(unhealthy("b"))
+	pushes := len(e.pushes)
+	if !e.c.Move(ctx, "a", "a was renamed to c", unhealthy("c")) {
+		t.Fatal("Move of an open item = false")
+	}
+	if e.c.Move(ctx, "zz", "", unhealthy("zz2")) {
+		t.Fatal("Move without an open item = true")
+	}
+	s := e.snap(t)
+	keys := map[string]bool{}
+	for _, it := range s.Recent {
+		keys[it.Key] = it.ResolvedAt == nil
+	}
+	if len(keys) != 3 || !keys["c"] || keys["a"] || !keys["b"] || len(e.pushes) != pushes {
+		t.Fatalf("after move: recent %+v pushes %d", s.Recent, len(e.pushes))
+	}
+	for _, it := range s.Recent {
+		if it.Key == "b" {
+			if err := e.c.Clear(ctx, it.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	e.c.Move(ctx, "b", "b was renamed to d", unhealthy("d"))
+	s = e.snap(t)
+	for _, it := range s.Recent {
+		if it.Key == "d" || it.Key == "b" {
+			t.Fatalf("cleared item shows after the move: %+v", it)
+		}
+	}
+	if s.Badge != 1 {
+		t.Fatalf("badge = %d, want 1 (c)", s.Badge)
+	}
+	if e.raise(unhealthy("d")) || len(e.snap(t).Recent) != 2 {
+		t.Fatalf("moved cleared item is not open: raised again")
+	}
+}
+
 func TestRetention(t *testing.T) {
 	e := newTestCenter(t)
 	for i := range 120 {
