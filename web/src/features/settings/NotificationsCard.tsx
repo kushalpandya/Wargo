@@ -109,7 +109,7 @@ function PushRow() {
       description={
         support !== "ok"
           ? blocked[support]
-          : state.error
+          : state.error && !state.data
             ? <ErrorNote error={state.error} className="mt-1" />
             : on
               ? me && !me.remember
@@ -118,7 +118,7 @@ function PushRow() {
               : "Push is off here. You still see notifications in the app."
       }
     >
-      {state.error ? null : state.isLoading || localKey === undefined ? (
+      {state.error && !state.data ? null : state.isLoading || localKey === undefined ? (
         <Skeleton className="h-8 w-48" />
       ) : on ? (
         <Button size="sm" loading={set.isPending} onClick={() => change(false)}>

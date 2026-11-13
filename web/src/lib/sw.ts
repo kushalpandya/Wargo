@@ -42,6 +42,18 @@ export function shouldReloadOnControllerChange(s: {
   return s.requested || s.hidden ? "reload" : "when-hidden";
 }
 
+/**
+ * Whether a tab owed a reload onto a new version reloads on a visibility
+ * change. It reloads as it is hidden (once). If the platform suspended the
+ * page as it hid, before the reload navigated (iOS can), it is still pending
+ * when the page is shown again, so it reloads then. A page that did reload
+ * starts fresh with nothing pending, so it never reloads twice.
+ */
+export function shouldReloadOnVisibilityChange(s: { pending: boolean; reloading: boolean; visible: boolean }): boolean {
+  if (!s.pending) return false;
+  return s.visible || !s.reloading;
+}
+
 /** Tells a waiting worker to take over; the page reloads on controllerchange. Returns whether it asked. */
 function apply(reg: ServiceWorkerRegistration): boolean {
   if (reg.waiting && shouldApply({ waiting: true, controlled: !!navigator.serviceWorker.controller })) {
@@ -68,10 +80,12 @@ export function registerServiceWorker(): void {
   // tab that asked for it and in background tabs, later in other tabs in use.
   let controlled = !!sw.controller;
   let requested = false;
+  // pending: a reload is owed and this page has not navigated yet.
   let pending = false;
   let reloading = false;
   const reload = () => {
     if (reloading) return;
+    pending = true;
     reloading = true;
     window.location.reload();
   };
@@ -82,7 +96,9 @@ export function registerServiceWorker(): void {
     else if (next === "when-hidden") pending = true;
   });
   document.addEventListener("visibilitychange", () => {
-    if (pending && document.visibilityState === "hidden") reload();
+    if (!shouldReloadOnVisibilityChange({ pending, reloading, visible: document.visibilityState === "visible" })) return;
+    reloading = true;
+    window.location.reload();
   });
   sw.register("/sw.js", { scope: "/", updateViaCache: "none" })
     .then((reg) => {
