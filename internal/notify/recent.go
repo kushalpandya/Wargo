@@ -146,8 +146,9 @@ func (c *Center) Reconcile(ctx context.Context, cat Category, current []string, 
 
 // Resolve marks the open occurrence of (cat, key) as resolved, so it stops
 // counting toward the badge, and replaces its title when title is not
-// empty ("gluetun is healthy again"). It does nothing if none is open.
-func (c *Center) Resolve(ctx context.Context, cat Category, key, title string) {
+// empty ("gluetun is healthy again"). It does nothing if none is open,
+// and reports whether one was.
+func (c *Center) Resolve(ctx context.Context, cat Category, key, title string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	res, err := c.st.DB.ExecContext(ctx,
@@ -156,11 +157,13 @@ func (c *Center) Resolve(ctx context.Context, cat Category, key, title string) {
 		c.now().UnixMilli(), title, title, string(cat), key)
 	if err != nil {
 		slog.Error("notifications: resolve", "category", cat, "key", key, "err", err)
-		return
+		return false
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		c.publishLocked(ctx)
+		return true
 	}
+	return false
 }
 
 // Clear hides one Recent item. An unknown or already cleared id is

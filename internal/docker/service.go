@@ -93,8 +93,6 @@ type Service struct {
 	watch           *healthWatch
 	synced          bool
 	startupReported bool
-	// reportedUpdates holds the container names in the last updates report.
-	reportedUpdates map[string]bool
 	dockerAbsent    func() bool
 }
 

@@ -25,7 +25,7 @@ import (
 // notifier is the part of notify.Center the containers feature uses.
 type notifier interface {
 	Raise(ctx context.Context, o notify.Occurrence) bool
-	Resolve(ctx context.Context, cat notify.Category, key, title string)
+	Resolve(ctx context.Context, cat notify.Category, key, title string) (resolved bool)
 	Reconcile(ctx context.Context, cat notify.Category, current []string, resolvedTitle func(key string) string)
 	ReportUpdates(ctx context.Context, source string, names []string, automatic bool)
 }
@@ -230,9 +230,9 @@ func (w *healthWatch) event(ctx context.Context, name, action, code string) {
 		w.n.Resolve(ctx, notify.ContainerFailed, name, name+" was removed")
 		return
 	case "rename":
-		// code is the old name. Its items are resolved; the next sync or
-		// health event raises them again under the new name if the
-		// problem goes on. A stop in progress carries over.
+		// code is the old name. Its open items move to the new name: the
+		// old ones are resolved and the same problems raised again under
+		// the new name, without a push. A stop in progress carries over.
 		old := code
 		if old == "" || old == name {
 			return
@@ -248,8 +248,11 @@ func (w *healthWatch) event(ctx context.Context, name, action, code string) {
 		delete(w.signals, old)
 		delete(w.signals, name)
 		w.mu.Unlock()
-		w.n.Resolve(ctx, notify.ContainerUnhealthy, old, old+" was renamed to "+name)
-		w.n.Resolve(ctx, notify.ContainerFailed, old, old+" was renamed to "+name)
+		for _, cat := range []notify.Category{notify.ContainerUnhealthy, notify.ContainerFailed} {
+			if w.n.Resolve(ctx, cat, old, old+" was renamed to "+name) {
+				w.n.Raise(ctx, notify.Occurrence{Category: cat, Key: name, Title: problemTitle(cat, name), Link: containerLink(name), Baseline: true})
+			}
+		}
 		return
 	case "start":
 		w.mu.Lock()
@@ -425,24 +428,16 @@ func failedState(c Container) bool {
 
 func containerLink(name string) string { return "/containers/" + url.PathEscape(name) }
 
-// updateNames lists the containers with an image update available for
-// the updates report. A container whose image check failed this round
-// stays in if the last report had it, so a transient registry error does
-// not drop it (and push it again on the next good check).
-func (s *Service) updateNames(l []Container) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// updateNames lists the containers with an image update available. A
+// transient check failure keeps the previous answer (see merge), so a
+// known update stays in the report.
+func updateNames(l []Container) []string {
 	var out []string
-	reported := map[string]bool{}
 	for _, c := range l {
-		u := s.updates[c.Image+"|"+c.ImageID]
-		failed := u.UpdateAvailable == nil && u.Error != ""
-		if c.UpdateAvailable != nil && *c.UpdateAvailable || failed && s.reportedUpdates[c.Name] {
+		if c.UpdateAvailable != nil && *c.UpdateAvailable {
 			out = append(out, c.Name)
-			reported[c.Name] = true
 		}
 	}
-	s.reportedUpdates = reported
 	return out
 }
 
@@ -501,7 +496,7 @@ func (s *Service) syncProblems(ctx context.Context) {
 		return
 	}
 	if s.takeStartupReport() {
-		s.notify.ReportUpdates(ctx, "containers", s.updateNames(l), false)
+		s.notify.ReportUpdates(ctx, "containers", updateNames(l), false)
 	}
 	s.mu.Lock()
 	baseline := !s.synced
@@ -533,7 +528,7 @@ func (s *Service) reportStartupUpdates(ctx context.Context) {
 		l = nil
 	}
 	if s.takeStartupReport() {
-		s.notify.ReportUpdates(ctx, "containers", s.updateNames(l), false)
+		s.notify.ReportUpdates(ctx, "containers", updateNames(l), false)
 	}
 }
 
@@ -558,7 +553,7 @@ func (s *Service) reportUpdates(ctx context.Context, automatic bool) {
 		return
 	}
 	s.takeStartupReport()
-	s.notify.ReportUpdates(ctx, "containers", s.updateNames(l), automatic)
+	s.notify.ReportUpdates(ctx, "containers", updateNames(l), automatic)
 }
 
 // dockerMissing reports whether Docker is not installed here: no socket

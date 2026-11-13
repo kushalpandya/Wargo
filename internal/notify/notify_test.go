@@ -90,7 +90,12 @@ func TestRaiseOncePerOccurrence(t *testing.T) {
 	if got := len(e.snap(t).Recent); got != 1 {
 		t.Fatalf("recent: got %d items, want 1", got)
 	}
-	e.c.Resolve(ctx, ContainerUnhealthy, "gluetun", "gluetun is healthy again")
+	if !e.c.Resolve(ctx, ContainerUnhealthy, "gluetun", "gluetun is healthy again") {
+		t.Fatal("resolve of an open occurrence reported nothing resolved")
+	}
+	if e.c.Resolve(ctx, ContainerUnhealthy, "gluetun", "gluetun is healthy again") {
+		t.Fatal("resolve with nothing open reported a resolve")
+	}
 	if !e.raise(unhealthy("gluetun")) {
 		t.Fatal("raise after resolve did not push")
 	}
