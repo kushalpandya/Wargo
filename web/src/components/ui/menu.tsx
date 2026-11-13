@@ -3,7 +3,18 @@ import { DropdownMenu as M, Tooltip as T } from "radix-ui";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
-export function Menu({ trigger, children, align = "end" }: { trigger: ReactNode; children: ReactNode; align?: "start" | "end" | "center" }) {
+export function Menu({
+  trigger,
+  children,
+  align = "end",
+  className,
+}: {
+  trigger: ReactNode;
+  children: ReactNode;
+  align?: "start" | "end" | "center";
+  /** Extra classes for the menu panel, e.g. a width for menus with long rows. */
+  className?: string;
+}) {
   return (
     <M.Root modal={false}>
       <M.Trigger asChild>{trigger}</M.Trigger>
@@ -11,7 +22,8 @@ export function Menu({ trigger, children, align = "end" }: { trigger: ReactNode;
         <M.Content
           align={align}
           sideOffset={4}
-          className="z-50 min-w-44 rounded-md border border-border-strong bg-surface p-1 shadow-xl focus:outline-none"
+          collisionPadding={12}
+          className={cn("z-50 min-w-44 rounded-md border border-border-strong bg-surface p-1 shadow-xl focus:outline-none", className)}
         >
           {children}
         </M.Content>
@@ -40,13 +52,13 @@ export function MenuItem({
       disabled={disabled}
       onSelect={onSelect}
       className={cn(
-        "flex h-7 cursor-default select-none items-center gap-2 rounded px-2 text-ui outline-none [&_svg]:size-3.5",
+        "flex min-h-7 cursor-default select-none items-center gap-2 rounded px-2 py-0.5 text-ui outline-none [&_svg]:size-3.5",
         "data-[highlighted]:bg-surface-3 data-[disabled]:opacity-40",
         danger ? "text-crit" : "text-fg",
       )}
     >
       {icon && <span className={cn(danger ? "text-crit" : "text-subtle")}>{icon}</span>}
-      <span className="flex-1">{children}</span>
+      <span className="min-w-0 flex-1">{children}</span>
       {shortcut && <span className="text-2xs text-subtle">{shortcut}</span>}
     </M.Item>
   );
