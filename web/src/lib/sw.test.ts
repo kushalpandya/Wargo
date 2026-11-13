@@ -2,7 +2,7 @@
 // Run: cd web && node --test src/lib/sw.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shouldApply, shouldRegister, shouldReloadForChunk } from "./sw.ts";
+import { shouldApply, shouldRegister, shouldReloadForChunk, shouldReloadOnControllerChange } from "./sw.ts";
 
 const ok = { prod: true, secure: true, supported: true, base: "/" };
 
@@ -24,4 +24,23 @@ test("shouldApply only takes over with a worker already waiting on a controlled 
   assert.equal(shouldApply({ waiting: true, controlled: true }), true);
   assert.equal(shouldApply({ waiting: false, controlled: true }), false); // still installing: next launch or resume
   assert.equal(shouldApply({ waiting: true, controlled: false }), false); // first install
+});
+
+test("shouldReloadOnControllerChange reloads the tab that asked for the update right away", () => {
+  assert.equal(shouldReloadOnControllerChange({ requested: true, hidden: false, controlledBefore: true }), "reload");
+});
+
+test("shouldReloadOnControllerChange reloads a hidden tab right away", () => {
+  assert.equal(shouldReloadOnControllerChange({ requested: false, hidden: true, controlledBefore: true }), "reload");
+});
+
+test("shouldReloadOnControllerChange waits for another visible tab to be hidden", () => {
+  // Another tab took the update: this one is in use, so it reloads once it goes to the background.
+  assert.equal(shouldReloadOnControllerChange({ requested: false, hidden: false, controlledBefore: true }), "when-hidden");
+});
+
+test("shouldReloadOnControllerChange never reloads on a first install", () => {
+  assert.equal(shouldReloadOnControllerChange({ requested: false, hidden: false, controlledBefore: false }), "none");
+  assert.equal(shouldReloadOnControllerChange({ requested: false, hidden: true, controlledBefore: false }), "none");
+  assert.equal(shouldReloadOnControllerChange({ requested: true, hidden: false, controlledBefore: false }), "none");
 });

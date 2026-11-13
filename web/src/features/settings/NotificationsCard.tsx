@@ -18,7 +18,16 @@ import {
   type Mode,
   type Settings,
 } from "@/features/notifications/api";
-import { isIOS, localPushKey, pushIsOn, pushSupport, sessionEndsNote, type PushSupport } from "@/features/notifications/push";
+import {
+  deniedHint,
+  isIOS,
+  localPushKey,
+  pushIsOn,
+  pushRefusal,
+  pushSupport,
+  sessionEndsNote,
+  type PushSupport,
+} from "@/features/notifications/push";
 import { SettingRow, SettingsList, usePatchSave } from "./shared";
 
 const categories: { id: Category; title: string; hint: string }[] = [
@@ -26,7 +35,7 @@ const categories: { id: Category; title: string; hint: string }[] = [
   { id: "download.finished", title: "Download finished", hint: "A torrent finishes downloading." },
   { id: "stream.started", title: "Plex stream started", hint: "Someone starts watching something on Plex." },
   { id: "container.unhealthy", title: "Container unhealthy", hint: "A container's health check starts failing." },
-  { id: "container.failed", title: "Container failed to start", hint: "A container stops with an error or keeps restarting." },
+  { id: "container.failed", title: "Container stopped with an error", hint: "A container stops with an error or keeps restarting." },
   { id: "updates.found", title: "Updates found", hint: "A background check finds new updates to install." },
   { id: "download.error", title: "Download error", hint: "A torrent stops because of a tracker or disk problem." },
   { id: "disk.full", title: "Disk nearly full", hint: "A disk is 90% full or more." },
@@ -56,7 +65,7 @@ function deviceSupport(): PushSupport {
 const blocked: Record<Exclude<PushSupport, "ok">, string> = {
   "not-https": "Push needs Wargo over HTTPS. Open Wargo at its HTTPS address to get push on this device.",
   "install-first": "On iPhone, add Wargo to your Home Screen and open it from there to get push notifications.",
-  denied: "Notifications for Wargo are blocked on this device. Allow them in your system settings, then come back here.",
+  denied: deniedHint,
   unsupported: "This browser can't receive push notifications.",
 };
 
@@ -84,6 +93,13 @@ function PushRow() {
   const change = (enable: boolean) =>
     set.mutate(enable, {
       onSettled: look,
+      onSuccess: (s) => {
+        // Turning on resolves to null when the permission prompt was dismissed or refused.
+        if (enable && !s) {
+          const r = pushRefusal(Notification.permission);
+          toast.info(r.title, r.body);
+        }
+      },
       onError: (e) => toast.error(enable ? "Could not turn on push" : "Could not turn off push", e),
     });
 
@@ -93,14 +109,16 @@ function PushRow() {
       description={
         support !== "ok"
           ? blocked[support]
-          : on
-            ? me && !me.remember
-              ? sessionEndsNote(me.idleMinutes)
-              : "Notifications set to push arrive here even when Wargo is closed."
-            : "Push is off here. You still see notifications in the app."
+          : state.error
+            ? <ErrorNote error={state.error} className="mt-1" />
+            : on
+              ? me && !me.remember
+                ? sessionEndsNote(me.idleMinutes)
+                : "Notifications set to push arrive here even when Wargo is closed."
+              : "Push is off here. You still see notifications in the app."
       }
     >
-      {state.isLoading || localKey === undefined ? (
+      {state.error ? null : state.isLoading || localKey === undefined ? (
         <Skeleton className="h-8 w-48" />
       ) : on ? (
         <Button size="sm" loading={set.isPending} onClick={() => change(false)}>
