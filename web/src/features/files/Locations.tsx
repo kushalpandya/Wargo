@@ -392,6 +392,8 @@ export function Breadcrumbs({
               {rootBtn}
               <Menu
                 align="start"
+                // Rows hold a name, a path and free space: phones get the screen width less 12 px a side, larger screens 22rem.
+                className="w-[calc(100vw-1.5rem)] sm:w-[22rem]"
                 trigger={
                   <button
                     type="button"
