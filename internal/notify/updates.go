@@ -24,6 +24,10 @@ const (
 	// daemon never up) counts as nothing pending; its first report later
 	// is still a baseline.
 	updatesWindow = 10 * time.Minute
+
+	// notifiedTTL is how long a source remembers a name it notified after
+	// the name stops being reported (see ReportUpdates).
+	notifiedTTL = 7 * 24 * time.Hour
 )
 
 // updateSources lists the sources ReportUpdates takes, in body order.
@@ -33,9 +37,18 @@ var updateSources = []struct{ id, label string }{
 	{"homebrew", "Homebrew"},
 }
 
-// updatesState is what ReportUpdates remembers per source: the names the
-// last report held. Guarded by Center.mu.
-type updatesState map[string]map[string]bool
+// updatesState is what ReportUpdates remembers per source. Guarded by
+// Center.mu.
+type updatesState struct {
+	// current holds the names each source's last report held.
+	current map[string]map[string]bool
+	// notified holds, per source, every name it reported (pushed or not,
+	// automatic or manual) and when it last reported it. A name pushes
+	// only when it is not in here. A name is forgotten once it has been
+	// missing from the source's reports for notifiedTTL, so a later
+	// update of the same package or container is news again.
+	notified map[string]map[string]time.Time
+}
 
 // Disk is one filesystem and how full it is (0..100).
 type Disk struct {
@@ -50,7 +63,9 @@ type diskState struct{ seen bool }
 // pending. All sources feed one Recent item, "N updates available", whose
 // body counts each source; it is rewritten as the counts change and deleted
 // when nothing is pending. It pushes only when automatic is true and the
-// source reports a name it did not report last time; a manual check
+// source reports a name it has not reported within notifiedTTL (see
+// updatesState.notified), so a name that drops out and comes back soon
+// after does not push again; a manual check
 // (automatic false) updates the item and never pushes. The first report per
 // source after New is the baseline: it is shown, never pushed. When the
 // owner cleared the item and new names then appear, it shows again.
@@ -69,22 +84,35 @@ func (c *Center) ReportUpdates(ctx context.Context, source string, names []strin
 	}
 
 	c.mu.Lock()
-	if c.upd == nil {
-		c.upd = updatesState{}
+	now := c.now()
+	if c.upd.current == nil {
+		c.upd.current = map[string]map[string]bool{}
+		c.upd.notified = map[string]map[string]time.Time{}
 	}
-	prev, seen := c.upd[source]
+	_, seen := c.upd.current[source]
+	notified := c.upd.notified[source]
+	if notified == nil {
+		notified = map[string]time.Time{}
+		c.upd.notified[source] = notified
+	}
 	fresh := false
 	for n := range set {
-		if !prev[n] {
+		if _, ok := notified[n]; !ok {
 			fresh = true
 		}
+		notified[n] = now
 	}
-	c.upd[source] = set
+	for n, last := range notified {
+		if now.Sub(last) > notifiedTTL {
+			delete(notified, n)
+		}
+	}
+	c.upd.current[source] = set
 	baseline := !seen
 	total := 0
 	var parts []string
 	for _, s := range updateSources {
-		if n := len(c.upd[s.id]); n > 0 {
+		if n := len(c.upd.current[s.id]); n > 0 {
 			total += n
 			parts = append(parts, fmt.Sprintf("%s %d", s.label, n))
 		}
@@ -95,7 +123,7 @@ func (c *Center) ReportUpdates(ctx context.Context, source string, names []strin
 	// would bring it back uncleared). Only create it if there is none,
 	// or rewrite it when a source reports names it did not have before.
 	// The wait ends updatesWindow after New.
-	window := len(c.upd) < len(updateSources) && c.now().Sub(c.started) < updatesWindow
+	window := len(c.upd.current) < len(updateSources) && now.Sub(c.started) < updatesWindow
 	if total == 0 && window {
 		c.mu.Unlock()
 		return
@@ -142,16 +170,17 @@ func (c *Center) ReportUpdates(ctx context.Context, source string, names []strin
 
 // ReportDisks records how full each filesystem is. A disk at 90% or more
 // raises one occurrence that lasts until it falls below 85%; while it lasts,
-// its title follows the current percentage. The first call
-// after New is the baseline: disks that recovered while Wargo was down are
-// resolved, and full ones are shown without a push.
+// its title follows the current percentage. A disk missing from a
+// non-empty list (unmounted) is resolved. The first call after New is the
+// baseline: disks that recovered while Wargo was down are resolved, and
+// full ones are shown without a push.
 func (c *Center) ReportDisks(ctx context.Context, list []Disk) {
 	c.mu.Lock()
 	first := !c.disk.seen
 	c.disk.seen = true
 	c.mu.Unlock()
 
-	if first {
+	if first || len(list) > 0 {
 		// Disks still in the hysteresis band keep their open item.
 		var open []string
 		for _, d := range list {

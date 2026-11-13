@@ -291,3 +291,64 @@ func TestDiskTitleFollowsPercent(t *testing.T) {
 		t.Fatalf("stored title = %q, %v", title, err)
 	}
 }
+
+// A source remembers the names it already notified (or showed in a manual
+// check), not only its last report: a name that drops out and comes back
+// does not push again until it has been gone for notifiedTTL.
+func TestUpdatesNotifiedSetRemembered(t *testing.T) {
+	e := newTestCenter(t)
+	e.baselineUpdates()
+	e.updates("containers", true, "a", "b")
+	e.updates("containers", true, "b")
+	e.updates("containers", true, "a", "b")
+	if len(e.pushes) != 1 {
+		t.Fatalf("pushes = %d, want 1 (a came back, already notified)", len(e.pushes))
+	}
+	if s := e.snap(t); len(s.Recent) != 1 || s.Recent[0].Title != "2 updates available" {
+		t.Fatalf("recent = %+v", s.Recent)
+	}
+	// Seen in a manual check: the owner saw it, an automatic check later
+	// does not push it.
+	e.updates("containers", false, "a", "b", "c")
+	e.updates("containers", true, "a", "b")
+	e.updates("containers", true, "a", "b", "c")
+	if len(e.pushes) != 1 {
+		t.Fatalf("pushes = %d, want 1 (c was seen in a manual check)", len(e.pushes))
+	}
+	// Gone for longer than notifiedTTL: a is news again.
+	e.updates("containers", true, "b")
+	e.clock.advance(notifiedTTL + time.Hour)
+	e.updates("containers", true, "b")
+	e.updates("containers", true, "a", "b")
+	if len(e.pushes) != 2 {
+		t.Fatalf("pushes = %d, want 2 (a gone past notifiedTTL)", len(e.pushes))
+	}
+}
+
+// A full disk that is no longer mounted is over; a disk still mounted
+// keeps the 85% band. An empty report (metrics not read) changes nothing.
+func TestUnmountedDiskResolves(t *testing.T) {
+	e := newTestCenter(t)
+	e.disks(Disk{"/", 50}, Disk{"/mnt", 50}, Disk{"/data", 50})
+	e.disks(Disk{"/", 50}, Disk{"/mnt", 95}, Disk{"/data", 92})
+	if s := e.snap(t); len(s.Recent) != 2 || s.Badge != 2 {
+		t.Fatalf("raised: %+v badge %d", s.Recent, s.Badge)
+	}
+	e.disks()
+	if s := e.snap(t); s.Badge != 2 {
+		t.Fatalf("empty report resolved items: %+v", s.Recent)
+	}
+	e.disks(Disk{"/", 50}, Disk{"/data", 87})
+	s := e.snap(t)
+	if s.Badge != 1 {
+		t.Fatalf("badge = %d, want 1 (/data still open)", s.Badge)
+	}
+	for _, it := range s.Recent {
+		if it.Key == "/mnt" && it.ResolvedAt == nil {
+			t.Errorf("/mnt unmounted but still open: %+v", it)
+		}
+		if it.Key == "/data" && it.ResolvedAt != nil {
+			t.Errorf("/data at 87%% resolved: %+v", it)
+		}
+	}
+}

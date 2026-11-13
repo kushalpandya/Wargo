@@ -55,11 +55,17 @@ type liveState struct {
 }
 
 type dlState struct {
-	firstSeen       time.Time
-	startPushed     bool // "started" handled once per hash in this process
+	firstSeen   time.Time
+	startPushed bool // "started" handled once per hash while it is listed
+	// added: first seen after a baseline, so finishing is news even if it
+	// was never seen downloading (added and done between two polls).
+	added           bool
 	seenDownloading bool
-	finished        bool
-	errored         bool
+	// showing: it has an Active row. Checking or queued keeps the row of
+	// a download that has one.
+	showing  bool
+	finished bool
+	errored  bool
 }
 
 type streamState struct {
@@ -76,7 +82,8 @@ type endedStream struct {
 // the baseline: it is shown but nothing is pushed. Don't call it when the
 // fetch failed (an empty list means every torrent is gone). Calls must be
 // serialized (one poller goroutine): the raises run after the lock is
-// released.
+// released. A torrent missing from list is forgotten, so one added again
+// later is a new download.
 func (c *Center) SetDownloads(ctx context.Context, list []Download) {
 	c.mu.Lock()
 	l := &c.live
@@ -94,7 +101,7 @@ func (c *Center) SetDownloads(ctx context.Context, list []Download) {
 		seen[d.Hash] = true
 		st := l.dls[d.Hash]
 		if st == nil {
-			st = &dlState{firstSeen: now}
+			st = &dlState{firstSeen: now, added: !baseline}
 			l.dls[d.Hash] = st
 		}
 		if baseline {
@@ -103,9 +110,11 @@ func (c *Center) SetDownloads(ctx context.Context, list []Download) {
 			st.startPushed = true
 		}
 		complete := d.Percent >= 1 || d.Status == "seeding" || d.Status == "done"
+		st.showing = !complete && (d.Status == "downloading" ||
+			(st.showing && (d.Status == "checking" || d.Status == "queued")))
 		switch {
 		case complete:
-			if st.seenDownloading && !st.finished {
+			if (st.seenDownloading || st.added) && !st.finished {
 				st.finished = true
 				raises = append(raises, Occurrence{Category: DownloadFinished, Key: d.Hash,
 					Title: "Download finished", Body: d.Name, Link: downloadsLink, Baseline: baseline})
@@ -117,6 +126,8 @@ func (c *Center) SetDownloads(ctx context.Context, list []Download) {
 				raises = append(raises, Occurrence{Category: DownloadStarted, Key: d.Hash,
 					Title: "Download started", Body: d.Name, Link: downloadsLink, Live: true})
 			}
+		}
+		if st.showing {
 			rows = append(rows, Active{
 				ID: "dl:" + d.Hash, Category: DownloadStarted, Title: d.Name,
 				Detail: downloadDetail(d), Progress: clamp01(d.Percent),
@@ -133,12 +144,15 @@ func (c *Center) SetDownloads(ctx context.Context, list []Download) {
 			resolves = append(resolves, d.Hash)
 		}
 	}
-	// A removed torrent's error is over too.
+	// A removed torrent's error is over too, and the torrent is forgotten.
 	for hash, st := range l.dls {
-		if !seen[hash] && st.errored {
-			st.errored = false
+		if seen[hash] {
+			continue
+		}
+		if st.errored {
 			resolves = append(resolves, hash)
 		}
+		delete(l.dls, hash)
 	}
 	l.downloads = rows
 	c.publishLocked(ctx)
@@ -183,6 +197,7 @@ func (c *Center) ResetStreams() {
 // is the baseline: it is shown but nothing is pushed. Don't call it when
 // the fetch failed. Calls must be serialized (one poller goroutine).
 func (c *Center) SetStreams(ctx context.Context, list []Stream) {
+	list = withSessionKeys(list)
 	c.mu.Lock()
 	l := &c.live
 	baseline := !l.stSeen
@@ -245,6 +260,25 @@ func (c *Center) SetStreams(ctx context.Context, list []Stream) {
 	for _, o := range raises {
 		c.Raise(ctx, o)
 	}
+}
+
+// withSessionKeys gives each stream without a Plex session key a key of
+// its own, from its user and what it plays (or its player), so sessions
+// without one do not collapse into a single row. It copies list rather
+// than change the caller's.
+func withSessionKeys(list []Stream) []Stream {
+	out := make([]Stream, len(list))
+	for i, s := range list {
+		if s.SessionKey == "" {
+			what := s.RatingKey
+			if what == "" {
+				what = s.Player
+			}
+			s.SessionKey = "anon:" + s.User + ":" + what
+		}
+		out[i] = s
+	}
+	return out
 }
 
 // matchEnded finds a recently ended stream that s carries on: the same

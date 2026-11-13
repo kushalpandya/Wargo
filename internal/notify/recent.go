@@ -43,6 +43,9 @@ type Occurrence struct {
 
 // Raise records o in Recent unless the same (category, key) has an item
 // that is not resolved yet (cleared or not), in which case it does nothing.
+// download.finished is a plain record that never resolves, so it is always
+// recorded: SetDownloads raises it once per download, and a torrent added
+// again is a new download.
 // It reports whether the occurrence was due a push: its category mode is
 // push and it is not a baseline. Items are stored even while their category
 // is Off, so they show up if it is turned back on.
@@ -69,15 +72,17 @@ func (c *Center) Raise(ctx context.Context, o Occurrence) (pushed bool) {
 }
 
 func (c *Center) addLocked(ctx context.Context, o Occurrence) (bool, error) {
-	var one int
-	err := c.st.DB.QueryRowContext(ctx,
-		`SELECT 1 FROM notify_items WHERE category = ? AND key = ? AND resolved_at IS NULL LIMIT 1`,
-		string(o.Category), o.Key).Scan(&one)
-	if err == nil {
-		return false, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return false, err
+	if o.Category != DownloadFinished {
+		var one int
+		err := c.st.DB.QueryRowContext(ctx,
+			`SELECT 1 FROM notify_items WHERE category = ? AND key = ? AND resolved_at IS NULL LIMIT 1`,
+			string(o.Category), o.Key).Scan(&one)
+		if err == nil {
+			return false, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return false, err
+		}
 	}
 	now := c.now()
 	if _, err := c.st.DB.ExecContext(ctx,
