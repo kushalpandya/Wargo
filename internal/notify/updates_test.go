@@ -316,8 +316,9 @@ func TestUpdatesNotifiedSetRemembered(t *testing.T) {
 	}
 }
 
-// A full disk that is no longer mounted is over; a disk still mounted
-// keeps the 85% band. An empty report (metrics not read) changes nothing.
+// A full disk that is no longer mounted is over once two reports in a row
+// miss it; a disk still mounted keeps the 85% band. An empty report
+// (metrics not read) changes nothing.
 func TestUnmountedDiskResolves(t *testing.T) {
 	e := newTestCenter(t)
 	e.disks(Disk{"/", 50}, Disk{"/mnt", 50}, Disk{"/data", 50})
@@ -330,16 +331,49 @@ func TestUnmountedDiskResolves(t *testing.T) {
 		t.Fatalf("empty report resolved items: %+v", s.Recent)
 	}
 	e.disks(Disk{"/", 50}, Disk{"/data", 87})
+	if s := e.snap(t); s.Badge != 2 {
+		t.Fatalf("missed once: badge = %d, want 2 (/mnt kept open)", s.Badge)
+	}
+	e.disks()
+	e.disks(Disk{"/", 50}, Disk{"/data", 87})
 	s := e.snap(t)
 	if s.Badge != 1 {
 		t.Fatalf("badge = %d, want 1 (/data still open)", s.Badge)
 	}
 	for _, it := range s.Recent {
-		if it.Key == "/mnt" && it.ResolvedAt == nil {
-			t.Errorf("/mnt unmounted but still open: %+v", it)
+		if it.Key == "/mnt" && (it.ResolvedAt == nil || it.Title != "/mnt is no longer mounted") {
+			t.Errorf("/mnt unmounted: %+v, want resolved as no longer mounted", it)
 		}
 		if it.Key == "/data" && it.ResolvedAt != nil {
 			t.Errorf("/data at 87%% resolved: %+v", it)
 		}
+	}
+}
+
+// A network mount whose usage cannot be read once drops out of one report:
+// its full item stays open and is not pushed again when it is back.
+func TestFlakyMountNotRepushed(t *testing.T) {
+	e := newTestCenter(t)
+	e.disks(Disk{"/", 50}, Disk{"/nas", 50})
+	e.disks(Disk{"/", 50}, Disk{"/nas", 92})
+	e.disks(Disk{"/", 50})
+	e.disks(Disk{"/", 50}, Disk{"/nas", 92})
+	s := e.snap(t)
+	if len(s.Recent) != 1 || s.Recent[0].ResolvedAt != nil || s.Recent[0].Title != "/nas is 92% full" {
+		t.Fatalf("after one miss: recent %+v, want the same open item", s.Recent)
+	}
+	if n := e.countPushes(DiskFull); n != 1 {
+		t.Fatalf("pushes = %d, want 1", n)
+	}
+	e.disks(Disk{"/", 50})
+	if s := e.snap(t); s.Recent[0].ResolvedAt != nil {
+		t.Fatalf("missed once more after being back: %+v, want still open", s.Recent[0])
+	}
+	e.disks(Disk{"/", 50})
+	if s := e.snap(t); len(s.Recent) != 1 || s.Recent[0].ResolvedAt == nil || s.Badge != 0 {
+		t.Fatalf("missed twice: recent %+v badge %d, want resolved", s.Recent, s.Badge)
+	}
+	if n := e.countPushes(DiskFull); n != 1 {
+		t.Fatalf("pushes = %d, want 1", n)
 	}
 }

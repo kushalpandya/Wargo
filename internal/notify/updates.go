@@ -44,7 +44,15 @@ type Disk struct {
 }
 
 // diskState is what ReportDisks remembers. Guarded by Center.mu.
-type diskState struct{ seen bool }
+type diskState struct {
+	seen bool
+	// open lists the mounts whose items the last non-empty report kept
+	// open; missing counts the non-empty reports in a row that left one of
+	// them out (a network mount whose usage could not be read drops out of
+	// one report).
+	open    []string
+	missing map[string]int
+}
 
 // ReportUpdates records what source (containers, system or homebrew) has
 // pending. All sources feed one Recent item, "N updates available", whose
@@ -142,24 +150,48 @@ func (c *Center) ReportUpdates(ctx context.Context, source string, names []strin
 
 // ReportDisks records how full each filesystem is. A disk at 90% or more
 // raises one occurrence that lasts until it falls below 85%; while it lasts,
-// its title follows the current percentage. A disk missing from a
-// non-empty list (unmounted) is resolved. The first call after New is the
-// baseline: disks that recovered while Wargo was down are resolved, and
-// full ones are shown without a push.
+// its title follows the current percentage. A disk missing from two
+// non-empty lists in a row (unmounted) is resolved. The first call after
+// New is the baseline: disks that recovered while Wargo was down, or are
+// not mounted, are resolved, and full ones are shown without a push.
 func (c *Center) ReportDisks(ctx context.Context, list []Disk) {
+	// Disks still in the hysteresis band keep their open item.
+	var open []string
+	present := make(map[string]bool, len(list))
+	for _, d := range list {
+		present[d.Mount] = true
+		if d.UsedPct >= recoveredPct {
+			open = append(open, d.Mount)
+		}
+	}
 	c.mu.Lock()
 	first := !c.disk.seen
 	c.disk.seen = true
+	if !first && len(list) > 0 {
+		if c.disk.missing == nil {
+			c.disk.missing = map[string]int{}
+		}
+		for _, m := range c.disk.open {
+			if present[m] {
+				continue
+			}
+			c.disk.missing[m]++
+			if c.disk.missing[m] < 2 {
+				open = append(open, m)
+			} else {
+				delete(c.disk.missing, m)
+			}
+		}
+		for m := range present {
+			delete(c.disk.missing, m)
+		}
+	}
+	if first || len(list) > 0 {
+		c.disk.open = open
+	}
 	c.mu.Unlock()
 
 	if first || len(list) > 0 {
-		// Disks still in the hysteresis band keep their open item.
-		var open []string
-		for _, d := range list {
-			if d.UsedPct >= recoveredPct {
-				open = append(open, d.Mount)
-			}
-		}
 		pct := make(map[string]float64, len(list))
 		for _, d := range list {
 			pct[d.Mount] = d.UsedPct
@@ -167,7 +199,7 @@ func (c *Center) ReportDisks(ctx context.Context, list []Disk) {
 		c.Reconcile(ctx, DiskFull, open, func(mount string) string {
 			p, ok := pct[mount]
 			if !ok {
-				return ""
+				return mount + " is no longer mounted"
 			}
 			return fmt.Sprintf("%s is back to %d%%", mount, int(math.Round(p)))
 		})
