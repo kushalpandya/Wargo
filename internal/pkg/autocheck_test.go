@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/audit"
+	"github.com/kushalpandya/wargo/internal/events"
 	"github.com/kushalpandya/wargo/internal/httpx"
+	"github.com/kushalpandya/wargo/internal/notify"
 	"github.com/kushalpandya/wargo/internal/server"
 	"github.com/kushalpandya/wargo/internal/store"
 )
@@ -73,7 +75,58 @@ func TestBackgroundFailureKeepsList(t *testing.T) {
 	if _, err := s.list(ctx, true); err == nil || s.last.Error != res.Error {
 		t.Fatal("canceled run should not save")
 	}
-	if res, _ := s.list(context.Background(), false); len(res.Updates) != 0 {
-		t.Fatalf("manual check should report what it found: %+v", res)
+	if res, err := s.list(context.Background(), false); err == nil || len(res.Updates) != 1 || res.Error == "" {
+		t.Fatalf("manual failure replaced list: %+v %v", res, err)
+	}
+	s.last = nil
+	if res, _ := s.list(context.Background(), false); len(res.Updates) != 0 || res.Error == "" {
+		t.Fatalf("first failure: %+v", res)
+	}
+}
+
+// shBackend fails every check and is installed everywhere.
+type shBackend struct{ failBackend }
+
+func (shBackend) Binary() string { return "sh" }
+
+// A saved failed check is no baseline: after a restart, the automatic
+// check that finds the packages pending before it does not announce them
+// again.
+func TestStartupSkipsFailedCheck(t *testing.T) {
+	s := testService(t)
+	s.be = shBackend{failBackend{&aptBackend{}}}
+	ctx := context.Background()
+	idle := func(now time.Time) time.Time { return now }
+	hub := events.NewHub()
+	// Before the restart: bash was pending and the owner cleared the item.
+	n, err := notify.New(s.d.Store, hub, idle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.ReportUpdates(ctx, "containers", nil, false)
+	n.ReportUpdates(ctx, "homebrew", nil, false)
+	n.ReportUpdates(ctx, "system", []string{"bash"}, false)
+	if err := n.ClearAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	n.Close()
+	// A manual check then failed, and Wargo restarted.
+	s.last = &CheckResult{At: time.Now(), Updates: []Update{}, Extras: []Update{}, Error: "mirror unreachable"}
+	if s.d.Notify, err = notify.New(s.d.Store, hub, idle); err != nil {
+		t.Fatal(err)
+	}
+	defer s.d.Notify.Close()
+	s.reportSaved(ctx)
+	s.d.Notify.ReportUpdates(ctx, "containers", nil, false)
+	s.d.Notify.ReportUpdates(ctx, "homebrew", nil, false)
+	s.reportUpdates(ctx, &CheckResult{Updates: []Update{{Name: "bash"}}}, true)
+	snap, err := s.d.Notify.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range snap.Recent {
+		if it.Category == notify.UpdatesFound {
+			t.Fatalf("announced again: %+v", it)
+		}
 	}
 }

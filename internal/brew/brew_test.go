@@ -332,6 +332,46 @@ func TestCheckReportsUpdates(t *testing.T) {
 	}
 }
 
+// A saved failed check is no baseline: after a restart, the automatic
+// check that finds the formulae outdated before it does not announce them
+// again.
+func TestStartupSkipsFailedCheck(t *testing.T) {
+	s, hub := testService(t)
+	ctx := context.Background()
+	idle := func(now time.Time) time.Time { return now }
+	// Before the restart: git was outdated and the owner cleared the item.
+	n, err := notify.New(s.d.Store, hub, idle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.ReportUpdates(ctx, "containers", nil, false)
+	n.ReportUpdates(ctx, "system", nil, false)
+	n.ReportUpdates(ctx, "homebrew", []string{"git"}, false)
+	if err := n.ClearAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	n.Close()
+	// A manual check then failed, and Wargo restarted.
+	s.last = &pkg.CheckResult{At: time.Now(), Updates: []pkg.Update{}, Extras: []pkg.Update{}, Error: "brew update failed"}
+	if s.d.Notify, err = notify.New(s.d.Store, hub, idle); err != nil {
+		t.Fatal(err)
+	}
+	defer s.d.Notify.Close()
+	s.reportSaved(ctx)
+	s.d.Notify.ReportUpdates(ctx, "containers", nil, false)
+	s.d.Notify.ReportUpdates(ctx, "system", nil, false)
+	s.reportUpdates(ctx, &pkg.CheckResult{Updates: []pkg.Update{{Name: "git"}}}, true)
+	snap, err := s.d.Notify.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range snap.Recent {
+		if it.Category == notify.UpdatesFound {
+			t.Fatalf("announced again: %+v", it)
+		}
+	}
+}
+
 func TestRecoverInterrupted(t *testing.T) {
 	s, _ := testService(t)
 	ctx := context.Background()
