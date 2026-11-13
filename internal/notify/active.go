@@ -15,6 +15,10 @@ import (
 // user, of the same title or show, still counts as the same stream.
 const sameStreamWindow = 30 * time.Minute
 
+// addedSlack allows for Transmission's clock running a little behind
+// Wargo's when telling a newly added torrent from one that was there.
+const addedSlack = time.Minute
+
 const (
 	downloadsLink = "/torrents?tab=downloads"
 	streamsLink   = "/"
@@ -29,6 +33,8 @@ type Download struct {
 	Percent, RateDown float64
 	ETA               time.Duration
 	Error             string
+	// Added is when the torrent was added to Transmission (zero: unknown).
+	Added time.Time
 }
 
 // Stream is one Plex playback session.
@@ -44,7 +50,8 @@ type Stream struct {
 // liveState is what SetDownloads and SetStreams remember between calls.
 // Guarded by Center.mu.
 type liveState struct {
-	dlSeen    bool // SetDownloads ran before; later calls are not baseline
+	dlSeen    bool      // SetDownloads ran before; later calls are not baseline
+	dlAt      time.Time // when SetDownloads last ran
 	dls       map[string]*dlState
 	downloads []Active
 
@@ -57,8 +64,9 @@ type liveState struct {
 type dlState struct {
 	firstSeen   time.Time
 	startPushed bool // "started" handled once per hash while it is listed
-	// added: first seen after a baseline, so finishing is news even if it
-	// was never seen downloading (added and done between two polls).
+	// added: added to Transmission since the report before it was first
+	// seen, so finishing is news even if it was never seen downloading
+	// (added and done between two polls).
 	added           bool
 	seenDownloading bool
 	// showing: it has an Active row. Checking or queued keeps the row of
@@ -83,7 +91,7 @@ type endedStream struct {
 // fetch failed (an empty list means every torrent is gone). Calls must be
 // serialized (one poller goroutine): the raises run after the lock is
 // released. A torrent missing from list is forgotten, so one added again
-// later is a new download.
+// later (with a later Added) is a new download.
 func (c *Center) SetDownloads(ctx context.Context, list []Download) {
 	c.mu.Lock()
 	l := &c.live
@@ -93,6 +101,8 @@ func (c *Center) SetDownloads(ctx context.Context, list []Download) {
 		l.dls = map[string]*dlState{}
 	}
 	now := c.now()
+	prev := l.dlAt
+	l.dlAt = now
 	var raises []Occurrence
 	var resolves []string
 	seen := make(map[string]bool, len(list))
@@ -101,7 +111,12 @@ func (c *Center) SetDownloads(ctx context.Context, list []Download) {
 		seen[d.Hash] = true
 		st := l.dls[d.Hash]
 		if st == nil {
-			st = &dlState{firstSeen: now, added: !baseline}
+			// A hash first seen after the baseline is a new download only
+			// when Transmission added it since the last report. Otherwise it
+			// was there before (another Transmission, or back from a partial
+			// list) and counts like a baseline entry.
+			added := !baseline && !d.Added.IsZero() && d.Added.After(prev.Add(-addedSlack))
+			st = &dlState{firstSeen: now, added: added, startPushed: !added}
 			l.dls[d.Hash] = st
 		}
 		if baseline {

@@ -15,7 +15,7 @@ import (
 
 func TestToDownloads(t *testing.T) {
 	ts := []TorrentView{
-		{Hash: "a", Name: "A", Status: "downloading", PercentDone: 0.25, RateDownload: 2048, ETA: 90},
+		{Hash: "a", Name: "A", Status: "downloading", PercentDone: 0.25, RateDownload: 2048, ETA: 90, AddedDate: 1700000000},
 		{Hash: "b", Name: "B", Status: "check-wait", ETA: -1},
 		{Hash: "c", Name: "C", Status: "checking", ETA: -2},
 		{Hash: "d", Name: "D", Status: "download-wait", ETA: 31 * 24 * 3600},
@@ -28,7 +28,7 @@ func TestToDownloads(t *testing.T) {
 	}
 	got := toDownloads(ts)
 	want := []notify.Download{
-		{Hash: "a", Name: "A", Status: "downloading", Percent: 0.25, RateDown: 2048, ETA: 90 * time.Second},
+		{Hash: "a", Name: "A", Status: "downloading", Percent: 0.25, RateDown: 2048, ETA: 90 * time.Second, Added: time.Unix(1700000000, 0)},
 		{Hash: "b", Name: "B", Status: "checking"},
 		{Hash: "c", Name: "C", Status: "checking"},
 		{Hash: "d", Name: "D", Status: "queued"},
@@ -80,13 +80,14 @@ type fakeWatchSource struct {
 	trOK, pxOK         bool
 	dlErr, stErr       error
 	dlFetches, stFetch int
+	dlNewSource        bool
 }
 
 func (f *fakeWatchSource) transmissionConfigured() bool { return f.trOK }
 func (f *fakeWatchSource) plexConfigured() bool         { return f.pxOK }
-func (f *fakeWatchSource) fetchDownloads(context.Context) ([]notify.Download, error) {
+func (f *fakeWatchSource) fetchDownloads(context.Context) ([]notify.Download, bool, error) {
 	f.dlFetches++
-	return nil, f.dlErr
+	return nil, f.dlNewSource, f.dlErr
 }
 func (f *fakeWatchSource) fetchStreams(context.Context) ([]notify.Stream, error) {
 	f.stFetch++
@@ -215,7 +216,7 @@ func TestWatchFetchesOnlyTorrents(t *testing.T) {
 	}
 	want := map[string]bool{
 		"hashString": true, "name": true, "status": true, "percentDone": true,
-		"rateDownload": true, "eta": true, "error": true, "errorString": true,
+		"rateDownload": true, "eta": true, "error": true, "errorString": true, "addedDate": true,
 	}
 	fields := ft.LastFields()
 	if len(fields) != len(want) {
@@ -228,6 +229,9 @@ func TestWatchFetchesOnlyTorrents(t *testing.T) {
 	}
 	if dst.setDls != 1 || len(dst.lists[0]) != 1 || dst.lists[0][0].Name != "debian.iso" || dst.lists[0][0].Status != "downloading" {
 		t.Fatalf("SetDownloads = %d, %+v", dst.setDls, dst.lists)
+	}
+	if got := dst.lists[0][0].Added; !got.Equal(time.Unix(1700000000, 0)) {
+		t.Fatalf("Added = %v; want Transmission's addedDate", got)
 	}
 }
 
@@ -268,6 +272,9 @@ func TestWatchReusesPageData(t *testing.T) {
 	if dst.setDls != 1 || len(dst.lists[0]) != 1 || dst.lists[0][0].Name != "debian.iso" {
 		t.Fatalf("SetDownloads = %d, %+v", dst.setDls, dst.lists)
 	}
+	if got := dst.lists[0][0].Added; !got.Equal(time.Unix(1700000000, 0)) {
+		t.Fatalf("Added from page data = %v; want Transmission's addedDate", got)
+	}
 
 	now = now.Add(time.Second)
 	pollDownloads(context.Background(), h.s, dst)
@@ -276,5 +283,38 @@ func TestWatchReusesPageData(t *testing.T) {
 	}
 	if dst.setDls != 2 {
 		t.Fatalf("SetDownloads = %d; want 2", dst.setDls)
+	}
+}
+
+// Pointed at another Transmission, the next report is a baseline, so the
+// torrents that one already has are not announced.
+func TestWatchResetsOnClientChange(t *testing.T) {
+	ctx := context.Background()
+	src := &fakeWatchSource{trOK: true, dlNewSource: true}
+	dst := &fakeWatchSink{}
+	pollDownloads(ctx, src, dst)
+	if dst.resetDls != 1 || dst.setDls != 1 {
+		t.Fatalf("new source: resets %d, Set %d; want 1, 1", dst.resetDls, dst.setDls)
+	}
+
+	h, _ := newWatchHarness(t)
+	sink := &countingSink{}
+	pollDownloads(ctx, h.s, sink)
+	pollDownloads(ctx, h.s, sink)
+	if sink.resetDls != 0 || sink.setDls != 2 {
+		t.Fatalf("same Transmission: resets %d, Set %d; want 0, 2", sink.resetDls, sink.setDls)
+	}
+	other := transmissiontest.New("kushal", "s3cret")
+	t.Cleanup(other.Close)
+	h.s.mu.Lock()
+	h.s.tr.URL = other.RPCURL()
+	h.s.mu.Unlock()
+	pollDownloads(ctx, h.s, sink)
+	if sink.resetDls != 1 || sink.setDls != 3 {
+		t.Fatalf("another Transmission: resets %d, Set %d; want 1, 3", sink.resetDls, sink.setDls)
+	}
+	pollDownloads(ctx, h.s, sink)
+	if sink.resetDls != 1 {
+		t.Fatalf("resets after the change = %d; want 1", sink.resetDls)
 	}
 }

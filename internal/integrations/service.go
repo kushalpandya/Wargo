@@ -94,6 +94,9 @@ type Service struct {
 	// page is the torrent list from the last good payload, which the
 	// watcher reuses while it is fresh.
 	page pageTorrents
+	// watchTrc is the client of the watcher's last good fetch, to tell
+	// when it is pointed at another Transmission. Watcher goroutine only.
+	watchTrc *transmission.Client
 
 	// for tests
 	now func() time.Time

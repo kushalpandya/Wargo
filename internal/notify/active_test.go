@@ -9,9 +9,19 @@ import (
 	"time"
 )
 
+// downloads reports list. A torrent without an added time is stamped as
+// added just now, so a hash first seen after the baseline is a new
+// download; tests of torrents that were there before set Added.
 func (e *testEnv) downloads(list ...Download) {
 	e.clock.advance(time.Second)
-	e.c.SetDownloads(context.Background(), list)
+	stamped := make([]Download, len(list))
+	for i, d := range list {
+		if d.Added.IsZero() {
+			d.Added = e.clock.t
+		}
+		stamped[i] = d
+	}
+	e.c.SetDownloads(context.Background(), stamped)
 }
 
 func (e *testEnv) streams(list ...Stream) {
@@ -442,6 +452,58 @@ func TestReaddedTorrentNotifiesAgain(t *testing.T) {
 	}
 	if s := e.snap(t); len(s.Recent) != 2 {
 		t.Errorf("recent = %+v, want two finished records", s.Recent)
+	}
+}
+
+// Pointed at another Transmission (or back at one), the torrents it already
+// had are first seen after the baseline: they are not new downloads, so a
+// complete one is not a finish and a running one is not a start. One added
+// since the last report still is.
+func TestOldTorrentsAfterClientChangeSilent(t *testing.T) {
+	e := newTestCenter(t)
+	e.downloads()
+	old := e.clock.t.Add(-24 * time.Hour)
+	done := Download{Hash: "h1", Name: "Torrent h1", Status: "seeding", Percent: 1, Added: old}
+	running := downloading("h2", 0.5)
+	running.Added = old
+	e.downloads(done, running)
+	if len(e.pushes) != 0 {
+		t.Fatalf("old torrents pushed %+v, want none", e.pushes)
+	}
+	// Without an added time a torrent is not taken for a new one.
+	e.clock.advance(time.Second)
+	e.c.SetDownloads(context.Background(), []Download{done, running,
+		{Hash: "h3", Name: "Torrent h3", Status: "done", Percent: 1}})
+	if len(e.pushes) != 0 {
+		t.Fatalf("torrent without an added time pushed %+v, want none", e.pushes)
+	}
+	// The old running one still announces its finish; a new one is news.
+	finished := running
+	finished.Status, finished.Percent = "seeding", 1
+	e.downloads(done, finished, Download{Hash: "h4", Name: "Torrent h4", Status: "seeding", Percent: 1})
+	var got []string
+	for _, p := range e.pushes {
+		got = append(got, string(p.cat)+":"+p.key)
+	}
+	if want := []string{string(DownloadFinished) + ":h2", string(DownloadFinished) + ":h4"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("pushes = %v, want %v", got, want)
+	}
+}
+
+// Transmission restarting can answer with part of its list: the torrents
+// missing from it are forgotten, and coming back they are not new.
+func TestPartialListThenFullSilent(t *testing.T) {
+	e := newTestCenter(t)
+	old := e.clock.t.Add(-time.Hour)
+	done := Download{Hash: "h1", Name: "Torrent h1", Status: "seeding", Percent: 1, Added: old}
+	done2 := Download{Hash: "h2", Name: "Torrent h2", Status: "done", Percent: 1, Added: old}
+	running := downloading("h3", 0.4)
+	running.Added = old
+	e.downloads(done, done2, running)
+	e.downloads(done)
+	e.downloads(done, done2, running)
+	if len(e.pushes) != 0 {
+		t.Fatalf("returning torrents pushed %+v, want none", e.pushes)
 	}
 }
 
