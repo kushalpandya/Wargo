@@ -166,6 +166,47 @@ func (c *Center) Resolve(ctx context.Context, cat Category, key, title string) b
 	return false
 }
 
+// Move resolves the open occurrence of (o.Category, from) with title and
+// records o in its place, never pushed: the same problem under a new key
+// (a renamed container). When the owner had cleared the old item, the new
+// one is stored cleared too, so it stays tracked and hidden. It does
+// nothing if (o.Category, from) has no open item, and reports whether it
+// had one.
+func (c *Center) Move(ctx context.Context, from, title string, o Occurrence) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var cleared sql.NullInt64
+	err := c.st.DB.QueryRowContext(ctx,
+		`SELECT cleared_at FROM notify_items WHERE category = ? AND key = ? AND resolved_at IS NULL LIMIT 1`,
+		string(o.Category), from).Scan(&cleared)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	if err != nil {
+		slog.Error("notifications: move", "category", o.Category, "key", from, "err", err)
+		return false
+	}
+	now := c.now().UnixMilli()
+	if _, err := c.st.DB.ExecContext(ctx,
+		`UPDATE notify_items SET resolved_at = ?, title = CASE WHEN ? = '' THEN title ELSE ? END
+		WHERE category = ? AND key = ? AND resolved_at IS NULL`,
+		now, title, title, string(o.Category), from); err != nil {
+		slog.Error("notifications: move", "category", o.Category, "key", from, "err", err)
+		return false
+	}
+	added, err := c.addLocked(ctx, o)
+	if err == nil && added && cleared.Valid {
+		_, err = c.st.DB.ExecContext(ctx,
+			`UPDATE notify_items SET cleared_at = ? WHERE category = ? AND key = ? AND resolved_at IS NULL`,
+			now, string(o.Category), o.Key)
+	}
+	if err != nil {
+		slog.Error("notifications: move", "category", o.Category, "key", o.Key, "err", err)
+	}
+	c.publishLocked(ctx)
+	return true
+}
+
 // Clear hides one Recent item. An unknown or already cleared id is
 // httpx.ErrNotFound.
 func (c *Center) Clear(ctx context.Context, id string) error {
