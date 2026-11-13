@@ -292,36 +292,27 @@ func TestDiskTitleFollowsPercent(t *testing.T) {
 	}
 }
 
-// A source remembers the names it already notified (or showed in a manual
-// check), not only its last report: a name that drops out and comes back
-// does not push again until it has been gone for notifiedTTL.
+// A name compares with the source's previous report: one that drops out
+// and comes back is a new update and pushes again. Names seen in a manual
+// check, or in the previous automatic one, do not push.
 func TestUpdatesNotifiedSetRemembered(t *testing.T) {
 	e := newTestCenter(t)
 	e.baselineUpdates()
 	e.updates("containers", true, "a", "b")
 	e.updates("containers", true, "b")
 	e.updates("containers", true, "a", "b")
-	if len(e.pushes) != 1 {
-		t.Fatalf("pushes = %d, want 1 (a came back, already notified)", len(e.pushes))
-	}
-	if s := e.snap(t); len(s.Recent) != 1 || s.Recent[0].Title != "2 updates available" {
-		t.Fatalf("recent = %+v", s.Recent)
-	}
-	// Seen in a manual check: the owner saw it, an automatic check later
-	// does not push it.
-	e.updates("containers", false, "a", "b", "c")
-	e.updates("containers", true, "a", "b")
-	e.updates("containers", true, "a", "b", "c")
-	if len(e.pushes) != 1 {
-		t.Fatalf("pushes = %d, want 1 (c was seen in a manual check)", len(e.pushes))
-	}
-	// Gone for longer than notifiedTTL: a is news again.
-	e.updates("containers", true, "b")
-	e.clock.advance(notifiedTTL + time.Hour)
-	e.updates("containers", true, "b")
-	e.updates("containers", true, "a", "b")
 	if len(e.pushes) != 2 {
-		t.Fatalf("pushes = %d, want 2 (a gone past notifiedTTL)", len(e.pushes))
+		t.Fatalf("pushes = %d, want 2 (a came back: a new update)", len(e.pushes))
+	}
+	e.updates("homebrew", false, "a", "b", "c")
+	e.updates("homebrew", true, "a", "b", "c")
+	if len(e.pushes) != 2 {
+		t.Fatalf("pushes = %d, want 2 (manual check already showed a, b, c)", len(e.pushes))
+	}
+	e.updates("system", true, "a", "b")
+	e.updates("system", true, "a", "b")
+	if len(e.pushes) != 3 {
+		t.Fatalf("pushes = %d, want 3 (same automatic set again)", len(e.pushes))
 	}
 }
 
