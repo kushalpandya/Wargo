@@ -93,6 +93,8 @@ type Service struct {
 	watch           *healthWatch
 	synced          bool
 	startupReported bool
+	// reportedUpdates holds the container names in the last updates report.
+	reportedUpdates map[string]bool
 	dockerAbsent    func() bool
 }
 
@@ -128,8 +130,7 @@ func (s *Service) Configure(o Options) *Service {
 	s.ownIcon = o.OwnIcon
 	s.version = o.Version
 	if o.Notify != nil {
-		s.notify = o.Notify
-		s.watch = newHealthWatch(o.Notify)
+		s.setNotifier(o.Notify)
 	}
 	s.loadUpdates()
 	return s
@@ -736,11 +737,7 @@ func (s *Service) followEvents(ctx context.Context, path string) error {
 			continue
 		}
 		if s.watch != nil && (s.selfID == "" || ev.Actor.ID != s.selfID) {
-			code := ev.Actor.Attributes["exitCode"]
-			if ev.Action == "kill" {
-				code = ev.Actor.Attributes["signal"]
-			}
-			s.watch.event(ctx, eventName(ev.Actor.Attributes), ev.Action, code)
+			s.watch.event(ctx, eventName(ev.Actor.Attributes), ev.Action, eventCode(ev.Action, ev.Actor.Attributes))
 		}
 		// exec_* and top events don't change the list.
 		if strings.HasPrefix(ev.Action, "exec_") || ev.Action == "top" {

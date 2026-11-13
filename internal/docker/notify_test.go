@@ -181,8 +181,18 @@ func TestDockerBaselineNoPush(t *testing.T) {
 	if len(n.raised) != len(want) {
 		t.Errorf("raised %d items, want %d: %v", len(n.raised), len(want), got)
 	}
-	if n.raised[0].Title != "gluetun is unhealthy" {
-		t.Errorf("title = %q", n.raised[0].Title)
+	titles := map[string]string{}
+	for _, o := range n.raised {
+		titles[o.Key] = o.Title
+	}
+	for key, want := range map[string]string{
+		"gluetun": "gluetun is unhealthy",
+		"crashed": "crashed stopped with an error",
+		"looping": "looping keeps restarting",
+	} {
+		if titles[key] != want {
+			t.Errorf("title of %s = %q, want %q", key, titles[key], want)
+		}
 	}
 	wantResolved := map[string]bool{
 		"container.unhealthy recovered: recovered is healthy again": true,
@@ -212,7 +222,7 @@ func TestRestartLoopOneOccurrence(t *testing.T) {
 		w.event(ctx, "flaky", "start", "")
 		clock.advance(30 * time.Second)
 	}
-	if len(n.raised) != 1 || n.raised[0].Title != "flaky failed to start" || n.raised[0].Baseline {
+	if len(n.raised) != 1 || n.raised[0].Title != "flaky stopped with an error" || n.raised[0].Baseline {
 		t.Fatalf("raised = %+v, want one pushed occurrence", n.raised)
 	}
 	if len(n.resolved) != 0 {
@@ -270,7 +280,7 @@ func TestStopIsNotAFailure(t *testing.T) {
 func withFakeNotifier(s *Service) *fakeNotifier {
 	n := newFakeNotifier()
 	s.notify = n
-	s.watch = newHealthWatch(n)
+	s.setNotifier(n)
 	return n
 }
 
@@ -499,5 +509,164 @@ func TestSyncCancelsPendingHealthy(t *testing.T) {
 	clock.advance(time.Hour)
 	if len(n.resolved) != 0 || !n.open["container.unhealthy gluetun"] {
 		t.Fatalf("resolved %v open %v, want still open", n.resolved, n.open)
+	}
+}
+
+// A renamed container's problems move to its new name: the items under
+// the old name are resolved, and the next event raises under the new one.
+func TestRenameMovesProblem(t *testing.T) {
+	if got := eventCode("rename", map[string]string{"name": "new", "oldName": "/old"}); got != "old" {
+		t.Errorf("rename code = %q, want the old name", got)
+	}
+	if got := eventCode("kill", map[string]string{"signal": "15", "exitCode": "x"}); got != "15" {
+		t.Errorf("kill code = %q", got)
+	}
+	if got := eventCode("die", map[string]string{"exitCode": "1"}); got != "1" {
+		t.Errorf("die code = %q", got)
+	}
+
+	ctx := context.Background()
+	n := newFakeNotifier()
+	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+	w := newTestWatch(n, clock)
+	w.event(ctx, "old", "health_status: unhealthy", "")
+	w.event(ctx, "old", "die", "1")
+	w.event(ctx, "new", "rename", "old")
+	if len(n.open) != 0 {
+		t.Fatalf("open after rename: %v", n.open)
+	}
+	if len(n.resolved) != 2 || n.resolved[0] != "container.unhealthy old: old was renamed to new" ||
+		n.resolved[1] != "container.failed old: old was renamed to new" {
+		t.Fatalf("resolved = %v", n.resolved)
+	}
+	w.event(ctx, "new", "health_status: unhealthy", "")
+	if !n.open["container.unhealthy new"] {
+		t.Fatalf("not raised under the new name: %v", n.open)
+	}
+
+	// A stop in progress follows the container to its new name.
+	raised := len(n.raised)
+	w.event(ctx, "new", "kill", "15")
+	w.event(ctx, "newer", "rename", "new")
+	w.event(ctx, "newer", "die", "1")
+	if len(n.raised) != raised {
+		t.Fatalf("stop after a rename raised %+v", n.raised[raised:])
+	}
+}
+
+// A kill with the container's own STOPSIGNAL is a stop through Docker,
+// whether the signal is set by number or by name, with or without SIG.
+func TestCustomStopSignalIsStop(t *testing.T) {
+	ctx := context.Background()
+	configured := map[string]string{"app": "SIGUSR1", "web": "WINCH", "num": "10"}
+	for _, tt := range []struct {
+		name, container, signal string
+		raised                  bool
+	}{
+		{"named with SIG", "app", "10", false},
+		{"named without SIG", "web", "28", false},
+		{"by number", "num", "10", false},
+		{"event by name", "num", "SIGUSR1", false},
+		{"other signal", "app", "1", true},
+		{"default still applies", "app", "15", false},
+	} {
+		n := newFakeNotifier()
+		clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+		w := newTestWatch(n, clock)
+		w.stopSignal = func(_ context.Context, name string) (string, bool) { return configured[name], true }
+		w.event(ctx, tt.container, "kill", tt.signal)
+		w.event(ctx, tt.container, "die", "1")
+		if got := len(n.raised) == 1; got != tt.raised {
+			t.Errorf("%s: raised %v, want %v", tt.name, got, tt.raised)
+		}
+	}
+
+	// Looked up once per container, again after it is removed or renamed;
+	// a failed lookup is not kept.
+	n := newFakeNotifier()
+	w := newTestWatch(n, &fakeClock{now: time.Unix(1_700_000_000, 0)})
+	lookups := 0
+	fail := true
+	w.stopSignal = func(_ context.Context, name string) (string, bool) {
+		lookups++
+		return "SIGUSR1", !fail
+	}
+	w.event(ctx, "app", "kill", "10")
+	fail = false
+	w.event(ctx, "app", "kill", "10")
+	w.event(ctx, "app", "kill", "10")
+	if lookups != 2 {
+		t.Fatalf("lookups = %d, want 2 (the failed one is retried, then cached)", lookups)
+	}
+	w.event(ctx, "app", "destroy", "")
+	w.event(ctx, "app", "kill", "10")
+	w.event(ctx, "app2", "rename", "app")
+	w.event(ctx, "app2", "kill", "10")
+	if lookups != 4 {
+		t.Fatalf("lookups = %d, want 4 after destroy and rename", lookups)
+	}
+
+	// The service reads it from container inspect.
+	f := &fakeDocker{containers: map[string]*fakeContainer{}}
+	id := "5555555555555555555555555555555555555555555555555555555555555555"
+	c := appContainer(id, "myapp", "bridge")
+	c.inspect["Config"].(map[string]any)["StopSignal"] = "SIGUSR1"
+	f.containers[id] = c
+	s := startFake(t, f)
+	sn := withFakeNotifier(s)
+	if sig, ok := s.containerStopSignal(ctx, "myapp"); !ok || sig != "SIGUSR1" {
+		t.Fatalf("containerStopSignal = %q, %v", sig, ok)
+	}
+	s.watch.event(ctx, "myapp", "kill", "10")
+	s.watch.event(ctx, "myapp", "die", "1")
+	if len(sn.raised) != 0 {
+		t.Fatalf("stop with the container's STOPSIGNAL raised %+v", sn.raised)
+	}
+}
+
+// An image whose check failed this round keeps its container in the
+// updates report if it was there before, so a transient registry error
+// does not drop it (and push it again on the next good check).
+func TestFailedImageCarriesForward(t *testing.T) {
+	ctx := context.Background()
+	f := &fakeDocker{containers: map[string]*fakeContainer{}}
+	id := "6666666666666666666666666666666666666666666666666666666666666666"
+	f.containers[id] = appContainer(id, "myapp", "bridge")
+	other := "7777777777777777777777777777777777777777777777777777777777777777"
+	f.containers[other] = appContainer(other, "other", "bridge")
+	f.containers[other].image = "sha256:other"
+	s := startFake(t, f)
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s.Configure(Options{Store: st})
+	n := withFakeNotifier(s)
+	yes, no := true, false
+	failed := UpdateCheck{Image: "app:latest", Error: "Registry rate limit reached; will retry on the next check"}
+	set := func(k string, u UpdateCheck) {
+		s.mu.Lock()
+		s.updates[k] = u
+		s.mu.Unlock()
+		s.invalidate()
+	}
+	set("app:latest|sha256:old", UpdateCheck{Image: "app:latest", UpdateAvailable: &yes})
+	set("app:latest|sha256:other", failed)
+	for i, step := range []struct {
+		update UpdateCheck
+		want   string
+	}{
+		{UpdateCheck{Image: "app:latest", UpdateAvailable: &yes}, "myapp"},
+		{failed, "myapp"},
+		{failed, "myapp"},
+		{UpdateCheck{Image: "app:latest", UpdateAvailable: &no}, ""},
+		{failed, ""},
+	} {
+		set("app:latest|sha256:old", step.update)
+		s.reportUpdates(ctx, false)
+		if got := n.updates[len(n.updates)-1]; got != "containers false: "+step.want {
+			t.Fatalf("step %d: report %q, want %q", i, got, step.want)
+		}
 	}
 }
