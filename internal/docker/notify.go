@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -68,7 +70,16 @@ func problemTitle(cat notify.Category, name string) string {
 	if cat == notify.ContainerUnhealthy {
 		return name + " is unhealthy"
 	}
-	return name + " failed to start"
+	return name + " stopped with an error"
+}
+
+// failedTitle is the title of a failure found by sync: a container Docker
+// is restarting keeps restarting, any other stopped with an error.
+func failedTitle(c Container) string {
+	if c.State == "restarting" {
+		return c.Name + " keeps restarting"
+	}
+	return problemTitle(notify.ContainerFailed, c.Name)
 }
 
 func resolvedTitle(cat notify.Category, name string) string {
@@ -84,6 +95,10 @@ type healthWatch struct {
 	// afterFunc is time.AfterFunc returning Stop (replaced in tests).
 	afterFunc func(d time.Duration, f func()) (stop func() bool)
 	now       func() time.Time
+	// stopSignal looks up a container's configured stop signal (its
+	// STOPSIGNAL); ok is false when it could not be read. Nil means only
+	// the usual signals count as a stop.
+	stopSignal func(ctx context.Context, name string) (sig string, ok bool)
 
 	mu sync.Mutex
 	// stable holds the pending "running again" resolve per container,
@@ -96,11 +111,15 @@ type healthWatch struct {
 	// within stopGrace after it is a stop through Docker, not a failure,
 	// whatever the exit code.
 	stopping map[string]time.Time
+	// signals caches each container's stop signal number (0: none set)
+	// until it is removed or renamed.
+	signals map[string]int
 }
 
 func newHealthWatch(n notifier) *healthWatch {
 	return &healthWatch{
-		n: n, stable: map[string]*pending{}, healthy: map[string]*pending{}, gone: map[string]*pending{}, stopping: map[string]time.Time{}, now: time.Now,
+		n: n, stable: map[string]*pending{}, healthy: map[string]*pending{}, gone: map[string]*pending{}, stopping: map[string]time.Time{},
+		signals: map[string]int{}, now: time.Now,
 		afterFunc: func(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop },
 	}
 }
@@ -110,13 +129,59 @@ func newHealthWatch(n notifier) *healthWatch {
 const stopGrace = 30 * time.Second
 
 // terminating reports whether a kill event's signal (number or name) is
-// one Docker stops containers with.
-func terminating(signal string) bool {
-	switch strings.TrimPrefix(signal, "SIG") {
-	case "9", "15", "2", "3", "KILL", "TERM", "INT", "QUIT":
+// one Docker stops containers with: SIGKILL, SIGTERM, SIGINT, SIGQUIT or
+// the container's own stop signal (stop, 0 if unknown).
+func terminating(signal string, stop int) bool {
+	n := signalNumber(signal)
+	switch n {
+	case 0:
+		return false
+	case 9, 15, 2, 3:
 		return true
 	}
-	return false
+	return n == stop
+}
+
+// linuxSignals numbers the signal names Docker accepts (Linux numbering:
+// the daemon runs on Linux).
+var linuxSignals = map[string]int{
+	"HUP": 1, "INT": 2, "QUIT": 3, "ILL": 4, "TRAP": 5, "ABRT": 6, "IOT": 6, "BUS": 7,
+	"FPE": 8, "KILL": 9, "USR1": 10, "SEGV": 11, "USR2": 12, "PIPE": 13, "ALRM": 14, "TERM": 15,
+	"STKFLT": 16, "CHLD": 17, "CONT": 18, "STOP": 19, "TSTP": 20, "TTIN": 21, "TTOU": 22, "URG": 23,
+	"XCPU": 24, "XFSZ": 25, "VTALRM": 26, "PROF": 27, "WINCH": 28, "IO": 29, "POLL": 29, "PWR": 30, "SYS": 31,
+}
+
+// signalNumber parses a signal given by number or by name, with or
+// without the SIG prefix; 0 if it is neither.
+func signalNumber(sig string) int {
+	if n, err := strconv.Atoi(sig); err == nil && n > 0 {
+		return n
+	}
+	return linuxSignals[strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(sig)), "SIG")]
+}
+
+// configuredStop is the number of name's own stop signal, 0 if it has none
+// or it could not be read. A successful lookup is kept until the container
+// is removed or renamed.
+func (w *healthWatch) configuredStop(ctx context.Context, name string) int {
+	if w.stopSignal == nil {
+		return 0
+	}
+	w.mu.Lock()
+	n, ok := w.signals[name]
+	w.mu.Unlock()
+	if ok {
+		return n
+	}
+	sig, ok := w.stopSignal(ctx, name)
+	if !ok {
+		return 0
+	}
+	n = signalNumber(sig)
+	w.mu.Lock()
+	w.signals[name] = n
+	w.mu.Unlock()
+	return n
 }
 
 // event handles one container event (Wargo's own container already left
@@ -127,7 +192,11 @@ func (w *healthWatch) event(ctx context.Context, name, action, code string) {
 	}
 	switch action {
 	case "kill":
-		if terminating(code) {
+		stop := 0
+		if !terminating(code, 0) {
+			stop = w.configuredStop(ctx, name)
+		}
+		if terminating(code, stop) {
 			w.mu.Lock()
 			w.stopping[name] = w.now()
 			w.mu.Unlock()
@@ -155,9 +224,32 @@ func (w *healthWatch) event(ctx context.Context, name, action, code string) {
 		w.cancelLocked(w.healthy, name)
 		w.cancelLocked(w.gone, name)
 		delete(w.stopping, name)
+		delete(w.signals, name)
 		w.mu.Unlock()
 		w.n.Resolve(ctx, notify.ContainerUnhealthy, name, name+" was removed")
 		w.n.Resolve(ctx, notify.ContainerFailed, name, name+" was removed")
+		return
+	case "rename":
+		// code is the old name. Its items are resolved; the next sync or
+		// health event raises them again under the new name if the
+		// problem goes on. A stop in progress carries over.
+		old := code
+		if old == "" || old == name {
+			return
+		}
+		w.mu.Lock()
+		w.cancelLocked(w.stable, old)
+		w.cancelLocked(w.healthy, old)
+		w.cancelLocked(w.gone, old)
+		if at, ok := w.stopping[old]; ok {
+			w.stopping[name] = at
+			delete(w.stopping, old)
+		}
+		delete(w.signals, old)
+		delete(w.signals, name)
+		w.mu.Unlock()
+		w.n.Resolve(ctx, notify.ContainerUnhealthy, old, old+" was renamed to "+name)
+		w.n.Resolve(ctx, notify.ContainerFailed, old, old+" was renamed to "+name)
 		return
 	case "start":
 		w.mu.Lock()
@@ -255,7 +347,8 @@ func (w *healthWatch) stop() {
 // that ended while nobody watched are resolved, current ones raised. At
 // startup (baseline) nothing it raises is pushed.
 func (w *healthWatch) sync(ctx context.Context, list []Container, baseline bool) {
-	var unhealthy, failed, running []string
+	var unhealthy, running []string
+	var failed []Container
 	keepUnhealthy := []string{}
 	healthy := map[string]bool{}
 	for _, c := range list {
@@ -273,7 +366,7 @@ func (w *healthWatch) sync(ctx context.Context, list []Container, baseline bool)
 			healthy[c.Name] = true
 		}
 		if failedState(c) {
-			failed = append(failed, c.Name)
+			failed = append(failed, c)
 		} else if c.State == "running" {
 			running = append(running, c.Name)
 		}
@@ -286,7 +379,11 @@ func (w *healthWatch) sync(ctx context.Context, list []Container, baseline bool)
 	})
 	// A running container keeps its failure until it has stayed up for
 	// stableAfter: it may be in a restart loop.
-	w.n.Reconcile(ctx, notify.ContainerFailed, append(append([]string{}, failed...), running...), nil)
+	current := append([]string{}, running...)
+	for _, c := range failed {
+		current = append(current, c.Name)
+	}
+	w.n.Reconcile(ctx, notify.ContainerFailed, current, nil)
 	// What Docker reports now overrides a pending resolve: an unhealthy
 	// container is not healthy again, a running one was not stopped.
 	w.mu.Lock()
@@ -301,9 +398,9 @@ func (w *healthWatch) sync(ctx context.Context, list []Container, baseline bool)
 		w.n.Raise(ctx, notify.Occurrence{Category: notify.ContainerUnhealthy, Key: name,
 			Title: problemTitle(notify.ContainerUnhealthy, name), Link: containerLink(name), Baseline: baseline})
 	}
-	for _, name := range failed {
-		w.n.Raise(ctx, notify.Occurrence{Category: notify.ContainerFailed, Key: name,
-			Title: problemTitle(notify.ContainerFailed, name), Link: containerLink(name), Baseline: baseline})
+	for _, c := range failed {
+		w.n.Raise(ctx, notify.Occurrence{Category: notify.ContainerFailed, Key: c.Name,
+			Title: failedTitle(c), Link: containerLink(c.Name), Baseline: baseline})
 	}
 	for _, name := range running {
 		w.started(context.WithoutCancel(ctx), name)
@@ -328,20 +425,65 @@ func failedState(c Container) bool {
 
 func containerLink(name string) string { return "/containers/" + url.PathEscape(name) }
 
-// updateNames lists the containers with an image update available.
-func updateNames(l []Container) []string {
+// updateNames lists the containers with an image update available for
+// the updates report. A container whose image check failed this round
+// stays in if the last report had it, so a transient registry error does
+// not drop it (and push it again on the next good check).
+func (s *Service) updateNames(l []Container) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var out []string
+	reported := map[string]bool{}
 	for _, c := range l {
-		if c.UpdateAvailable != nil && *c.UpdateAvailable {
+		u := s.updates[c.Image+"|"+c.ImageID]
+		failed := u.UpdateAvailable == nil && u.Error != ""
+		if c.UpdateAvailable != nil && *c.UpdateAvailable || failed && s.reportedUpdates[c.Name] {
 			out = append(out, c.Name)
+			reported[c.Name] = true
 		}
 	}
+	s.reportedUpdates = reported
 	return out
+}
+
+// setNotifier sends container problems and pending updates to n.
+func (s *Service) setNotifier(n notifier) {
+	s.notify = n
+	s.watch = newHealthWatch(n)
+	s.watch.stopSignal = s.containerStopSignal
+}
+
+// containerStopSignal reads name's configured stop signal (STOPSIGNAL)
+// from container inspect; "" when none is set.
+func (s *Service) containerStopSignal(ctx context.Context, name string) (string, bool) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var in struct {
+		Config struct {
+			StopSignal string `json:"StopSignal"`
+		} `json:"Config"`
+	}
+	if err := s.c.call(cctx, http.MethodGet, "/containers/"+url.PathEscape(name)+"/json", nil, &in); err != nil {
+		return "", false
+	}
+	return in.Config.StopSignal, true
 }
 
 // eventName is the container name of a Docker event ("name" attribute).
 func eventName(attrs map[string]string) string {
 	return strings.TrimPrefix(attrs["name"], "/")
+}
+
+// eventCode is what healthWatch.event takes as code for a Docker event:
+// the signal of a kill, the old name of a rename, else the exit code.
+func eventCode(action string, attrs map[string]string) string {
+	switch action {
+	case "kill":
+		return attrs["signal"]
+	case "rename":
+		return strings.TrimPrefix(attrs["oldName"], "/")
+	}
+	return attrs["exitCode"]
 }
 
 // syncProblems runs sync against the current containers each time the
@@ -359,7 +501,7 @@ func (s *Service) syncProblems(ctx context.Context) {
 		return
 	}
 	if s.takeStartupReport() {
-		s.notify.ReportUpdates(ctx, "containers", updateNames(l), false)
+		s.notify.ReportUpdates(ctx, "containers", s.updateNames(l), false)
 	}
 	s.mu.Lock()
 	baseline := !s.synced
@@ -391,7 +533,7 @@ func (s *Service) reportStartupUpdates(ctx context.Context) {
 		l = nil
 	}
 	if s.takeStartupReport() {
-		s.notify.ReportUpdates(ctx, "containers", updateNames(l), false)
+		s.notify.ReportUpdates(ctx, "containers", s.updateNames(l), false)
 	}
 }
 
@@ -416,7 +558,7 @@ func (s *Service) reportUpdates(ctx context.Context, automatic bool) {
 		return
 	}
 	s.takeStartupReport()
-	s.notify.ReportUpdates(ctx, "containers", updateNames(l), automatic)
+	s.notify.ReportUpdates(ctx, "containers", s.updateNames(l), automatic)
 }
 
 // dockerMissing reports whether Docker is not installed here: no socket

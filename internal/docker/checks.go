@@ -245,7 +245,7 @@ func (s *Service) handleCheckUpdates(w http.ResponseWriter, r *http.Request) err
 	}
 	if s.notify != nil {
 		s.takeStartupReport()
-		s.notify.ReportUpdates(context.WithoutCancel(ctx), "containers", updateNames(l), false)
+		s.notify.ReportUpdates(context.WithoutCancel(ctx), "containers", s.updateNames(l), false)
 	}
 	httpx.OK(w, s.updatesStatus(l))
 	return nil
