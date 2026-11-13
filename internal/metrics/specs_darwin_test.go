@@ -19,7 +19,8 @@ func TestGetInfoDarwin(t *testing.T) {
 	if runtime.GOARCH == "arm64" && !strings.HasPrefix(i.CPUModel, "Apple M") {
 		t.Fatal(i.CPUModel)
 	}
-	if !strings.Contains(i.Specs.Timezone, "/") {
+	// An area/city name, or plain UTC on machines set to it (GitHub's macOS runners).
+	if !strings.Contains(i.Specs.Timezone, "/") && i.Specs.Timezone != "UTC" {
 		t.Fatal(i.Specs.Timezone)
 	}
 }

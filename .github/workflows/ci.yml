@@ -83,8 +83,10 @@ jobs:
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version: "1.26" }
+      # Node 24 here, not the .tool-versions pin: newer Node releases do not run on
+      # AlmaLinux 8 (glibc 2.28). It only builds the web UI, so the output is the same.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version-file: .tool-versions, cache: npm, cache-dependency-path: web/package-lock.json }
+        with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
       - run: make web
       - run: go vet ./...
       # Run tests unprivileged, the way Wargo runs: several security checks
