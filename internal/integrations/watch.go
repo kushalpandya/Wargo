@@ -28,7 +28,9 @@ func (s *Service) SetNotify(c *notify.Center) { s.notify = c }
 type watchSource interface {
 	transmissionConfigured() bool
 	plexConfigured() bool
-	fetchDownloads(ctx context.Context) ([]notify.Download, error)
+	// fetchDownloads also says whether list came from another
+	// Transmission than the last good fetch.
+	fetchDownloads(ctx context.Context) (list []notify.Download, newSource bool, err error)
 	fetchStreams(ctx context.Context) ([]notify.Stream, error)
 }
 
@@ -73,14 +75,19 @@ func runWatch(ctx context.Context, src watchSource, dst watchSink) {
 // download category is on. A failed fetch reports nothing: an empty list
 // would end every download. While it does not poll, the next report is a
 // baseline, so what started meanwhile is not pushed when polling resumes.
+// So is the first report from another Transmission: the torrents it
+// already has are not news.
 func pollDownloads(ctx context.Context, src watchSource, dst watchSink) {
 	if !src.transmissionConfigured() || !anyOn(dst, notify.DownloadStarted, notify.DownloadFinished, notify.DownloadError) {
 		dst.ResetDownloads()
 		return
 	}
-	list, err := src.fetchDownloads(ctx)
+	list, newSource, err := src.fetchDownloads(ctx)
 	if err != nil || ctx.Err() != nil {
 		return
+	}
+	if newSource {
+		dst.ResetDownloads()
 	}
 	dst.SetDownloads(ctx, list)
 }
@@ -116,7 +123,7 @@ func (s *Service) plexConfigured() bool {
 
 // downloadFields are the torrent fields toDownloads reads.
 var downloadFields = []string{
-	"hashString", "name", "status", "percentDone", "rateDownload", "eta", "error", "errorString",
+	"hashString", "name", "status", "percentDone", "rateDownload", "eta", "error", "errorString", "addedDate",
 }
 
 // pageTorrents holds the torrent list of the last good payload (published
@@ -145,30 +152,40 @@ func (p *pageTorrents) get(c *transmission.Client, now time.Time, maxAge time.Du
 }
 
 // fetchDownloads reuses the Torrents page's list while it is fresh, and
-// otherwise asks Transmission for just the torrent fields it needs.
-func (s *Service) fetchDownloads(ctx context.Context) ([]notify.Download, error) {
+// otherwise asks Transmission for just the torrent fields it needs. Only
+// the watcher goroutine calls it.
+func (s *Service) fetchDownloads(ctx context.Context) ([]notify.Download, bool, error) {
 	c := s.transmissionClient()
 	if c == nil {
-		return nil, errTransmissionNotConfigured
+		return nil, false, errTransmissionNotConfigured
 	}
 	if list, ok := s.page.get(c, s.now(), watchDownloadsEvery); ok {
-		return toDownloads(list), nil
+		return toDownloads(list), s.watchedFrom(c), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	list, err := c.TorrentsWith(ctx, downloadFields)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	views := make([]TorrentView, 0, len(list))
 	for _, t := range list {
 		views = append(views, TorrentView{
 			Hash: t.HashString, Name: t.Name, Status: transmission.StatusName(t.Status),
 			PercentDone: t.PercentDone, RateDownload: t.RateDownload, ETA: t.ETA,
-			Error: t.Error, ErrorString: t.ErrorString,
+			Error: t.Error, ErrorString: t.ErrorString, AddedDate: t.AddedDate,
 		})
 	}
-	return toDownloads(views), nil
+	return toDownloads(views), s.watchedFrom(c), nil
+}
+
+// watchedFrom records c as the client of the last good fetch and says
+// whether it differs from the one before (a new client means new settings,
+// and so possibly another Transmission).
+func (s *Service) watchedFrom(c *transmission.Client) bool {
+	changed := s.watchTrc != nil && s.watchTrc != c
+	s.watchTrc = c
+	return changed
 }
 
 func (s *Service) fetchStreams(ctx context.Context) ([]notify.Stream, error) {
@@ -217,6 +234,9 @@ func toDownloads(ts []TorrentView) []notify.Download {
 			if d.Error == "" {
 				d.Error = fmt.Sprintf("Transmission error %d", t.Error)
 			}
+		}
+		if t.AddedDate > 0 {
+			d.Added = time.Unix(t.AddedDate, 0)
 		}
 		out = append(out, d)
 	}
