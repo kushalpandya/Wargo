@@ -212,10 +212,15 @@ var TorrentFields = []string{
 }
 
 func (c *Client) Torrents(ctx context.Context) ([]Torrent, error) {
+	return c.TorrentsWith(ctx, TorrentFields)
+}
+
+// TorrentsWith lists torrents with only fields set (the rest are zero).
+func (c *Client) TorrentsWith(ctx context.Context, fields []string) ([]Torrent, error) {
 	var out struct {
 		Torrents []Torrent `json:"torrents"`
 	}
-	err := c.Call(ctx, "torrent-get", map[string]any{"fields": TorrentFields}, &out)
+	err := c.Call(ctx, "torrent-get", map[string]any{"fields": fields}, &out)
 	return out.Torrents, err
 }
 

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/config"
+	"github.com/kushalpandya/wargo/internal/integrations/transmission/transmissiontest"
 	"github.com/kushalpandya/wargo/internal/notify"
 )
 
@@ -179,5 +181,100 @@ func TestWatchSkipResetsBaseline(t *testing.T) {
 	pollStreams(ctx, src, dst)
 	if dst.resetDls != 2 || dst.resetStream != 2 {
 		t.Fatalf("resets while not set up = %d, %d; want 2, 2", dst.resetDls, dst.resetStream)
+	}
+}
+
+type countingSink struct {
+	fakeWatchSink
+	lists [][]notify.Download
+}
+
+func (c *countingSink) SetDownloads(_ context.Context, list []notify.Download) {
+	c.setDls++
+	c.lists = append(c.lists, list)
+}
+
+func newWatchHarness(t *testing.T) (*harness, *transmissiontest.Fake) {
+	t.Helper()
+	ft := transmissiontest.New("kushal", "s3cret")
+	t.Cleanup(ft.Close)
+	ft.AddTorrent("debian.iso", 4, 0.5)
+	cfg := config.Config{}
+	cfg.Integrations.Transmission = config.Transmission{URL: ft.RPCURL(), Username: "kushal", Password: "s3cret"}
+	return newHarness(t, cfg), ft
+}
+
+// The watcher asks Transmission for the torrent list alone, with only the
+// fields notifications use.
+func TestWatchFetchesOnlyTorrents(t *testing.T) {
+	h, ft := newWatchHarness(t)
+	dst := &countingSink{}
+	pollDownloads(context.Background(), h.s, dst)
+	if got := ft.Methods(); len(got) != 1 || got[0] != "torrent-get" {
+		t.Fatalf("calls = %v; want one torrent-get", got)
+	}
+	want := map[string]bool{
+		"hashString": true, "name": true, "status": true, "percentDone": true,
+		"rateDownload": true, "eta": true, "error": true, "errorString": true,
+	}
+	fields := ft.LastFields()
+	if len(fields) != len(want) {
+		t.Fatalf("fields = %v; want %d", fields, len(want))
+	}
+	for _, f := range fields {
+		if !want[f] {
+			t.Fatalf("unexpected field %q in %v", f, fields)
+		}
+	}
+	if dst.setDls != 1 || len(dst.lists[0]) != 1 || dst.lists[0][0].Name != "debian.iso" || dst.lists[0][0].Status != "downloading" {
+		t.Fatalf("SetDownloads = %d, %+v", dst.setDls, dst.lists)
+	}
+}
+
+// Stats, session or free space failing says nothing about torrents.
+func TestWatchIgnoresStatsFailure(t *testing.T) {
+	h, ft := newWatchHarness(t)
+	ft.Fail("session-stats", "stats unavailable")
+	ft.Fail("session-get", "session unavailable")
+	ft.Fail("free-space", "no space info")
+	dst := &countingSink{}
+	pollDownloads(context.Background(), h.s, dst)
+	if dst.setDls != 1 {
+		t.Fatalf("SetDownloads = %d; want 1", dst.setDls)
+	}
+	ft.Fail("torrent-get", "torrents unavailable")
+	pollDownloads(context.Background(), h.s, dst)
+	if dst.setDls != 1 {
+		t.Fatalf("SetDownloads after a failed torrent-get = %d; want 1", dst.setDls)
+	}
+}
+
+// While the Torrents page is live, the watcher reuses its fresh list and
+// only polls Transmission itself once that list is stale.
+func TestWatchReusesPageData(t *testing.T) {
+	h, ft := newWatchHarness(t)
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	h.s.now = func() time.Time { return now }
+	if _, err := h.s.payload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before := len(ft.Methods())
+	dst := &countingSink{}
+	now = now.Add(watchDownloadsEvery)
+	pollDownloads(context.Background(), h.s, dst)
+	if got := ft.Methods()[before:]; len(got) != 0 {
+		t.Fatalf("calls with fresh page data = %v; want none", got)
+	}
+	if dst.setDls != 1 || len(dst.lists[0]) != 1 || dst.lists[0][0].Name != "debian.iso" {
+		t.Fatalf("SetDownloads = %d, %+v", dst.setDls, dst.lists)
+	}
+
+	now = now.Add(time.Second)
+	pollDownloads(context.Background(), h.s, dst)
+	if got := ft.Methods()[before:]; len(got) != 1 || got[0] != "torrent-get" {
+		t.Fatalf("calls with stale page data = %v; want one torrent-get", got)
+	}
+	if dst.setDls != 2 {
+		t.Fatalf("SetDownloads = %d; want 2", dst.setDls)
 	}
 }

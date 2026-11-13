@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/integrations/transmission"
 	"github.com/kushalpandya/wargo/internal/notify"
 )
 
@@ -112,12 +114,61 @@ func (s *Service) plexConfigured() bool {
 	return p.URL != "" && p.TokenSealed != ""
 }
 
+// downloadFields are the torrent fields toDownloads reads.
+var downloadFields = []string{
+	"hashString", "name", "status", "percentDone", "rateDownload", "eta", "error", "errorString",
+}
+
+// pageTorrents holds the torrent list of the last good payload (published
+// every 2 s while the Torrents page is open).
+type pageTorrents struct {
+	mu   sync.Mutex
+	c    *transmission.Client
+	list []TorrentView
+	at   time.Time
+}
+
+func (p *pageTorrents) set(c *transmission.Client, list []TorrentView, at time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.c, p.list, p.at = c, list, at
+}
+
+// get returns the list when it came from c at most maxAge before now.
+func (p *pageTorrents) get(c *transmission.Client, now time.Time, maxAge time.Duration) ([]TorrentView, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.c == nil || p.c != c || now.Sub(p.at) > maxAge {
+		return nil, false
+	}
+	return p.list, true
+}
+
+// fetchDownloads reuses the Torrents page's list while it is fresh, and
+// otherwise asks Transmission for just the torrent fields it needs.
 func (s *Service) fetchDownloads(ctx context.Context) ([]notify.Download, error) {
-	p, err := s.payload(ctx)
+	c := s.transmissionClient()
+	if c == nil {
+		return nil, errTransmissionNotConfigured
+	}
+	if list, ok := s.page.get(c, s.now(), watchDownloadsEvery); ok {
+		return toDownloads(list), nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	list, err := c.TorrentsWith(ctx, downloadFields)
 	if err != nil {
 		return nil, err
 	}
-	return toDownloads(p.Torrents), nil
+	views := make([]TorrentView, 0, len(list))
+	for _, t := range list {
+		views = append(views, TorrentView{
+			Hash: t.HashString, Name: t.Name, Status: transmission.StatusName(t.Status),
+			PercentDone: t.PercentDone, RateDownload: t.RateDownload, ETA: t.ETA,
+			Error: t.Error, ErrorString: t.ErrorString,
+		})
+	}
+	return toDownloads(views), nil
 }
 
 func (s *Service) fetchStreams(ctx context.Context) ([]notify.Stream, error) {

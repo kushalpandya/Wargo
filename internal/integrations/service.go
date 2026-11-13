@@ -91,6 +91,9 @@ type Service struct {
 
 	// notify receives downloads and streams (nil: not watched).
 	notify *notify.Center
+	// page is the torrent list from the last good payload, which the
+	// watcher reuses while it is fresh.
+	page pageTorrents
 
 	// for tests
 	now func() time.Time

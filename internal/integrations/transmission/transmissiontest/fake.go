@@ -39,6 +39,10 @@ type Fake struct {
 	Calls []string
 	// Handshakes counts 409 responses sent.
 	Handshakes int
+	// fail maps RPC methods to the error result they return.
+	fail map[string]string
+	// fields is what the last torrent-get asked for.
+	fields []string
 }
 
 // New starts a fake with basic auth user/pass ("" disables auth).
@@ -84,6 +88,23 @@ func (f *Fake) Methods() []string {
 	return append([]string(nil), f.Calls...)
 }
 
+// Fail makes method return result (a Transmission error) from now on.
+func (f *Fake) Fail(method, result string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail == nil {
+		f.fail = map[string]string{}
+	}
+	f.fail[method] = result
+}
+
+// LastFields returns the fields the last torrent-get asked for.
+func (f *Fake) LastFields() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.fields...)
+}
+
 // RotateSession forces the next request to perform the 409 handshake again.
 func (f *Fake) RotateSession(id string) {
 	f.mu.Lock()
@@ -122,6 +143,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	f.Calls = append(f.Calls, req.Method)
 	result, args := "success", map[string]any{}
+	if msg, ok := f.fail[req.Method]; ok {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"result": msg, "arguments": args})
+		return
+	}
 	ids := f.ids(req.Arguments["ids"])
 	switch req.Method {
 	case "session-get":
@@ -142,6 +168,14 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	case "free-space":
 		args = map[string]any{"path": req.Arguments["path"], "size-bytes": int64(500) << 30}
 	case "torrent-get":
+		f.fields = f.fields[:0]
+		if fs, ok := req.Arguments["fields"].([]any); ok {
+			for _, x := range fs {
+				if s, ok := x.(string); ok {
+					f.fields = append(f.fields, s)
+				}
+			}
+		}
 		list := []map[string]any{}
 		for id := int64(1); id < f.nextID; id++ {
 			t, ok := f.torrents[id]

@@ -440,6 +440,7 @@ func (s *Service) payload(ctx context.Context) (*Payload, error) {
 			p.Stats.FreeSpace = &n
 		}
 	}
+	s.page.set(c, p.Torrents, p.At)
 	return p, nil
 }
 
