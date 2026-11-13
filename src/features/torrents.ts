@@ -591,6 +591,13 @@ function view(t: Stored): Torrent {
   };
 }
 
+/** Torrents as they are now, for the notifications panel (none when Transmission isn't set up). */
+export function currentTorrents(): Torrent[] {
+  if (!transmissionStatus().available) return [];
+  advance();
+  return tr.get().torrents.map(view);
+}
+
 function payload(): TransmissionPayload {
   const st = transmissionStatus();
   if (!st.available) return { torrents: [], stats: { downloadSpeed: 0, uploadSpeed: 0, activeTorrentCount: 0, pausedTorrentCount: 0 }, error: st.error ?? "Transmission is not configured", at: new Date().toISOString() };

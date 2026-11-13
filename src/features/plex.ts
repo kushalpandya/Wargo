@@ -103,6 +103,11 @@ function poster(key: number): string {
     .join("")}</svg>`;
 }
 
+/** Plays in progress for the notifications panel (none when Plex isn't set up). */
+export function currentSessions() {
+  return connected() ? sessions() : [];
+}
+
 /** Whether the demo's Plex connection is set up (Settings → Integrations). */
 let connected: () => boolean = () => true;
 export function setPlexConnected(fn: () => boolean) {

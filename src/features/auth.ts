@@ -82,6 +82,8 @@ export const authHandlers = [
       passkeys: a.passkeys.length,
       recoveryCodesLeft: a.recoveryLeft,
       expiresAt: new Date(Date.now() + 12 * HOUR).toISOString(),
+      remember: true,
+      idleMinutes: 30,
     });
   }),
 

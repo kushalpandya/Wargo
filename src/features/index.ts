@@ -16,6 +16,7 @@ import { handlers as launcher } from "./launcher";
 import { handlers as settings } from "./settings";
 import { handlers as plex } from "./plex";
 import { handlers as weather } from "./weather";
+import { handlers as notifications } from "./notifications";
 
 export const extraHandlers: (RequestHandler | WebSocketHandler)[] = [
   ...jobHandlers,
@@ -32,4 +33,5 @@ export const extraHandlers: (RequestHandler | WebSocketHandler)[] = [
   ...settings,
   ...weather,
   ...plex,
+  ...notifications,
 ];
