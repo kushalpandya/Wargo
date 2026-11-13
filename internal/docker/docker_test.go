@@ -226,6 +226,11 @@ type fakeDocker struct {
 	// containers of the new image (the last one repeats).
 	newHealth []string
 	seq       int
+	// Registry: repoDigests are the local image's digests, remoteDigest
+	// what /distribution answers, unless registryFail is set.
+	repoDigests  []string
+	remoteDigest string
+	registryFail bool
 }
 
 func (f *fakeDocker) find(ref string) *fakeContainer {
@@ -276,7 +281,14 @@ func (f *fakeDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		enc.Encode(map[string]any{"status": "Pull complete", "id": "l1"})
 		enc.Encode(map[string]any{"status": "Status: Downloaded newer image for app:latest"})
 	case r.Method == "GET" && parts[0] == "images":
-		json.NewEncoder(w).Encode(map[string]any{"Id": f.newImageID, "Config": map[string]any{"Env": []string{"PATH=/bin"}}})
+		json.NewEncoder(w).Encode(map[string]any{"Id": f.newImageID, "RepoDigests": f.repoDigests, "Config": map[string]any{"Env": []string{"PATH=/bin"}}})
+	case r.Method == "GET" && parts[0] == "distribution":
+		if f.registryFail {
+			w.WriteHeader(500)
+			w.Write([]byte(`{"message":"toomanyrequests: You have reached your pull rate limit"}`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"Descriptor": map[string]any{"digest": f.remoteDigest}})
 	case r.Method == "POST" && path == "/containers/create":
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)

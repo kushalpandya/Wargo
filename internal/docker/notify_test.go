@@ -66,13 +66,14 @@ func (f *fakeNotifier) Raise(_ context.Context, o notify.Occurrence) bool {
 	return !o.Baseline
 }
 
-func (f *fakeNotifier) Resolve(_ context.Context, cat notify.Category, key, title string) {
+func (f *fakeNotifier) Resolve(_ context.Context, cat notify.Category, key, title string) bool {
 	k := string(cat) + " " + key
 	if !f.open[k] {
-		return
+		return false
 	}
 	delete(f.open, k)
 	f.resolved = append(f.resolved, k+": "+title)
+	return true
 }
 
 func (f *fakeNotifier) Reconcile(ctx context.Context, cat notify.Category, current []string, title func(string) string) {
@@ -215,7 +216,8 @@ func TestRestartLoopOneOccurrence(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
 	w := newTestWatch(n, clock)
 
-	// Crashes every 30 seconds, restarted by its restart policy.
+	// Crashes every 30 seconds, restarted by its restart policy. The event
+	// path says "stopped with an error": only sync sees the restarting state.
 	for range 5 {
 		w.event(ctx, "flaky", "die", "1")
 		clock.advance(time.Second)
@@ -279,7 +281,6 @@ func TestStopIsNotAFailure(t *testing.T) {
 // withFakeNotifier wires a fakeNotifier into s.
 func withFakeNotifier(s *Service) *fakeNotifier {
 	n := newFakeNotifier()
-	s.notify = n
 	s.setNotifier(n)
 	return n
 }
@@ -531,26 +532,44 @@ func TestRenameMovesProblem(t *testing.T) {
 	w := newTestWatch(n, clock)
 	w.event(ctx, "old", "health_status: unhealthy", "")
 	w.event(ctx, "old", "die", "1")
+	pushes := len(n.raised)
 	w.event(ctx, "new", "rename", "old")
-	if len(n.open) != 0 {
-		t.Fatalf("open after rename: %v", n.open)
-	}
 	if len(n.resolved) != 2 || n.resolved[0] != "container.unhealthy old: old was renamed to new" ||
 		n.resolved[1] != "container.failed old: old was renamed to new" {
 		t.Fatalf("resolved = %v", n.resolved)
 	}
-	w.event(ctx, "new", "health_status: unhealthy", "")
-	if !n.open["container.unhealthy new"] {
-		t.Fatalf("not raised under the new name: %v", n.open)
+	// The open problems move to the new name at once, without a push.
+	if len(n.open) != 2 || !n.open["container.unhealthy new"] || !n.open["container.failed new"] {
+		t.Fatalf("open after rename: %v", n.open)
+	}
+	titles := map[string]string{}
+	for _, o := range n.raised[pushes:] {
+		if !o.Baseline {
+			t.Errorf("rename pushed %s %s", o.Category, o.Key)
+		}
+		titles[string(o.Category)] = o.Title
+	}
+	if titles["container.unhealthy"] != "new is unhealthy" || titles["container.failed"] != "new stopped with an error" {
+		t.Fatalf("titles after rename = %v", titles)
+	}
+
+	// Only the categories that were open move.
+	n = newFakeNotifier()
+	w = newTestWatch(n, clock)
+	w.event(ctx, "a", "health_status: unhealthy", "")
+	w.event(ctx, "b", "rename", "a")
+	if len(n.open) != 1 || !n.open["container.unhealthy b"] {
+		t.Fatalf("open after rename: %v", n.open)
 	}
 
 	// A stop in progress follows the container to its new name.
-	raised := len(n.raised)
-	w.event(ctx, "new", "kill", "15")
-	w.event(ctx, "newer", "rename", "new")
-	w.event(ctx, "newer", "die", "1")
-	if len(n.raised) != raised {
-		t.Fatalf("stop after a rename raised %+v", n.raised[raised:])
+	n = newFakeNotifier()
+	w = newTestWatch(n, clock)
+	w.event(ctx, "s", "kill", "15")
+	w.event(ctx, "t", "rename", "s")
+	w.event(ctx, "t", "die", "1")
+	if len(n.raised) != 0 {
+		t.Fatalf("stop after a rename raised %+v", n.raised)
 	}
 }
 
@@ -624,17 +643,14 @@ func TestCustomStopSignalIsStop(t *testing.T) {
 	}
 }
 
-// An image whose check failed this round keeps its container in the
-// updates report if it was there before, so a transient registry error
-// does not drop it (and push it again on the next good check).
+// An image whose registry check fails between two that find an update
+// keeps its container in every updates report, so the update does not
+// drop out and push again.
 func TestFailedImageCarriesForward(t *testing.T) {
 	ctx := context.Background()
-	f := &fakeDocker{containers: map[string]*fakeContainer{}}
+	f := &fakeDocker{containers: map[string]*fakeContainer{}, repoDigests: []string{"app@sha256:local"}, remoteDigest: "sha256:remote"}
 	id := "6666666666666666666666666666666666666666666666666666666666666666"
 	f.containers[id] = appContainer(id, "myapp", "bridge")
-	other := "7777777777777777777777777777777777777777777777777777777777777777"
-	f.containers[other] = appContainer(other, "other", "bridge")
-	f.containers[other].image = "sha256:other"
 	s := startFake(t, f)
 	st, err := store.Open(t.TempDir())
 	if err != nil {
@@ -643,30 +659,20 @@ func TestFailedImageCarriesForward(t *testing.T) {
 	defer st.Close()
 	s.Configure(Options{Store: st})
 	n := withFakeNotifier(s)
-	yes, no := true, false
-	failed := UpdateCheck{Image: "app:latest", Error: "Registry rate limit reached; will retry on the next check"}
-	set := func(k string, u UpdateCheck) {
-		s.mu.Lock()
-		s.updates[k] = u
-		s.mu.Unlock()
-		s.invalidate()
-	}
-	set("app:latest|sha256:old", UpdateCheck{Image: "app:latest", UpdateAvailable: &yes})
-	set("app:latest|sha256:other", failed)
-	for i, step := range []struct {
-		update UpdateCheck
-		want   string
-	}{
-		{UpdateCheck{Image: "app:latest", UpdateAvailable: &yes}, "myapp"},
-		{failed, "myapp"},
-		{failed, "myapp"},
-		{UpdateCheck{Image: "app:latest", UpdateAvailable: &no}, ""},
-		{failed, ""},
-	} {
-		set("app:latest|sha256:old", step.update)
-		s.reportUpdates(ctx, false)
-		if got := n.updates[len(n.updates)-1]; got != "containers false: "+step.want {
-			t.Fatalf("step %d: report %q, want %q", i, got, step.want)
+	for i, fail := range []bool{false, true, true, false} {
+		f.mu.Lock()
+		f.registryFail = fail
+		f.mu.Unlock()
+		if err := s.CheckUpdates(ctx); err != nil {
+			t.Fatal(err)
+		}
+		r := s.updatesFor([]Container{{ID: "c", Image: "app:latest", ImageID: "sha256:old"}})["c"]
+		if fail != (r.Error != "") || r.UpdateAvailable == nil || !*r.UpdateAvailable {
+			t.Fatalf("check %d (registry failing %v): result %+v", i, fail, r)
+		}
+		s.reportUpdates(ctx, true)
+		if got := n.updates[len(n.updates)-1]; got != "containers true: myapp" {
+			t.Fatalf("check %d (registry failing %v): report %q, want myapp", i, fail, got)
 		}
 	}
 }
