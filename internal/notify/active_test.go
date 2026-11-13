@@ -4,6 +4,7 @@ package notify
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -102,7 +103,11 @@ func TestDownloadRestartNoSecondPush(t *testing.T) {
 	e := newTestCenter(t)
 	e.downloads()
 	e.downloads(downloading("h1", 0.1))
-	e.downloads()
+	// Re-checked from scratch (a torrent removed in between is a new
+	// download: TestReaddedTorrentNotifiesAgain).
+	checking := downloading("h1", 0)
+	checking.Status = "checking"
+	e.downloads(checking)
 	e.downloads(downloading("h1", 0))
 	stopped := downloading("h1", 0.2)
 	stopped.Status = "stopped"
@@ -389,5 +394,114 @@ func TestResetMakesNextReportBaseline(t *testing.T) {
 	e.streams(stream("s1", "alex", "ep1", "show"), stream("s2", "sam", "film", ""), stream("s3", "kim", "x", ""))
 	if len(e.pushes) != 5 {
 		t.Fatalf("pushes = %d, want 5", len(e.pushes))
+	}
+}
+
+// A torrent added and finished between two polls is first seen complete:
+// that is still a finish worth announcing. One complete at the baseline is
+// not.
+func TestFinishBetweenPolls(t *testing.T) {
+	e := newTestCenter(t)
+	e.downloads()
+	done := Download{Hash: "h1", Name: "Torrent h1", Status: "seeding", Percent: 1}
+	e.downloads(done)
+	e.downloads(done)
+	if len(e.pushes) != 1 || e.pushes[0].cat != DownloadFinished || e.pushes[0].key != "h1" {
+		t.Fatalf("pushes = %+v, want one finished", e.pushes)
+	}
+	if s := e.snap(t); len(s.Recent) != 1 || s.Recent[0].Category != DownloadFinished || len(s.Active) != 0 {
+		t.Fatalf("recent = %+v active = %+v", s.Recent, s.Active)
+	}
+
+	e2 := newTestCenter(t)
+	e2.downloads(Download{Hash: "h2", Name: "Torrent h2", Status: "done", Percent: 1})
+	e2.downloads(Download{Hash: "h2", Name: "Torrent h2", Status: "done", Percent: 1})
+	if len(e2.pushes) != 0 || len(e2.snap(t).Recent) != 0 {
+		t.Errorf("complete at baseline: pushes %+v recent %+v", e2.pushes, e2.snap(t).Recent)
+	}
+}
+
+// A torrent removed and added again is a new download: it announces its
+// start and finish again.
+func TestReaddedTorrentNotifiesAgain(t *testing.T) {
+	e := newTestCenter(t)
+	e.downloads()
+	done := Download{Hash: "h1", Name: "Torrent h1", Status: "seeding", Percent: 1}
+	e.downloads(downloading("h1", 0.2))
+	e.downloads(done)
+	e.downloads()
+	e.downloads(downloading("h1", 0.1))
+	e.downloads(done)
+	var got []Category
+	for _, p := range e.pushes {
+		got = append(got, p.cat)
+	}
+	want := []Category{DownloadStarted, DownloadFinished, DownloadStarted, DownloadFinished}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("pushes = %v, want %v", got, want)
+	}
+	if s := e.snap(t); len(s.Recent) != 2 {
+		t.Errorf("recent = %+v, want two finished records", s.Recent)
+	}
+}
+
+// Checking or queued after downloading is a pause in the same download:
+// its Active row stays. Stopping it takes the row out.
+func TestCheckingKeepsActiveRow(t *testing.T) {
+	e := newTestCenter(t)
+	e.downloads()
+	queued := downloading("h2", 0)
+	queued.Status = "queued"
+	e.downloads(downloading("h1", 0.3), queued)
+	for _, status := range []string{"checking", "queued", "downloading", "checking"} {
+		d := downloading("h1", 0.4)
+		d.Status = status
+		e.downloads(d, queued)
+		if a := e.snap(t).Active; len(a) != 1 || a[0].ID != "dl:h1" {
+			t.Fatalf("%s: active = %+v, want the h1 row only", status, a)
+		}
+	}
+	stopped := downloading("h1", 0.4)
+	stopped.Status = "stopped"
+	e.downloads(stopped, queued)
+	if a := e.snap(t).Active; len(a) != 0 {
+		t.Fatalf("stopped: active = %+v, want none", a)
+	}
+	checking := downloading("h1", 0.4)
+	checking.Status = "checking"
+	e.downloads(checking, queued)
+	if a := e.snap(t).Active; len(a) != 0 {
+		t.Fatalf("checking after stop: active = %+v, want none", a)
+	}
+}
+
+// Plex can report sessions without a session key; each still gets its own
+// row and push.
+func TestEmptySessionKeysStaySeparate(t *testing.T) {
+	e := newTestCenter(t)
+	e.streams()
+	a := stream("", "alex", "ep4", "show")
+	b := stream("", "sam", "film", "")
+	c := stream("", "kim", "", "")
+	c.Player = "Roku"
+	e.streams(a, b, c)
+	e.streams(a, b, c)
+	if n := e.countPushes(StreamStarted); n != 3 {
+		t.Fatalf("stream pushes = %d, want 3", n)
+	}
+	s := e.snap(t)
+	if len(s.Active) != 3 {
+		t.Fatalf("active = %+v, want 3 rows", s.Active)
+	}
+	ids := map[string]bool{}
+	for _, r := range s.Active {
+		ids[r.ID] = true
+	}
+	if len(ids) != 3 || ids["st:"] {
+		t.Errorf("row ids = %v, want 3 distinct synthetic ids", ids)
+	}
+	e.streams(a, c)
+	if s := e.snap(t); len(s.Active) != 2 {
+		t.Errorf("after sam stopped: active = %+v, want 2 rows", s.Active)
 	}
 }
