@@ -5,14 +5,14 @@ import { useColumns } from "@/lib/useColumns";
 import type { ColumnDef } from "@/lib/columns";
 import { ContextMenu as CM } from "radix-ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ListTree, Pause, Play, RefreshCw, Rows3 } from "lucide-react";
+import { ListTree, Pause, Play, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
 import { useTopic } from "@/lib/ws";
 import { bytes, duration, pct } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
-import { SearchInput, Segmented } from "@/components/ui/form";
+import { SearchInput } from "@/components/ui/form";
 import { FilterMenu, radioGroup } from "@/components/ui/filter-menu";
 import { EmptyState, ErrorNote, Meter, PageHeader, Skeleton } from "@/components/ui/misc";
 import { SortTh, Table, Td, Th, THead, Tr, type SortDir, type SortState } from "@/components/ui/table";
@@ -281,6 +281,18 @@ const HEADERS: Record<string, { label: string; className?: string; align?: "righ
   start: { label: "Uptime", align: "right", className: "max-lg:hidden" },
   command: { label: "Command", className: "max-md:hidden" },
 };
+/** Sort names in the filter menu (the table headers abbreviate some). */
+const SORT_NAMES: Record<SortKey, string> = {
+  name: "Name",
+  pid: "PID",
+  user: "User",
+  cpu: "CPU",
+  mem: "Memory",
+  threads: "Threads",
+  state: "State",
+  start: "Uptime",
+  command: "Command",
+};
 /** Narrowest the Command column gets before the table scrolls sideways. */
 const COMMAND_MIN = 240;
 
@@ -403,15 +415,24 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
                 { value: "mine", label: "Mine" },
               ]),
               { kind: "check", title: "Include", items: [{ label: "Kernel threads", checked: kernel, onChange: setKernel }] },
-            ]}
-          />
-          <Segmented
-            label="Layout"
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "list", label: <><Rows3 /> List</>, title: "Flat list" },
-              { value: "tree", label: <><ListTree /> Tree</>, title: "Tree view" },
+              // View settings, not filters: not counted, not cleared.
+              {
+                ...radioGroup<"list" | "tree">("Layout", view, setView, [
+                  { value: "list", label: "List", title: "Flat list" },
+                  { value: "tree", label: "Tree", title: "Tree view" },
+                ]),
+                view: true,
+              },
+              {
+                ...radioGroup<SortKey>("Sort by", sort.key, (k) => setSort({ key: k, dir: HEADERS[k]?.dir ?? "desc" }), [
+                  { value: "cpu", label: "CPU" },
+                  { value: "mem", label: "Memory" },
+                  { value: "name", label: "Name" },
+                  // A column picked from the table header stays visible as the current choice.
+                  ...(["cpu", "mem", "name"].includes(sort.key) ? [] : [{ value: sort.key, label: SORT_NAMES[sort.key] }]),
+                ]),
+                view: true,
+              },
             ]}
           />
           {!live && <span className="text-xs font-medium text-warn" role="status">Paused</span>}
@@ -479,20 +500,6 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
                   ))}
                 </tbody>
               </Table>
-            </div>
-            <div className="flex items-center gap-2 border-b border-border px-4 py-2 md:hidden">
-              <span className="text-2xs font-medium uppercase tracking-wider text-subtle">Sort</span>
-              <Segmented
-                size="sm"
-                label="Sort by"
-                value={sort.key === "mem" ? "mem" : sort.key === "name" ? "name" : "cpu"}
-                onChange={(k) => setSort({ key: k, dir: k === "name" ? "asc" : "desc" })}
-                options={[
-                  { value: "cpu", label: "CPU" },
-                  { value: "mem", label: "Memory" },
-                  { value: "name", label: "Name" },
-                ]}
-              />
             </div>
             <div ref={setListEl} style={{ height: listH }} className="scroll-area min-h-80 md:hidden" tabIndex={0} role="region" aria-label="Process list">
               <ul aria-label="Processes">
