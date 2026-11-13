@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useTopic } from "@/lib/ws";
 import type { Container, UpdatesStatus } from "./types";
@@ -58,8 +58,3 @@ export async function checkContainerUpdates(qc: QueryClient): Promise<UpdatesSta
   }
 }
 
-/** checkContainerUpdates as a mutation. */
-export function useCheckContainerUpdates(opts: { onSuccess?: (s: UpdatesStatus) => void; onError?: (e: unknown) => void } = {}) {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: () => checkContainerUpdates(qc), onSuccess: opts.onSuccess, onError: opts.onError });
-}

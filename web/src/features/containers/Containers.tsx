@@ -11,7 +11,6 @@ import {
   MoreHorizontal,
   Network as NetworkIcon,
   Play,
-  RefreshCw,
   RotateCw,
   Square,
 } from "lucide-react";
@@ -20,7 +19,7 @@ import { ago, bytes, pct } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { useCapabilities } from "@/app/session";
 import { Card } from "@/components/ui/card";
-import { Button, IconButton } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/form";
 import { FilterMenu, radioGroup } from "@/components/ui/filter-menu";
 import { Menu, MenuItem, MenuSeparator, Tooltip } from "@/components/ui/menu";
@@ -34,11 +33,10 @@ import {
   StatusDot,
 } from "@/components/ui/misc";
 import { Table, Td, Th, THead, Tr } from "@/components/ui/table";
-import { toast } from "@/components/ui/toast";
 import { containerTone } from "@/features/containers/util";
 import { ContainerSheet, type SheetTab } from "./ContainerSheet";
 import { ContainerIcon } from "./ContainerIcon";
-import { useCheckContainerUpdates, useContainers, useContainerUpdates } from "./api";
+import { useContainers, useContainerUpdates } from "./api";
 import { useContainerActions, type Action } from "./actions";
 import {
   displayPorts,
@@ -293,23 +291,6 @@ export default function Page() {
   const stats =
     useTopicValue<Record<string, ContainerStats>>("containers.stats");
   const updates = useContainerUpdates();
-  const check = useCheckContainerUpdates({
-    onSuccess: (st) => {
-      const res = Object.values(st.results);
-      const n = res.filter((u) => u.updateAvailable).length;
-      const failed = res.filter(
-        (u) => u.error && u.updateAvailable === null,
-      ).length;
-      toast.ok(
-        n
-          ? `${n} update${n === 1 ? "" : "s"} available`
-          : "All images are up to date",
-        failed ? `${failed} image(s) could not be checked` : undefined,
-      );
-    },
-    onError: (e) => toast.error("Update check failed", e),
-  });
-  const checking = check.isPending || !!updates.data?.checking;
   const actions = useContainerActions();
 
   const data = list.data;
@@ -385,21 +366,6 @@ export default function Page() {
           caps?.version
             ? `Docker ${caps.version}${caps.casaos ? " · CasaOS detected" : ""}`
             : "Docker containers on this host"
-        }
-        actions={
-          <>
-            <Button
-              size="sm"
-              icon={
-                <RefreshCw className={cn(checking && "animate-spin")} />
-              }
-              onClick={() => check.mutate()}
-              loading={false}
-              disabled={checking}
-            >
-              {checking ? "Checking…" : "Check for updates"}
-            </Button>
-          </>
         }
       />
       <Summary list={data} checkedAt={updates.data?.checkedAt} />
