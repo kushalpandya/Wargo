@@ -2,7 +2,13 @@
 // Run: cd web && node --test src/lib/sw.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shouldApply, shouldRegister, shouldReloadForChunk, shouldReloadOnControllerChange } from "./sw.ts";
+import {
+  shouldApply,
+  shouldRegister,
+  shouldReloadForChunk,
+  shouldReloadOnControllerChange,
+  shouldReloadOnVisibilityChange,
+} from "./sw.ts";
 
 const ok = { prod: true, secure: true, supported: true, base: "/" };
 
@@ -43,4 +49,20 @@ test("shouldReloadOnControllerChange never reloads on a first install", () => {
   assert.equal(shouldReloadOnControllerChange({ requested: false, hidden: false, controlledBefore: false }), "none");
   assert.equal(shouldReloadOnControllerChange({ requested: false, hidden: true, controlledBefore: false }), "none");
   assert.equal(shouldReloadOnControllerChange({ requested: true, hidden: false, controlledBefore: false }), "none");
+});
+
+test("shouldReloadOnVisibilityChange reloads a pending tab as it is hidden, once", () => {
+  assert.equal(shouldReloadOnVisibilityChange({ pending: true, reloading: false, visible: false }), true);
+  assert.equal(shouldReloadOnVisibilityChange({ pending: true, reloading: true, visible: false }), false);
+});
+
+test("shouldReloadOnVisibilityChange reloads when shown again if the reload never happened", () => {
+  // iOS can suspend the page as it hides, before the reload navigates; a page that did reload starts with nothing pending.
+  assert.equal(shouldReloadOnVisibilityChange({ pending: true, reloading: true, visible: true }), true);
+  assert.equal(shouldReloadOnVisibilityChange({ pending: true, reloading: false, visible: true }), true);
+});
+
+test("shouldReloadOnVisibilityChange does nothing without a pending reload", () => {
+  assert.equal(shouldReloadOnVisibilityChange({ pending: false, reloading: false, visible: false }), false);
+  assert.equal(shouldReloadOnVisibilityChange({ pending: false, reloading: false, visible: true }), false);
 });
