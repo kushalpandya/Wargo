@@ -38,7 +38,9 @@ function openCard(badge: HTMLButtonElement) {
   // handling treat the card as part of the menu.
   (badge.closest('[role="dialog"]') ?? document.body).appendChild(card);
   const r = badge.getBoundingClientRect();
-  const left = Math.max(12, Math.min(r.left, innerWidth - card.offsetWidth - 12));
+  // Phones: centered on the screen; wider screens: under the badge.
+  const phone = matchMedia("(max-width: 767px)").matches;
+  const left = phone ? (innerWidth - card.offsetWidth) / 2 : Math.max(12, Math.min(r.left, innerWidth - card.offsetWidth - 12));
   card.style.top = `${r.bottom + 6}px`;
   card.style.left = `${left}px`;
   badge.setAttribute("aria-expanded", "true");
