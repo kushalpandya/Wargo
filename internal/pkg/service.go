@@ -274,17 +274,25 @@ func (s *Service) Run(ctx context.Context) {
 		}
 	}
 	s.publish()
-	// What the last check found (nothing where no package manager is
-	// supported) is the baseline for notifications.
+	s.reportSaved(ctx)
+	go s.autoCheck(ctx)
+	<-ctx.Done()
+}
+
+// reportSaved sends what the last check found (nothing where no package
+// manager is supported) to notifications as their baseline.
+// A failed check keeps the list of the check before it; when there is none,
+// nothing is sent and the next successful check is the baseline instead.
+func (s *Service) reportSaved(ctx context.Context) {
 	s.mu.Lock()
 	last := s.last
 	s.mu.Unlock()
 	if s.requireBackend() != nil {
 		last = nil
+	} else if last != nil && last.Error != "" && len(last.Updates) == 0 {
+		return
 	}
 	s.reportUpdates(ctx, last, false)
-	go s.autoCheck(ctx)
-	<-ctx.Done()
 }
 
 func (s *Service) Register(mux *http.ServeMux) {
@@ -361,7 +369,7 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 
 // list asks the package manager for pending updates (without refreshing
 // its database) and saves the result as the last check. A failed
-// background run keeps the previous list and only attaches the error.
+// run keeps the previous list and only attaches the error.
 func (s *Service) list(parent context.Context, background bool) (*CheckResult, error) {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
@@ -388,7 +396,7 @@ func (s *Service) list(parent context.Context, background bool) (*CheckResult, e
 		slog.Warn("pkg: check failed", "err", err)
 	}
 	s.mu.Lock()
-	if err != nil && background && s.last != nil {
+	if err != nil && s.last != nil {
 		c := *s.last
 		c.Error = res.Error
 		res = &c

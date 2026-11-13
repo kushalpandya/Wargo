@@ -246,15 +246,7 @@ func (s *Service) Run(ctx context.Context) {
 		go s.loadVersion(ctx)
 	}
 	s.publish()
-	// What the last check found (nothing where Homebrew is not available)
-	// is the baseline for notifications.
-	s.mu.Lock()
-	last := s.last
-	s.mu.Unlock()
-	if !s.available() {
-		last = nil
-	}
-	s.reportUpdates(ctx, last, false)
+	s.reportSaved(ctx)
 	go s.sched.Every(ctx, "brew",
 		s.available,
 		func() time.Time {
@@ -267,6 +259,22 @@ func (s *Service) Run(ctx context.Context) {
 		},
 		s.backgroundCheck)
 	<-ctx.Done()
+}
+
+// reportSaved sends what the last check found (nothing where Homebrew is
+// not available) to notifications as their baseline.
+// A failed check keeps the list of the check before it; when there is none,
+// nothing is sent and the next successful check is the baseline instead.
+func (s *Service) reportSaved(ctx context.Context) {
+	s.mu.Lock()
+	last := s.last
+	s.mu.Unlock()
+	if !s.available() {
+		last = nil
+	} else if last != nil && last.Error != "" && len(last.Updates) == 0 {
+		return
+	}
+	s.reportUpdates(ctx, last, false)
 }
 
 // backgroundCheck lists updates unless a check or update is already
@@ -458,8 +466,7 @@ func lastLine(b []byte) string {
 
 // list refreshes Homebrew's package data (brew update) and asks which
 // installed formulae and casks are outdated, then saves the result. A
-// failed background run keeps the previous list and only attaches the
-// error.
+// failed run keeps the previous list and only attaches the error.
 func (s *Service) list(parent context.Context, background bool) (*pkg.CheckResult, error) {
 	start := time.Now()
 	updates, pinned, err := s.query(parent)
@@ -480,7 +487,7 @@ func (s *Service) list(parent context.Context, background bool) (*pkg.CheckResul
 		slog.Warn("brew: check failed", "err", err)
 	}
 	s.mu.Lock()
-	if err != nil && background && s.last != nil {
+	if err != nil && s.last != nil {
 		c := *s.last
 		c.Error = res.Error
 		res = &c
