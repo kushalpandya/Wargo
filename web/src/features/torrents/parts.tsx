@@ -37,13 +37,13 @@ export function Chip({ active, onClick, children }: { active: boolean; onClick: 
   );
 }
 
-/** The card's bottom line: small live figures, separated by dots. */
+/** The card's bottom line: small live figures on one line; items that can shorten end in "…". */
 export function StatusBar({ children, label }: { children: ReactNode; label: string }) {
   return (
     <div
       role="status"
       aria-label={label}
-      className="num mt-auto flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-border bg-surface-2/50 px-3 py-1.5 text-2xs text-muted [&_svg]:size-3 [&_svg]:shrink-0"
+      className="num mt-auto flex flex-nowrap items-center gap-x-2 overflow-hidden border-t border-border bg-surface-2/50 px-3 py-1.5 text-2xs text-muted sm:gap-x-3 [&_svg]:size-3 [&_svg]:shrink-0"
     >
       {children}
     </div>
@@ -51,11 +51,11 @@ export function StatusBar({ children, label }: { children: ReactNode; label: str
 }
 
 /** One figure in the status bar, with an optional icon in a colour. */
-export function StatusItem({ icon, tone, children }: { icon?: ReactNode; tone?: string; children: ReactNode }) {
+export function StatusItem({ icon, tone, className, children }: { icon?: ReactNode; tone?: string; className?: string; children: ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap">
-      {icon && <span className={tone}>{icon}</span>}
-      {children}
+    <span className={cn("inline-flex min-w-0 items-center gap-1 whitespace-nowrap", className)}>
+      {icon && <span className={cn("shrink-0", tone)}>{icon}</span>}
+      <span className="truncate">{children}</span>
     </span>
   );
 }

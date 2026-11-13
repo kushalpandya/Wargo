@@ -96,6 +96,9 @@ function ratio(r: number) {
   return r.toFixed(2);
 }
 
+/** Speeds never shrink; from sm up they also reserve room for the longest ("99.9 KB/s") so the left group holds still. */
+const rateWidth = "shrink-0 sm:min-w-[calc(9ch+1rem)]";
+
 const meterTone = (t: Torrent) => (t.error ? "crit" : t.percentDone >= 1 ? "ok" : t.status === "stopped" ? "accent" : "frost");
 
 export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
@@ -278,16 +281,36 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
               </>
             )}
             <StatusBar label="Transmission status">
-              <StatusItem icon={<ArrowDown />} tone="text-frost">
+              {/* Speeds on the left, counts and free space on the right: speed changes only move the gap between them. */}
+              <StatusItem icon={<ArrowDown />} tone="text-frost" className={rateWidth}>
                 {stats ? rate(stats.downloadSpeed) : "…"}
               </StatusItem>
-              <StatusItem icon={<ArrowUp />} tone="text-ok">
+              <StatusItem icon={<ArrowUp />} tone="text-ok" className={rateWidth}>
                 {stats ? rate(stats.uploadSpeed) : "…"}
               </StatusItem>
-              <StatusItem>
-                {stats ? `${stats.activeTorrentCount} active · ${stats.pausedTorrentCount} paused · ${torrents?.length ?? 0} total` : "…"}
+              <StatusItem className="ml-auto">
+                {/* Phones leave out the paused count so the bar fits on one line. */}
+                {stats ? (
+                  <>
+                    {stats.activeTorrentCount} active<span className="max-sm:hidden"> · {stats.pausedTorrentCount} paused</span> ·{" "}
+                    {torrents?.length ?? 0} total
+                  </>
+                ) : (
+                  "…"
+                )}
               </StatusItem>
-              <StatusItem icon={<HardDrive />}>{stats ? (stats.freeSpace !== undefined ? `${bytes(stats.freeSpace)} free` : "free space unknown") : "…"}</StatusItem>
+              <StatusItem icon={<HardDrive />} className="shrink-0">{stats ? (
+                  stats.freeSpace !== undefined ? (
+                    <>
+                      {bytes(stats.freeSpace)}
+                      <span className="max-sm:hidden"> free</span>
+                    </>
+                  ) : (
+                    "free space unknown"
+                  )
+                ) : (
+                  "…"
+                )}</StatusItem>
             </StatusBar>
           </Card>
         </>
