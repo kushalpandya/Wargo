@@ -39,6 +39,15 @@ export function pushSupport(env: {
   return "ok";
 }
 
+/** What to do about notifications blocked on this device. */
+export const deniedHint = "Notifications for Wargo are blocked on this device. Allow them in your system settings, then come back here.";
+
+/** The toast for a permission prompt that did not end in "granted": dismissed ("default") or refused ("denied"). */
+export function pushRefusal(permission: string): { title: string; body?: string } {
+  const title = "Notifications were not allowed";
+  return permission === "denied" ? { title, body: deniedHint } : { title };
+}
+
 /** iPhone or iPad, including iPadOS, which reports itself as a Mac but has a touch screen. */
 export function isIOS(userAgent: string, maxTouchPoints: number): boolean {
   return /iPhone|iPad|iPod/.test(userAgent) || (/Macintosh/.test(userAgent) && maxTouchPoints > 1);

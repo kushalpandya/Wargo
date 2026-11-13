@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { ReactNode } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 import { AlertTriangle, ArrowDownToLine, Bell, CircleAlert, Clapperboard, HardDrive, PackageCheck, Settings, X } from "lucide-react";
 import { Button, IconButton } from "@/components/ui/button";
 import { IconChip, type Tint } from "@/components/ui/card";
@@ -49,14 +49,15 @@ function ActiveRow({ a, onNavigate }: { a: Active; onNavigate: () => void }) {
     <li className="flex">
       <Target to={a.link} onNavigate={onNavigate}>
         <CategoryIcon category={a.category} />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-baseline gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
             <span className="min-w-0 flex-1 truncate text-ui text-fg">{a.title}</span>
             <span className="num shrink-0 text-xs text-subtle">{Math.round(pct)}%</span>
-          </span>
+          </div>
+          {/* Meter is a div, so its wrappers are divs too (no block inside a span inside the link). */}
           <Meter value={pct} tone={a.category === "stream.started" ? "accent" : "frost"} className="mt-1" label={`${a.title} progress`} />
           {a.detail && <span className="num mt-0.5 block truncate text-2xs text-muted">{a.detail}</span>}
-        </span>
+        </div>
       </Target>
     </li>
   );
@@ -105,7 +106,6 @@ function SectionTitle({ children, action }: { children: ReactNode; action?: Reac
 
 /** The notifications panel's contents: header, then Active and Recent. */
 export function Panel({ data, loading, error, onClose }: { data?: Snapshot; loading: boolean; error: unknown; onClose: () => void }) {
-  const navigate = useNavigate();
   const clearOne = useClearNotification();
   const clearAll = useClearAll();
   const active = sortActive(data?.active ?? []);
@@ -117,20 +117,18 @@ export function Panel({ data, loading, error, onClose }: { data?: Snapshot; load
         <h2 id="notifications-title" className="flex-1 text-md font-semibold tracking-tight">
           Notifications
         </h2>
-        <IconButton
-          label="Notification settings"
-          size="sm"
-          onClick={() => {
-            onClose();
-            navigate("/settings/general#notifications");
-          }}
-        >
-          <Settings />
+        <IconButton asChild label="Notification settings" size="sm">
+          <Link to="/settings/general#notifications" onClick={onClose}>
+            <Settings />
+          </Link>
         </IconButton>
         <IconButton label="Close" size="sm" onClick={onClose}>
           <X />
         </IconButton>
       </div>
+      {(clearOne.error || clearAll.error) && (
+        <ErrorNote error={clearOne.error || clearAll.error} className="mx-3 mt-2 shrink-0" />
+      )}
       <div className="scroll-area min-h-0 flex-1 overscroll-contain">
         {loading ? (
           <div className="space-y-2 p-3">
@@ -180,7 +178,6 @@ export function Panel({ data, loading, error, onClose }: { data?: Snapshot; load
                 </ul>
               </section>
             )}
-            {(clearOne.error || clearAll.error) && <ErrorNote error={clearOne.error || clearAll.error} />}
           </div>
         )}
       </div>

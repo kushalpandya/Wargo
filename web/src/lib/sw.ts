@@ -26,11 +26,29 @@ export function shouldApply(s: { waiting: boolean; controlled: boolean }): boole
   return s.waiting && s.controlled;
 }
 
-/** Tells a waiting worker to take over; the page reloads on controllerchange. */
-function apply(reg: ServiceWorkerRegistration) {
+/**
+ * What a tab does when a new version takes over. The worker claims every open
+ * tab at once, so only the tab that asked for the update (it is being opened
+ * or resumed) or a tab in the background reloads now; a tab still in use waits
+ * until it is hidden, so it is fresh when its owner comes back. A first
+ * install (no controller before) never reloads.
+ */
+export function shouldReloadOnControllerChange(s: {
+  requested: boolean;
+  hidden: boolean;
+  controlledBefore: boolean;
+}): "reload" | "when-hidden" | "none" {
+  if (!s.controlledBefore) return "none";
+  return s.requested || s.hidden ? "reload" : "when-hidden";
+}
+
+/** Tells a waiting worker to take over; the page reloads on controllerchange. Returns whether it asked. */
+function apply(reg: ServiceWorkerRegistration): boolean {
   if (reg.waiting && shouldApply({ waiting: true, controlled: !!navigator.serviceWorker.controller })) {
     reg.waiting.postMessage({ type: "SKIP_WAITING" });
+    return true;
   }
+  return false;
 }
 
 export function registerServiceWorker(): void {
@@ -46,26 +64,38 @@ export function registerServiceWorker(): void {
   }
   const sw = navigator.serviceWorker;
   // A first install takes control without a reload; a new version taking
-  // over from an old one reloads once onto the new files.
+  // over from an old one reloads once onto the new files, right away in the
+  // tab that asked for it and in background tabs, later in other tabs in use.
   let controlled = !!sw.controller;
+  let requested = false;
+  let pending = false;
   let reloading = false;
+  const reload = () => {
+    if (reloading) return;
+    reloading = true;
+    window.location.reload();
+  };
   sw.addEventListener("controllerchange", () => {
-    if (controlled && !reloading) {
-      reloading = true;
-      window.location.reload();
-    }
+    const next = shouldReloadOnControllerChange({ requested, hidden: document.visibilityState === "hidden", controlledBefore: controlled });
     controlled = true;
+    if (next === "reload") reload();
+    else if (next === "when-hidden") pending = true;
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (pending && document.visibilityState === "hidden") reload();
   });
   sw.register("/sw.js", { scope: "/", updateViaCache: "none" })
     .then((reg) => {
-      apply(reg); // launch
+      if (apply(reg)) requested = true; // launch
       // iOS resumes a Home Screen app instead of reloading it, so check for
       // a new release whenever it comes back to the foreground.
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState !== "visible") return;
         reg
           .update()
-          .then(() => apply(reg))
+          .then(() => {
+            if (apply(reg)) requested = true;
+          })
           .catch(() => {});
       });
     })

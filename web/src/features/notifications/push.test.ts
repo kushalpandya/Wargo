@@ -2,7 +2,7 @@
 // Run: cd web && node --test src/features/notifications/push.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isIOS, notificationOpen, pushIsOn, pushSupport, sessionEndsNote } from "./push.ts";
+import { isIOS, notificationOpen, pushIsOn, pushRefusal, pushSupport, sessionEndsNote } from "./push.ts";
 
 const good = { secure: true, sw: true, push: true, standalone: false, ios: false, permission: "default" };
 
@@ -75,4 +75,12 @@ test("sessionEndsNote warns that push stops with a sign-in that is not remembere
   assert.equal(sessionEndsNote(90), "This sign-in ends 90 minutes after you last use Wargo here" + tail);
   // An older server without idleMinutes: the default.
   assert.equal(sessionEndsNote(undefined), "This sign-in ends 30 minutes after you last use Wargo here" + tail);
+});
+
+test("pushRefusal explains a dismissed or denied permission prompt", () => {
+  assert.deepEqual(pushRefusal("default"), { title: "Notifications were not allowed" });
+  assert.deepEqual(pushRefusal("denied"), {
+    title: "Notifications were not allowed",
+    body: "Notifications for Wargo are blocked on this device. Allow them in your system settings, then come back here.",
+  });
 });

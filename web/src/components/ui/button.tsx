@@ -74,29 +74,32 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   label: string;
   size?: Size;
   variant?: Variant;
+  /** Render the child element (e.g. a router Link) with icon button styling. */
+  asChild?: boolean;
 }
 
 /** Square icon-only button; `label` is required for accessibility. */
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { label, size = "md", variant = "ghost", className, children, type = "button", ...rest },
+  { label, size = "md", variant = "ghost", className, children, type = "button", asChild, ...rest },
   ref,
 ) {
   const dim = size === "xs" ? "size-7" : size === "sm" ? "size-8" : "size-9";
+  const look = cn(
+    "inline-flex shrink-0 items-center justify-center rounded-md border transition-colors",
+    "disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-[1.125rem]",
+    variants[variant],
+    dim,
+    className,
+  );
+  if (asChild) {
+    return (
+      <Slot.Root ref={ref} aria-label={label} title={label} className={look} {...rest}>
+        {children}
+      </Slot.Root>
+    );
+  }
   return (
-    <button
-      ref={ref}
-      type={type}
-      aria-label={label}
-      title={label}
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-md border transition-colors",
-        "disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-[1.125rem]",
-        variants[variant],
-        dim,
-        className,
-      )}
-      {...rest}
-    >
+    <button ref={ref} type={type} aria-label={label} title={label} className={look} {...rest}>
       {children}
     </button>
   );
