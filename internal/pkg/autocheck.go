@@ -56,12 +56,31 @@ func (s *Service) backgroundCheck(ctx context.Context) error {
 		return schedule.ErrSkipped
 	}
 	s.publish()
-	_, err := s.list(ctx, true)
+	res, err := s.list(ctx, true)
 	s.mu.Lock()
 	s.checking = false
 	s.mu.Unlock()
 	s.publish()
+	if err == nil {
+		s.reportUpdates(ctx, res, true)
+	}
 	return err
+}
+
+// reportUpdates tells notifications which packages res has pending. Only
+// call it after a check that succeeded: an empty report would drop the
+// updates item and push it again on the next good check.
+func (s *Service) reportUpdates(ctx context.Context, res *CheckResult, automatic bool) {
+	if s.d.Notify == nil {
+		return
+	}
+	var names []string
+	if res != nil {
+		for _, u := range res.Updates {
+			names = append(names, u.Name)
+		}
+	}
+	s.d.Notify.ReportUpdates(ctx, "system", names, automatic)
 }
 
 // recheck refreshes the list after an upgrade, so the Updates page shows

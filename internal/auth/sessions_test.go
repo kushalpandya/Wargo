@@ -5,6 +5,7 @@ package auth
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -248,5 +249,30 @@ func TestRevokeRejectsBadIDs(t *testing.T) {
 	}
 	if !shortSessionID("abcdef012345") {
 		t.Error("valid id rejected")
+	}
+}
+
+// /api/auth/me says whether this sign-in is remembered and how long an
+// idle one lasts (push stops when the session ends).
+func TestMeReportsRemember(t *testing.T) {
+	s, _ := newTestService(t)
+	for _, remember := range []bool{false, true} {
+		_, sess := signIn(t, s, remember)
+		r := httptest.NewRequest("GET", "/api/auth/me", nil)
+		r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, sess))
+		rec := httptest.NewRecorder()
+		if err := s.handleMe(rec, r); err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Remember    *bool `json:"remember"`
+			IdleMinutes int   `json:"idleMinutes"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Remember == nil || *got.Remember != remember || got.IdleMinutes != 30 {
+			t.Errorf("remember %v: got remember %v, idleMinutes %d", remember, got.Remember, got.IdleMinutes)
+		}
 	}
 }

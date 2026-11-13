@@ -22,6 +22,10 @@ export interface Me {
   passkeys: number;
   recoveryCodesLeft: number;
   expiresAt: string;
+  /** Signed in with "Keep me signed in". */
+  remember: boolean;
+  /** How long a sign-in that is not remembered lasts unused. */
+  idleMinutes: number;
 }
 
 export function useAuthState() {

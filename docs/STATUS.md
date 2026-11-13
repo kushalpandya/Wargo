@@ -31,6 +31,7 @@ sign-in needs `/etc/pam.d/wargo` (from `deploy/pam/wargo`).
 | OS updates (check, background check, upgrade through systemd-run, restart detection) | Done | Real `pamac checkupdates`; upgrades only with a simulated script |
 | Homebrew updates (formulae and casks, background check, upgrade, password for cask installers) | Done | Real `brew outdated` on macOS; upgrades only with a simulated script (`WARGO_BREW_FAKE`), password handoff through the askpass helper in unit tests; not tried on Linux |
 | Installed app (service worker: app files stored on the device, "can't be reached" page, updates on launch and resume) | Done | Built server on `127.0.0.1` in Chromium: install, files served with the server stopped, `/api/` navigations untouched, update applied on resume, connection page and recovery; iPhone over HTTPS not tried yet |
+| Notifications and push (bell and panel, per-category settings, push to the device) | Done | Go unit tests with the RFC 8291 test vector and a test push receiver; bell, panel and settings checked in the browser; iPhone push not tried yet |
 | Prowlarr search, magnet, .torrent, queue | Done | Real Prowlarr (search and magnet read only); queue with fakes |
 | Transmission downloads (pause, resume, remove) | Done | Fake Transmission (the real one needs your password) |
 | Plex (now playing, recently watched and added on Home; token import) | Done | Real Plex Media Server (read only) |

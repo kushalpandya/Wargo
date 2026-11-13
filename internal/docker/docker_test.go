@@ -357,6 +357,18 @@ func (f *fakeDocker) listContainers(w http.ResponseWriter) {
 func startFake(t *testing.T, f *fakeDocker) *Service {
 	t.Helper()
 	sock := filepath.Join(shortTempDir(t), "docker.sock")
+	serveFake(t, f, sock)
+	hub := events.NewHub()
+	s := New("", hub, jobs.NewManager(hub), nil, nil)
+	s.c = NewClient(sock)
+	s.settle = 10 * time.Millisecond
+	s.composeAvailable = func() bool { return false }
+	return s
+}
+
+// serveFake serves f on the unix socket sock until the test ends.
+func serveFake(t *testing.T, f *fakeDocker, sock string) {
+	t.Helper()
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -366,12 +378,6 @@ func startFake(t *testing.T, f *fakeDocker) *Service {
 	srv.Listener = ln
 	srv.Start()
 	t.Cleanup(srv.Close)
-	hub := events.NewHub()
-	s := New("", hub, jobs.NewManager(hub), nil, nil)
-	s.c = NewClient(sock)
-	s.settle = 10 * time.Millisecond
-	s.composeAvailable = func() bool { return false }
-	return s
 }
 
 func appContainer(id, name, netMode string) *fakeContainer {

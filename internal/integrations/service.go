@@ -27,6 +27,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/integrations/plex"
 	"github.com/kushalpandya/wargo/internal/integrations/prowlarr"
 	"github.com/kushalpandya/wargo/internal/integrations/transmission"
+	"github.com/kushalpandya/wargo/internal/notify"
 	"github.com/kushalpandya/wargo/internal/store"
 )
 
@@ -87,6 +88,9 @@ type Service struct {
 	idx    []prowlarr.Indexer
 	idxAt  time.Time
 	idxKey string
+
+	// notify receives downloads and streams (nil: not watched).
+	notify *notify.Center
 
 	// for tests
 	now func() time.Time

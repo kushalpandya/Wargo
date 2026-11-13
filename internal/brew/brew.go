@@ -246,6 +246,15 @@ func (s *Service) Run(ctx context.Context) {
 		go s.loadVersion(ctx)
 	}
 	s.publish()
+	// What the last check found (nothing where Homebrew is not available)
+	// is the baseline for notifications.
+	s.mu.Lock()
+	last := s.last
+	s.mu.Unlock()
+	if !s.available() {
+		last = nil
+	}
+	s.reportUpdates(ctx, last, false)
 	go s.sched.Every(ctx, "brew",
 		s.available,
 		func() time.Time {
@@ -267,8 +276,28 @@ func (s *Service) backgroundCheck(ctx context.Context) error {
 		return schedule.ErrSkipped
 	}
 	defer s.end()
-	_, err := s.list(ctx, true)
+	res, err := s.list(ctx, true)
+	if err == nil {
+		s.reportUpdates(ctx, res, true)
+	}
 	return err
+}
+
+// reportUpdates tells notifications which formulae and casks res has
+// pending (pinned ones are left out). Only call it after a check that
+// succeeded: an empty report would drop the updates item and push it
+// again on the next good check.
+func (s *Service) reportUpdates(ctx context.Context, res *pkg.CheckResult, automatic bool) {
+	if s.d.Notify == nil {
+		return
+	}
+	var names []string
+	if res != nil {
+		for _, u := range res.Updates {
+			names = append(names, u.Name)
+		}
+	}
+	s.d.Notify.ReportUpdates(ctx, "homebrew", names, automatic)
 }
 
 // recheck refreshes the list after an update, so the Updates page shows
@@ -372,6 +401,7 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return httpx.Errorf(http.StatusBadGateway, "check_failed", err.Error())
 	}
+	s.reportUpdates(context.WithoutCancel(r.Context()), res, false)
 	httpx.OK(w, res)
 	return nil
 }

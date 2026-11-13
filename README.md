@@ -22,6 +22,7 @@
 - **Terminal:** real shells in your browser, including root and container shells, in tabs.
 - **Updates:** check for and install newer container images, OS updates and Homebrew formulae and casks, only when you choose.
 - **Torrents:** search all your Prowlarr indexers and manage Transmission downloads.
+- **Notifications:** a bell with recent events, and optional push to your phone or browser, set per category.
 - **Apps:** shortcuts to your other self-hosted services, shown on Home or on their own page.
 
 Light and dark themes, works on phones, and uses about 25 MB of memory.

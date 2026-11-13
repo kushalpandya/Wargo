@@ -373,13 +373,19 @@ func (s *Service) deleteSession(ctx context.Context, h string) {
 	s.deleteSessions(ctx, `id_hash = ?`, h)
 }
 
-// pruneSessions deletes sessions that expired or sat idle too long. The
-// idle limit gets a minute's margin: last_seen in the database lags the
-// in-memory value by up to that much.
+// pruneSessions deletes sessions that expired or sat idle too long.
 func (s *Service) pruneSessions(ctx context.Context) {
 	now := time.Now()
 	s.deleteSessions(ctx, `expires_at < ? OR (remember = 0 AND last_seen < ?)`,
-		now.Unix(), now.Add(-s.cfg.Auth.SessionIdle.Duration-time.Minute).Unix())
+		now.Unix(), s.IdleCutoff(now).Unix())
+}
+
+// IdleCutoff is the last_seen in the sessions table before which a session
+// that is not remembered has timed out at now. It gets a minute's margin:
+// last_seen in the database lags the in-memory value by up to that much.
+// A remembered session's limits are already in its expires_at.
+func (s *Service) IdleCutoff(now time.Time) time.Time {
+	return now.Add(-s.cfg.Auth.SessionIdle.Duration - time.Minute)
 }
 
 func (s *Service) lookup(r *http.Request) (*Session, error) {
@@ -771,6 +777,10 @@ func (s *Service) handleMe(w http.ResponseWriter, r *http.Request) error {
 		"passkeys":          n,
 		"recoveryCodesLeft": codes,
 		"expiresAt":         sess.ExpiresAt,
+		// A sign-in that is not remembered ends after idleMinutes unused,
+		// and push to its devices stops with it.
+		"remember":    sess.Remember,
+		"idleMinutes": int(s.cfg.Auth.SessionIdle.Duration / time.Minute),
 	})
 	return nil
 }

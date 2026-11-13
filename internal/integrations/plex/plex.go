@@ -194,6 +194,9 @@ type Metadata struct {
 	ParentThumb      string `json:"parentThumb"`
 	GrandparentThumb string `json:"grandparentThumb"`
 
+	// GrandparentRatingKey is the show of an episode.
+	GrandparentRatingKey string `json:"grandparentRatingKey"`
+
 	// Sessions only.
 	User *struct {
 		Title string `json:"title"`
@@ -214,6 +217,7 @@ type Metadata struct {
 			Decision string `json:"decision"`
 		} `json:"Part"`
 	} `json:"Media"`
+	SessionKey string `json:"sessionKey"`
 }
 
 // Poster picks the best poster path for an item: the show poster for an

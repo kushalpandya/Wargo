@@ -23,6 +23,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/events"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
+	"github.com/kushalpandya/wargo/internal/notify"
 	"github.com/kushalpandya/wargo/internal/pkg"
 	"github.com/kushalpandya/wargo/internal/server"
 	"github.com/kushalpandya/wargo/internal/store"
@@ -288,6 +289,46 @@ func TestSimulatedCheckAndUpgrade(t *testing.T) {
 	w = call(s, "GET", "/api/brew/log", nil)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "nordvpn was successfully upgraded") {
 		t.Fatalf("log: %d %s", w.Code, w.Body)
+	}
+}
+
+// A check reports formulae and casks to notifications (pinned left out);
+// a failed one reports nothing, so the updates item stays.
+func TestCheckReportsUpdates(t *testing.T) {
+	s, hub := testService(t)
+	n, err := notify.New(s.d.Store, hub, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.d.Notify = n
+	ctx := context.Background()
+	n.ReportUpdates(ctx, "containers", nil, false)
+	n.ReportUpdates(ctx, "system", nil, false)
+	pending := func() string {
+		t.Helper()
+		snap, err := n.Snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, it := range snap.Recent {
+			if it.Category == notify.UpdatesFound {
+				return it.Title + " / " + it.Body
+			}
+		}
+		return ""
+	}
+	if w := call(s, "POST", "/api/brew/check", nil); w.Code != 200 {
+		t.Fatalf("check: %d %s", w.Code, w.Body)
+	}
+	if got := pending(); got != "6 updates available / Homebrew 6" {
+		t.Fatalf("after check: %q", got)
+	}
+	s.fakeDir = t.TempDir() // no outdated.json: the check fails
+	if err := s.backgroundCheck(ctx); err == nil {
+		t.Fatal("background check did not fail")
+	}
+	if got := pending(); got != "6 updates available / Homebrew 6" {
+		t.Fatalf("after a failed check: %q", got)
 	}
 }
 

@@ -71,6 +71,21 @@ This section describes the native install. See
   and event sockets always come from the server, so signing out leaves
   nothing private on the device. A new Wargo version replaces the stored copy
   the next time the app is opened or brought back to the foreground.
+- **Notifications and push.** Wargo keeps a list of notifications (downloads,
+  streams, container health, updates and full disks), and each
+  category can be set to Off, In app, or In app and push. A push carries only
+  a short title and text, which can include names such as torrent names,
+  stream titles, container names and host names. It is encrypted for your
+  device (RFC 8291), so the push service (Apple, Google or Mozilla) that
+  delivers it cannot read it, and it is signed with a VAPID key (RFC 8292)
+  that Wargo keeps sealed in its database. Only a fully signed-in session can
+  register a device. A registration stops receiving pushes as soon as that
+  session ends, whether you signed out, it went idle, expired, was revoked or
+  was replaced. A sign-in with **Keep me signed in** keeps push working while
+  you are away; any other sign-in, and its push, ends after the idle timeout
+  (`auth.session_idle`, 30 minutes by default). Registrations the push
+  service reports as gone (404 or 410) are deleted. Wargo sends only to the
+  endpoint address the browser gave it, and does not follow redirects.
 
 ## Signing in
 

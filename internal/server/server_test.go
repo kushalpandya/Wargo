@@ -98,6 +98,20 @@ func TestDevBypassServesAPI(t *testing.T) {
 	}
 }
 
+func TestNotificationsWired(t *testing.T) {
+	ts := newTestServer(t, true)
+	res, err := http.Get(ts.URL + "/api/notifications")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var snap map[string]json.RawMessage
+	json.NewDecoder(res.Body).Decode(&snap)
+	if res.StatusCode != 200 || string(snap["recent"]) != "[]" {
+		t.Fatalf("GET /api/notifications: %d %v", res.StatusCode, snap)
+	}
+}
+
 // DNS rebinding: a page on http://evil.example:2207 re-pointed at our
 // address sends Host: evil.example:2207 (and a matching Origin). Even with
 // the dev bypass on, nothing must be served for it.

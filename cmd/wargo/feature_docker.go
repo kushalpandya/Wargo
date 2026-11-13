@@ -17,6 +17,7 @@ func init() {
 			DataDir:        d.Cfg.DataDir,
 			UpdateInterval: d.Cfg.Docker.UpdateCheckInterval.Duration,
 			OwnIcon:        ownIcon(),
+			Notify:         d.Notify,
 			Version:        server.Version,
 		}), nil
 	})

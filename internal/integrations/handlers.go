@@ -452,9 +452,11 @@ func (s *Service) handleTorrents(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// Run polls Transmission while the live topic has subscribers.
+// Run polls Transmission while the live topic has subscribers, and watches
+// Transmission and Plex for notifications.
 func (f *TransmissionFeature) Run(ctx context.Context) {
 	s := f.Service
+	go s.watch(ctx)
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	for {

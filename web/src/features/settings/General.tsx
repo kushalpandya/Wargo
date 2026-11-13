@@ -15,6 +15,7 @@ import { TileEditor } from "@/features/launcher/TileEditor";
 import { useLauncherSettings, useSaveLauncherSettings, useTiles, type LauncherSettings as LS } from "@/features/launcher/api";
 import { containerUpdatesKey, useContainerUpdatesStatus } from "@/features/containers/api";
 import { useBrewStatus, usePkgStatus } from "@/features/updates/api";
+import { NotificationsCard } from "./NotificationsCard";
 import { SettingRow, SettingsList, SettingsStack, usePatchSave } from "./shared";
 
 function LauncherCard() {
@@ -170,6 +171,7 @@ export default function General() {
     <SettingsStack>
       <LauncherCard />
       <UpdateChecksCard />
+      <NotificationsCard />
     </SettingsStack>
   );
 }

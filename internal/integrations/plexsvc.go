@@ -269,6 +269,10 @@ func (s *Service) handleImportPlexToken(w http.ResponseWriter, r *http.Request) 
 
 // PlexSession is an active stream.
 type PlexSession struct {
+	SessionKey string `json:"sessionKey,omitempty"`
+	RatingKey  string `json:"ratingKey,omitempty"`
+	// ShowKey is the show's rating key for an episode.
+	ShowKey          string `json:"showKey,omitempty"`
 	Type             string `json:"type"`
 	Title            string `json:"title"`
 	ParentTitle      string `json:"parentTitle,omitempty"`
@@ -461,6 +465,7 @@ func (s *Service) loadPlexActivity(ctx context.Context, c *plex.Client, base str
 	}
 	for _, m := range ss {
 		v := PlexSession{
+			SessionKey: m.SessionKey, RatingKey: m.RatingKey, ShowKey: m.GrandparentRatingKey,
 			Type: m.Type, Title: m.Title, ParentTitle: m.ParentTitle, GrandparentTitle: m.GrandparentTitle,
 			ParentIndex: int64(m.ParentIndex), Index: int64(m.Index), Year: int64(m.Year),
 			ViewOffset: int64(m.ViewOffset), Duration: int64(m.Duration),

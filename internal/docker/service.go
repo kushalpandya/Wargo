@@ -22,6 +22,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
+	"github.com/kushalpandya/wargo/internal/notify"
 	"github.com/kushalpandya/wargo/internal/schedule"
 	"github.com/kushalpandya/wargo/internal/store"
 )
@@ -82,6 +83,17 @@ type Service struct {
 	checkErr      error
 	retryAt       time.Time       // set after a failed background check
 	sched         *schedule.Hours // interval chosen in Settings → General
+
+	// Notifications (nil without Options.Notify): container problems and
+	// pending image updates. synced is set once the first look at the
+	// containers after start (the baseline) is done; startupReported once
+	// containers have reported updates since start. dockerAbsent tells
+	// Docker not being installed from the daemon not being up yet.
+	notify          notifier
+	watch           *healthWatch
+	synced          bool
+	startupReported bool
+	dockerAbsent    func() bool
 }
 
 // Options configures the optional parts of the service.
@@ -98,6 +110,8 @@ type Options struct {
 	UpdateInterval time.Duration
 	// Version is Wargo's own version, recorded around self updates.
 	Version string
+	// Notify receives container problems and pending image updates.
+	Notify *notify.Center
 }
 
 // Configure applies opts and loads persisted update results.
@@ -113,6 +127,10 @@ func (s *Service) Configure(o Options) *Service {
 	}
 	s.ownIcon = o.OwnIcon
 	s.version = o.Version
+	if o.Notify != nil {
+		s.notify = o.Notify
+		s.watch = newHealthWatch(o.Notify)
+	}
 	s.loadUpdates()
 	return s
 }
@@ -138,6 +156,7 @@ func New(socket string, hub *events.Hub, jm *jobs.Manager, al *audit.Log, el *el
 	s.sched.Audit = al
 	s.composeAvailable = s.detectCompose
 	s.selfID = host.SelfContainerID()
+	s.dockerAbsent = func() bool { return dockerMissing(s.c.socket, host.LookPath) }
 	return s
 }
 
@@ -625,6 +644,7 @@ func (s *Service) Run(ctx context.Context) {
 	s.mu.Lock()
 	s.runCtx = ctx
 	s.mu.Unlock()
+	go s.reportStartupUpdates(ctx)
 	go s.watchEvents(ctx)
 	go s.pollStats(ctx)
 	go s.autoCheck(ctx)
@@ -647,6 +667,10 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) watchEvents(ctx context.Context) {
+	if s.watch != nil {
+		// Pending resolves must not reach notifications after shutdown.
+		defer s.watch.stop()
+	}
 	backoff := time.Second
 	filters := url.QueryEscape(`{"type":["container"]}`)
 	for ctx.Err() == nil {
@@ -674,6 +698,7 @@ func (s *Service) followEvents(ctx context.Context, path string) error {
 		return err
 	}
 	defer body.Close()
+	s.syncProblems(ctx)
 	evc := make(chan struct{}, 1)
 	go func() {
 		// Debounce bursts (compose up emits many events).
@@ -702,9 +727,20 @@ func (s *Service) followEvents(ctx context.Context, path string) error {
 	for sc.Scan() {
 		var ev struct {
 			Action string `json:"Action"`
+			Actor  struct {
+				ID         string            `json:"ID"`
+				Attributes map[string]string `json:"Attributes"`
+			} `json:"Actor"`
 		}
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
 			continue
+		}
+		if s.watch != nil && (s.selfID == "" || ev.Actor.ID != s.selfID) {
+			code := ev.Actor.Attributes["exitCode"]
+			if ev.Action == "kill" {
+				code = ev.Actor.Attributes["signal"]
+			}
+			s.watch.event(ctx, eventName(ev.Actor.Attributes), ev.Action, code)
 		}
 		// exec_* and top events don't change the list.
 		if strings.HasPrefix(ev.Action, "exec_") || ev.Action == "top" {

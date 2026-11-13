@@ -32,6 +32,8 @@ import { Logo } from "./Logo";
 import { PageSlotsContext } from "./pageSlots";
 import { UpdatesBadge } from "@/features/updates/UpdatesBadge";
 import { SelfUpdateDialog } from "@/features/containers/SelfUpdateDialog";
+import { Bell } from "@/features/notifications/Bell";
+import { clearAppBadge } from "@/features/notifications/push";
 import { Menu, MenuItem, MenuLabel, Tooltip } from "@/components/ui/menu";
 import { IconButton } from "@/components/ui/button";
 import { Badge, Spinner, StatusDot } from "@/components/ui/misc";
@@ -152,6 +154,7 @@ function SignOut({ compact }: { compact?: boolean }) {
       }
     }
     qc.clear();
+    clearAppBadge();
     nav("/login", { replace: true });
   };
   const btn = (
@@ -253,6 +256,7 @@ function TopBar({
       <div ref={titleRef} className="min-w-0 flex-1" />
       <ConnectionPill />
       <div ref={actionsRef} className="flex shrink-0 items-center gap-2 max-md:hidden" />
+      <Bell />
     </header>
   );
 }

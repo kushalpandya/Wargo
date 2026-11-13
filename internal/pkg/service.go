@@ -274,6 +274,15 @@ func (s *Service) Run(ctx context.Context) {
 		}
 	}
 	s.publish()
+	// What the last check found (nothing where no package manager is
+	// supported) is the baseline for notifications.
+	s.mu.Lock()
+	last := s.last
+	s.mu.Unlock()
+	if s.requireBackend() != nil {
+		last = nil
+	}
+	s.reportUpdates(ctx, last, false)
 	go s.autoCheck(ctx)
 	<-ctx.Done()
 }
@@ -345,6 +354,7 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return httpx.Errorf(http.StatusBadGateway, "check_failed", err.Error())
 	}
+	s.reportUpdates(context.WithoutCancel(r.Context()), res, false)
 	httpx.OK(w, res)
 	return nil
 }

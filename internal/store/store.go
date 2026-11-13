@@ -52,6 +52,16 @@ var migrations = []string{
 	`ALTER TABLE sessions ADD COLUMN remember INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE sessions ADD COLUMN device TEXT;
 	CREATE INDEX sessions_device ON sessions(device);`,
+	// Notifications: Recent items in the panel, and the devices that
+	// receive Web Push (each registration belongs to a session).
+	`CREATE TABLE notify_items (
+		id TEXT PRIMARY KEY, category TEXT NOT NULL, key TEXT NOT NULL,
+		title TEXT NOT NULL, body TEXT, link TEXT, created_at INTEGER NOT NULL,
+		resolved_at INTEGER, cleared_at INTEGER);
+	CREATE INDEX notify_items_cat_key ON notify_items(category, key);
+	CREATE TABLE notify_subs (
+		id TEXT PRIMARY KEY, session TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE,
+		p256dh TEXT NOT NULL, auth TEXT NOT NULL, created_at INTEGER NOT NULL);`,
 }
 
 // Open opens (and migrates) the database in dataDir.

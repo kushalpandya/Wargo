@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { memo, useMemo, useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import {
-  AlertTriangle,
   ArrowDownToLine,
   CheckCircle2,
   CircleAlert,
@@ -13,30 +12,24 @@ import {
   FileX2,
   FolderInput,
   Music,
-  PackageCheck,
   PanelRightClose,
-  Pause,
-  Play,
-  ScrollText,
   Sparkles,
   Tv,
 } from "lucide-react";
 import { IconButton } from "@/components/ui/button";
 import { api, qs } from "@/lib/api";
-import { ago, rate, plural } from "@/lib/format";
+import { ago } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { useCapabilities } from "@/app/session";
 import { Card, CardHeader, IconChip, type Tint } from "@/components/ui/card";
-import { Meter, Skeleton } from "@/components/ui/misc";
-import { countAvailable, useContainers, useContainerUpdatesStatus } from "@/features/containers/api";
-import { pendingCount, useBrewStatus, usePkgStatus } from "@/features/updates/api";
+import { Skeleton } from "@/components/ui/misc";
 import { useTorrents } from "@/features/torrents/api";
-import { plexDecision, plexEpisode, plexLabel, plexThumb, usePlexActivity, type PlexItem, type PlexSession } from "@/features/plex/api";
+import { plexEpisode, plexLabel, plexThumb, usePlexActivity, type PlexItem } from "@/features/plex/api";
 import type { AuditEntry } from "@/features/settings/Audit";
-import type { EventsResponse } from "@/features/system/Events";
 
 /*
- * Home's feed: what deserves a look right now, from data Wargo already has.
+ * Home's feed: recent history (Plex, downloads, files), from data Wargo already has.
+ * Live activity and problems live in the notifications panel.
  * It reuses the queries (and caches) of the pages it summarises, polled
  * gently (1 to 5 minutes), and adds no background work on the server.
  */
@@ -54,9 +47,6 @@ const fileVerb: Record<string, [string, ReactNode]> = {
   "files.trash": ["Moved to trash", <FileX2 key="i" />],
   "files.delete": ["Deleted", <FileX2 key="i" />],
 };
-
-// Stopped containers exit with 137 or 143 (SIGKILL, SIGTERM): not a failure.
-const exitedBadly = /^Exited \((?!(?:0|137|143)\))\d+\)/;
 
 const baseName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
 
@@ -179,36 +169,6 @@ function Poster({ path, fallback }: { path?: string; fallback: ReactNode }) {
 
 const plexIcon = (type: string) => (type === "track" || type === "album" || type === "artist" ? <Music /> : type === "movie" ? <Clapperboard /> : <Tv />);
 
-function sessionTitle(s: PlexSession) {
-  const verb = s.type === "track" ? "listening to" : "watching";
-  const what = plexLabel(s);
-  return s.user ? `${s.user} is ${verb} ${what}` : `${verb[0].toUpperCase()}${verb.slice(1)} ${what}`;
-}
-
-function PlexStream({ s, href }: { s: PlexSession; href?: string }) {
-  const pct = s.duration > 0 ? Math.min(100, (s.viewOffset / s.duration) * 100) : 0;
-  const paused = s.state === "paused";
-  const title = sessionTitle(s);
-  const sub = [s.player || s.product, plexDecision[s.decision] ?? s.decision, paused ? "Paused" : s.state === "buffering" ? "Buffering" : ""].filter(Boolean).join(" · ");
-  return (
-    <li>
-      <Target href={href} className={cn(rowClass, href && linkClass)}>
-        <span className={cn("mt-0.5 shrink-0 [&_svg]:size-4", paused ? "text-subtle" : "text-ok")} aria-hidden="true">
-          <Poster path={s.thumb} fallback={paused ? <Pause /> : <Play />} />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-baseline gap-2">
-            <span className="min-w-0 flex-1 truncate text-ui text-fg">{title}</span>
-            <span className="num shrink-0 text-xs text-subtle">{Math.round(pct)}%</span>
-          </span>
-          <Meter value={pct} tone={paused ? "frost" : "accent"} className="mt-1" label={`${title} progress`} />
-          <span className="mt-0.5 block truncate text-2xs text-muted">{sub}</span>
-        </span>
-      </Target>
-    </li>
-  );
-}
-
 /** Recently watched, with back-to-back episodes of one show (same viewer) as one entry. */
 interface Watched {
   item: PlexItem;
@@ -279,14 +239,9 @@ function addedDetail(r: PlexItem) {
 
 export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void }) {
   const { data: caps } = useCapabilities();
-  const docker = !!caps?.docker?.available;
   const torrentsOn = !!caps?.transmission?.available;
   const plexOn = !!caps?.plex?.available;
 
-  const containers = useContainers({ enabled: docker, refetchInterval: 60_000 });
-  const ctrUpdates = useContainerUpdatesStatus({ enabled: docker });
-  const pkg = usePkgStatus({ enabled: !!caps?.pkg?.available });
-  const brew = useBrewStatus({ enabled: !!caps?.brew?.available });
   const torrents = useTorrents({ enabled: torrentsOn, refetchInterval: 60_000 });
   const plex = usePlexActivity({ enabled: plexOn });
   const files = useQuery({
@@ -294,46 +249,18 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
     queryFn: () => api.get<AuditEntry[]>(`/api/audit${qs({ prefix: "files.", limit: 40 })}`),
     refetchInterval: 60_000,
   });
-  const events = useQuery({
-    queryKey: ["system", "events", "24h", "error"],
-    queryFn: () => api.get<EventsResponse>(`/api/system/events${qs({ range: "24h", level: "error" })}`),
-    // No journal (macOS): no System events section on Home.
-    enabled: !!caps && caps.events?.supported !== false,
-    staleTime: 2 * 60_000,
-    refetchInterval: 5 * 60_000,
-  });
-
-  const attention = useMemo(
-    () =>
-      (containers.data ?? []).filter(
-        (c) => c.health === "unhealthy" || c.state === "dead" || (c.state === "exited" && exitedBadly.test(c.status)),
-      ),
-    [containers.data],
-  );
-  const pkgN = pendingCount(pkg.data);
-  const brewN = pendingCount(brew.data);
-  const ctrN = countAvailable(ctrUpdates.data);
   const list = torrents.data?.torrents ?? [];
-  const active = list.filter((t) => t.status === "downloading" || t.status === "checking" || t.status === "download-wait").slice(0, 3);
-  const broken = list.filter((t) => t.error > 0).slice(0, 2);
   const twoDays = Date.now() / 1000 - 2 * 86400;
   const finished = list.filter((t) => t.percentDone >= 1 && t.addedDate > twoDays && t.error === 0).slice(0, 3);
   const recentFiles = (files.data ?? []).filter((e) => e.result === "ok" && fileVerb[e.action]).slice(0, 6);
-  const topEvents = (events.data?.events ?? []).slice(0, 3);
   const plexData = plexOn ? plex.data : undefined;
-  const streams = plexData?.sessions ?? [];
   const watched = groupWatched(plexData?.history ?? []).slice(0, 3);
   const added = (plexData?.recent ?? []).slice(0, 4);
   const plexLink = plexData?.webUrl;
 
   const sources: [string, UseQueryResult][] = [
-    ["Containers", containers],
-    ["Updates", ctrUpdates],
-    ["Updates", pkg],
-    ["Updates", brew],
     ["Downloads", torrents],
     ["Recent files", files],
-    ["System events", events],
   ];
   // isLoading is false for disabled queries, so this waits only for what can load.
   // Plex is left out: a slow server should not hold the whole feed, so its
@@ -344,18 +271,10 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
   // A partial Plex answer (one section failed) still counts as a failure.
   if (plexOn && (plex.isError || (plexData?.errors && Object.keys(plexData.errors).length))) failed.push("Plex");
   const quiet =
-    !attention.length &&
-    !broken.length &&
-    !pkgN &&
-    !brewN &&
-    !ctrN &&
-    !active.length &&
     !finished.length &&
-    !streams.length &&
     !watched.length &&
     !added.length &&
     !recentFiles.length &&
-    !topEvents.length &&
     // Plex still loading: don't call it quiet before its section can show.
     !(plexOn && plex.isLoading);
 
@@ -388,43 +307,8 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
           </div>
         ) : (
           <div className="flex flex-col gap-2.5 p-3">
-            {(attention.length > 0 || broken.length > 0) && (
-              <Section title="Needs attention" icon={<AlertTriangle />} tint="rose">
-                <SubSection>
-                  {attention.map((c) => (
-                    <Row
-                      key={c.id}
-                      to={`/containers/${c.id}`}
-                      icon={<CircleAlert />}
-                      tone={c.health === "unhealthy" ? "warn" : "crit"}
-                      title={c.name}
-                      detail={c.health === "unhealthy" ? "Health check failing" : c.status}
-                    />
-                  ))}
-                  {broken.map((t) => (
-                    <Row key={t.id} to="/torrents?tab=downloads" icon={<CircleAlert />} tone="crit" title={t.name} detail={t.errorString || "Torrent error"} />
-                  ))}
-                </SubSection>
-              </Section>
-            )}
-            {(pkgN > 0 || brewN > 0 || ctrN > 0) && (
-              <Section title="Updates" icon={<PackageCheck />} tint="mint" to="/updates">
-                <SubSection>
-                  {ctrN > 0 && <Row to="/updates?tab=containers" icon={<PackageCheck />} tone="ok" title={`${ctrN} container ${plural(ctrN, "image")}`} detail="Newer versions available" />}
-                  {pkgN > 0 && <Row to="/updates?tab=system" icon={<PackageCheck />} tone="ok" title={`${pkgN} system ${plural(pkgN, "update")}`} detail="From the last check" />}
-                  {brewN > 0 && <Row to="/updates?tab=brew" icon={<PackageCheck />} tone="ok" title={`${brewN} Homebrew ${plural(brewN, "update")}`} detail="From the last check" />}
-                </SubSection>
-              </Section>
-            )}
-            {(streams.length > 0 || watched.length > 0 || added.length > 0) && (
+            {(watched.length > 0 || added.length > 0) && (
               <Section title="Plex" icon={<Clapperboard />} tint="butter">
-                {streams.length > 0 && (
-                  <SubSection title="Now playing">
-                    {streams.map((s) => (
-                      <PlexStream key={`${s.user ?? ""}|${plexLabel(s)}|${s.player || s.product || ""}`} s={s} href={plexLink} />
-                    ))}
-                  </SubSection>
-                )}
                 {watched.length > 0 && (
                   <SubSection title="Recently watched">
                     {watched.map((w) => (
@@ -448,21 +332,9 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
                 )}
               </Section>
             )}
-            {(active.length > 0 || finished.length > 0) && (
+            {finished.length > 0 && (
               <Section title="Downloads" icon={<ArrowDownToLine />} tint="sky" to="/torrents?tab=downloads">
                 <SubSection>
-                  {active.map((t) => (
-                    <li key={t.id} className="px-3 py-1.5">
-                      <Link to="/torrents?tab=downloads" className="block min-w-0 rounded-sm focus-visible:outline-offset-2">
-                        <div className="flex items-baseline gap-2">
-                          <span className="min-w-0 flex-1 truncate text-ui">{t.name}</span>
-                          <span className="num shrink-0 text-xs text-subtle">{Math.round(t.percentDone * 100)}%</span>
-                        </div>
-                        <Meter value={t.percentDone * 100} tone="frost" className="mt-1" label={`${t.name} progress`} />
-                        <div className="num mt-0.5 text-2xs text-muted">{t.status === "downloading" ? `${rate(t.rateDownload)} · ${t.peersConnected} peers` : "Waiting"}</div>
-                      </Link>
-                    </li>
-                  ))}
                   {finished.map((t) => (
                     <Row key={t.id} to="/torrents?tab=downloads" icon={<CheckCircle2 />} tone="ok" title={t.name} detail="Downloaded" aside={`Added ${ago(t.addedDate * 1000)}`} />
                   ))}
@@ -476,23 +348,6 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
                     const [verb, icon] = fileVerb[e.action];
                     return <Row key={e.id} to="/files" icon={icon} title={baseName(e.target)} detail={`${verb} · ${e.target}`} aside={ago(e.ts)} />;
                   })}
-                </SubSection>
-              </Section>
-            )}
-            {topEvents.length > 0 && (
-              <Section title="System events" icon={<ScrollText />} tint="peach" to="/system/events?level=error">
-                <SubSection>
-                  {topEvents.map((e) => (
-                    <Row
-                      key={e.key}
-                      to="/system/events?level=error"
-                      icon={<CircleAlert />}
-                      tone="crit"
-                      title={e.message}
-                      detail={`${e.origin}${e.count > 1 ? ` · ${e.count.toLocaleString()} times` : ""}`}
-                      aside={ago(e.last)}
-                    />
-                  ))}
                 </SubSection>
               </Section>
             )}

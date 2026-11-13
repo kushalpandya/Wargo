@@ -243,10 +243,17 @@ func (s *Service) handleCheckUpdates(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return dockerErr(err)
 	}
+	if s.notify != nil {
+		s.takeStartupReport()
+		s.notify.ReportUpdates(context.WithoutCancel(ctx), "containers", updateNames(l), false)
+	}
 	httpx.OK(w, s.updatesStatus(l))
 	return nil
 }
 
+// markUpToDate records that ref is up to date at imageID (after an update
+// or a pull that found nothing new) and refreshes the updates item in
+// notifications, without a push.
 func (s *Service) markUpToDate(ref, imageID string) {
 	f := false
 	s.mu.Lock()
@@ -255,15 +262,20 @@ func (s *Service) markUpToDate(ref, imageID string) {
 	p := s.snapshotLocked()
 	s.mu.Unlock()
 	s.save(p)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	s.reportUpdates(ctx, false)
 }
 
 // recheckContainer re-checks the image of the named container (after an
-// update, whose new image id has no result yet).
+// update, whose new image id has no result yet), then refreshes the
+// updates item in notifications, without a push.
 func (s *Service) recheckContainer(ctx context.Context, name string) {
 	l, err := s.List(ctx, true)
 	if err != nil {
 		return
 	}
+	defer s.reportUpdates(ctx, false)
 	i := findContainer(l, name)
 	if i < 0 {
 		return
@@ -345,7 +357,9 @@ func (s *Service) autoCheck(ctx context.Context) {
 			s.mu.Lock()
 			s.retryAt = time.Now().Add(min(s.checkInterval, 30*time.Minute))
 			s.mu.Unlock()
+			continue
 		}
+		s.reportUpdates(ctx, true)
 	}
 }
 

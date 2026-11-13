@@ -24,6 +24,7 @@ import (
 
 	"github.com/kushalpandya/wargo/internal/events"
 	"github.com/kushalpandya/wargo/internal/httpx"
+	"github.com/kushalpandya/wargo/internal/notify"
 
 	hostfs "github.com/kushalpandya/wargo/internal/host"
 )
@@ -105,6 +106,10 @@ type Collector struct {
 	interval time.Duration
 	capacity int
 
+	// ReportDisks, when set before Run, receives how full each mounted
+	// filesystem is every diskReportEvery (notify.Center.ReportDisks).
+	ReportDisks func(ctx context.Context, list []notify.Disk)
+
 	mu      sync.RWMutex
 	latest  *Snapshot
 	history []Point
@@ -135,8 +140,14 @@ func NewCollector(hub *events.Hub, interval, history time.Duration) *Collector {
 	return &Collector{hub: hub, interval: interval, capacity: int(history / interval)}
 }
 
+// diskReportEvery is how often ReportDisks is called.
+const diskReportEvery = 5 * time.Minute
+
 // Run samples until ctx is done. It slows down when nobody is watching.
 func (c *Collector) Run(ctx context.Context) {
+	if c.ReportDisks != nil {
+		go c.reportDisks(ctx)
+	}
 	cpu.PercentWithContext(ctx, 0, true) // prime
 	c.sample(ctx)
 	for {
@@ -149,6 +160,31 @@ func (c *Collector) Run(ctx context.Context) {
 			return
 		case <-time.After(d):
 			c.sample(ctx)
+		}
+	}
+}
+
+// reportDisks calls ReportDisks now and every diskReportEvery with the
+// writable mounted filesystems. A listing that found nothing is skipped:
+// it would mark every full disk as recovered.
+func (c *Collector) reportDisks(ctx context.Context) {
+	t := time.NewTicker(diskReportEvery)
+	defer t.Stop()
+	for {
+		var list []notify.Disk
+		for _, f := range filesystems(ctx) {
+			if f.ReadOnly || f.Total == 0 {
+				continue
+			}
+			list = append(list, notify.Disk{Mount: f.Mount, UsedPct: f.UsedPct})
+		}
+		if len(list) > 0 && ctx.Err() == nil {
+			c.ReportDisks(ctx, list)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
 		}
 	}
 }

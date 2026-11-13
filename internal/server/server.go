@@ -25,6 +25,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
 	"github.com/kushalpandya/wargo/internal/metrics"
+	"github.com/kushalpandya/wargo/internal/notify"
 	"github.com/kushalpandya/wargo/internal/store"
 	"github.com/kushalpandya/wargo/web"
 )
@@ -54,6 +55,9 @@ type Deps struct {
 	Elevate *elevate.Service
 	Proxy   *httpx.ProxyTrust
 	Auth    *auth.Service
+	// Notify takes occurrences from features for the notifications panel
+	// and push. It is ready before any feature constructor runs.
+	Notify *notify.Center
 }
 
 // Feature constructs a service from shared deps.
@@ -88,6 +92,10 @@ func New(cfg config.Config) (*Server, error) {
 	if host.Container() {
 		d.Elevate.WithHostAuth(au)
 	}
+	if d.Notify, err = notify.New(st, hub, au.IdleCutoff); err != nil {
+		st.Close()
+		return nil, err
+	}
 	s := &Server{deps: d}
 
 	public := http.NewServeMux()
@@ -97,8 +105,10 @@ func New(cfg config.Config) (*Server, error) {
 	d.Jobs.Register(private)
 	al.Register(private)
 	d.Elevate.Register(private)
+	d.Notify.Register(private)
 
 	mc := metrics.NewCollector(hub, cfg.Metrics.Interval.Duration, cfg.Metrics.History.Duration)
+	mc.ReportDisks = d.Notify.ReportDisks
 	mc.Register(private)
 	s.runners = append(s.runners, mc)
 	s.capable = append(s.capable, mc)
@@ -238,6 +248,9 @@ func (s *Server) Run(ctx context.Context) error {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.http.Shutdown(sctx)
+		if s.deps.Notify != nil {
+			s.deps.Notify.Close()
+		}
 		s.deps.Store.Close()
 		return nil
 	case err := <-errc:

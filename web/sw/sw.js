@@ -48,3 +48,39 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(caches.match(url.pathname, { cacheName: CACHE, ignoreSearch: true }).then((r) => r || fetch(req)));
   }
 });
+
+// Push: the server sends {title, body, link, tag, badge} (internal/notify/push.go).
+self.addEventListener("push", (event) => {
+  let p = {};
+  try {
+    p = event.data ? event.data.json() : {};
+  } catch {
+    p = {};
+  }
+  const shown = self.registration.showNotification(p.title || "Wargo", {
+    body: p.body || "",
+    tag: p.tag || undefined,
+    icon: "/icon-192.png",
+    data: { link: p.link || "", tag: p.tag || "" },
+  });
+  const badge = typeof p.badge === "number" && self.navigator.setAppBadge ? self.navigator.setAppBadge(p.badge).catch(() => {}) : null;
+  event.waitUntil(Promise.all([shown, badge]));
+});
+
+// A tap opens Wargo with the panel showing, whatever the category; the
+// item's page is a tap away from its row. An open window is focused and
+// told to open the panel (keeping its state); a new window opens only when
+// none is open.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+      const win = wins.find((w) => new URL(w.url).origin === self.location.origin);
+      if (!win) return self.clients.openWindow(new URL("/?notifications=1", self.location.origin).href);
+      return win
+        .focus()
+        .catch(() => {})
+        .then(() => win.postMessage({ type: "notification-open", link: null }));
+    }),
+  );
+});

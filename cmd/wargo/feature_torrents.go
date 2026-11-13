@@ -14,6 +14,7 @@ var torrentsSvc *integrations.Service
 func torrentsService(d *server.Deps) *integrations.Service {
 	if torrentsSvc == nil {
 		torrentsSvc = integrations.New(d.Cfg, d.Store, d.Hub, d.Audit)
+		torrentsSvc.SetNotify(d.Notify)
 	}
 	return torrentsSvc
 }
