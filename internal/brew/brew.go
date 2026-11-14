@@ -2,9 +2,10 @@
 
 // Package brew checks for and installs Homebrew updates on macOS and Linux.
 // Homebrew refuses to run as root and belongs to the user who installed it,
-// so Wargo runs it as its own user, and only when that user owns the
-// Homebrew installation. Casks whose installers run sudo get the account
-// password through SUDO_ASKPASS (see askpass.go) after the user approves.
+// so Wargo runs it as its own user (in container mode: as the admin account
+// on the host, through nsenter), and only when that user owns the Homebrew
+// installation. Casks whose installers run sudo get the account password
+// through SUDO_ASKPASS (see askpass.go) after the user approves.
 package brew
 
 import (
@@ -18,7 +19,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -48,7 +48,7 @@ const (
 // Status is GET /api/brew/status and the sticky "brew" topic. Its fields
 // mirror pkg.Status so the Updates page shares one set of components.
 type Status struct {
-	// Supported is false where Homebrew can't be managed (container mode).
+	// Supported is false where Homebrew can't be managed.
 	Supported bool `json:"supported"`
 	// Available: a Homebrew installation was found.
 	Available bool   `json:"available"`
@@ -71,11 +71,14 @@ type Service struct {
 	d *server.Deps
 
 	supported bool
-	bin       string // absolute path of brew, "" when not installed
-	prefix    string
-	problem   string // why updates can't be installed, if they can't
-	exe       string // this binary, for the askpass script
-	logDir    string
+	// onHost: container mode, where brew runs on the host as the admin
+	// account (through nsenter) and paths below are host paths.
+	onHost  bool
+	bin     string // absolute path of brew, "" when not installed
+	prefix  string
+	problem string // why updates can't be installed, if they can't
+	exe     string // this binary, for the askpass script
+	logDir  string
 
 	// fake (development only) reads canned check output from fakeDir and
 	// runs fakeDir/upgrade.sh instead of brew upgrade.
@@ -111,7 +114,7 @@ func candidates(home string) []string {
 // New builds the service. Set WARGO_BREW_FAKE=<dir> (development only) to
 // read canned check output from dir and simulate upgrades with dir/upgrade.sh.
 func New(d *server.Deps) *Service {
-	s := &Service{d: d, supported: !host.Container(), logDir: d.Cfg.DataDir,
+	s := &Service{d: d, supported: true, onHost: host.Container(), logDir: d.Cfg.DataDir,
 		sched: pkg.NewSchedule("brew.settings")}
 	s.sched.Store, s.sched.Audit = d.Store, d.Audit
 	s.exe, _ = os.Executable()
@@ -119,7 +122,13 @@ func New(d *server.Deps) *Service {
 		s.fake, s.fakeDir = true, dir
 		s.bin, s.prefix, s.version = "brew", "/opt/homebrew", "simulated"
 		slog.Warn("!!! WARGO_BREW_FAKE: Homebrew checks and upgrades are SIMULATED; never set this in production !!!", "dir", dir)
-	} else if s.supported {
+	} else if s.onHost {
+		// The admin account's Homebrew on the host. Without an admin
+		// account nothing could run it, so it counts as not installed.
+		if a := host.Admin(); a != nil {
+			s.detect(candidates(a.Home))
+		}
+	} else {
 		home, _ := os.UserHomeDir()
 		s.detect(candidates(home))
 	}
@@ -140,10 +149,11 @@ func New(d *server.Deps) *Service {
 	return s
 }
 
-// detect finds brew and checks that this user may run it.
+// detect finds brew (paths are host paths) and checks that the user it
+// would run as may run it.
 func (s *Service) detect(paths []string) {
 	for _, p := range paths {
-		st, err := os.Stat(p)
+		st, err := host.Stat(p)
 		if err != nil || !st.Mode().IsRegular() || st.Mode()&0o111 == 0 {
 			continue
 		}
@@ -154,20 +164,21 @@ func (s *Service) detect(paths []string) {
 	if s.bin == "" {
 		return
 	}
-	s.problem = ownerProblem(s.prefix, os.Getuid())
+	s.problem = ownerProblem(s.prefix, host.AdminUID())
 }
 
-// ownerProblem explains why uid can't upgrade the Homebrew in prefix, or
-// returns "". Homebrew must run as the user who owns its files.
+// ownerProblem explains why uid can't upgrade the Homebrew in prefix (a
+// host path), or returns "". Homebrew must run as the user who owns its
+// files.
 func ownerProblem(prefix string, uid int) string {
 	if uid == 0 {
 		return "Homebrew can't be run as root."
 	}
 	dir := filepath.Join(prefix, "Cellar")
-	if _, err := os.Stat(dir); err != nil {
+	if _, err := host.Stat(dir); err != nil {
 		dir = prefix
 	}
-	st, err := os.Stat(dir)
+	st, err := host.Stat(dir)
 	if err != nil {
 		return "Homebrew's files can't be read."
 	}
@@ -176,12 +187,12 @@ func ownerProblem(prefix string, uid int) string {
 		return ""
 	}
 	owner := strconv.Itoa(int(sys.Uid))
-	if u, err := user.LookupId(owner); err == nil {
-		owner = u.Username
+	if u, err := host.LookupUID(int(sys.Uid)); err == nil {
+		owner = u.Name
 	}
 	me := strconv.Itoa(uid)
-	if u, err := user.LookupId(me); err == nil {
-		me = u.Username
+	if u, err := host.LookupUID(uid); err == nil {
+		me = u.Name
 	}
 	return fmt.Sprintf("Homebrew belongs to %s, but Wargo runs as %s, so it can list updates but not install them.", owner, me)
 }
@@ -368,7 +379,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 
 func (s *Service) requireAvailable() error {
 	if !s.supported {
-		return httpx.Errorf(http.StatusServiceUnavailable, "unsupported", "Homebrew can't be managed from a container")
+		return httpx.Errorf(http.StatusServiceUnavailable, "unsupported", "Homebrew can't be managed here")
 	}
 	if s.bin == "" {
 		return httpx.Errorf(http.StatusServiceUnavailable, "unavailable", "Homebrew is not installed")
@@ -414,11 +425,16 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// env is the environment brew runs with: Wargo's own, minus any askpass
-// it inherited, with output that is easy to parse and no prompts.
+// env is the environment brew runs with: Wargo's own (in container mode
+// the admin account's basic one on the host), minus any askpass it
+// inherited, with output that is easy to parse and no prompts.
 func (s *Service) env(extra ...string) []string {
+	base := os.Environ()
+	if s.onHost {
+		base = host.BaseEnv(host.Admin())
+	}
 	var out []string
-	for _, e := range os.Environ() {
+	for _, e := range base {
 		k, _, _ := strings.Cut(e, "=")
 		switch k {
 		case "SUDO_ASKPASS", "PATH", "HOMEBREW_COLOR", "HOMEBREW_NO_AUTO_UPDATE":
@@ -434,14 +450,30 @@ func (s *Service) env(extra ...string) []string {
 	return append(out, extra...)
 }
 
+// command builds a brew command (argv[0] is brew or, simulated, a script)
+// with env. ctx may be nil. In container mode it runs on the host as the
+// admin account.
+func (s *Service) command(ctx context.Context, env []string, argv ...string) *exec.Cmd {
+	if s.onHost {
+		return host.CommandOpts(ctx, host.Opts{AsUser: true, Dir: "/tmp", Env: env}, argv...)
+	}
+	var cmd *exec.Cmd
+	if ctx == nil {
+		cmd = exec.Command(argv[0], argv[1:]...)
+	} else {
+		cmd = exec.CommandContext(ctx, argv[0], argv[1:]...)
+	}
+	cmd.Env = env
+	cmd.Dir = os.TempDir()
+	return cmd
+}
+
 // brew runs brew with args and returns stdout, or an error carrying the
 // last line of stderr.
 func (s *Service) brew(ctx context.Context, timeout time.Duration, args ...string) ([]byte, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, s.bin, args...)
-	cmd.Env = s.env()
-	cmd.Dir = os.TempDir()
+	cmd := s.command(ctx, s.env(), append([]string{s.bin}, args...)...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	cmd.WaitDelay = 5 * time.Second
@@ -635,21 +667,28 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return httpx.Errorf(http.StatusConflict, "upgrade_running", "An update was just started")
 	}
-	ap, err := startAskpass(s.exe, pw)
-	pw = ""
-	if err != nil {
-		lf.Close()
-		os.Remove(rec.Log)
-		return fmt.Errorf("prepare password helper: %w", err)
+	// Only casks need the password, and casks are macOS only, so the
+	// helper is skipped in container mode (Linux), where the host could
+	// not run this binary anyway. A sudo there fails instead of hanging.
+	var ap *askpass
+	env := s.env()
+	if !s.onHost {
+		ap, err = startAskpass(s.exe, pw)
+		if err != nil {
+			pw = ""
+			lf.Close()
+			os.Remove(rec.Log)
+			return fmt.Errorf("prepare password helper: %w", err)
+		}
+		env = s.env("SUDO_ASKPASS=" + ap.script)
 	}
+	pw = ""
 	var cmd *exec.Cmd
 	if s.fake {
-		cmd = exec.Command("/bin/sh", filepath.Join(s.fakeDir, "upgrade.sh"))
+		cmd = s.command(nil, env, "/bin/sh", filepath.Join(s.fakeDir, "upgrade.sh"))
 	} else {
-		cmd = exec.Command(s.bin, "upgrade")
+		cmd = s.command(nil, env, s.bin, "upgrade")
 	}
-	cmd.Env = s.env("SUDO_ASKPASS=" + ap.script)
-	cmd.Dir = os.TempDir()
 	pr, pw2, err := os.Pipe()
 	if err != nil {
 		ap.Close()

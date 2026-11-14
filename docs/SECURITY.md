@@ -173,6 +173,10 @@ updates, restarting the server) ask for approval every time:
   removes the folder when the update ends. Passkeys can't approve this,
   because Homebrew needs the password itself. Updates that need no password
   never ask for one.
+- **Homebrew in container mode (Linux).** Wargo runs `brew` on the host
+  through `nsenter` as the admin account, never as root, with a minimal
+  environment (none of the container's variables). Linux has no casks, so
+  no password is ever handed to it.
 - **Passkey through `wargo-privd` (optional).** A small root service on a
   local socket. It keeps its own list of trusted passkeys (written once, with
   sudo approval), asks for a passkey confirmation tied to the exact action and

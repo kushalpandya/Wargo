@@ -71,6 +71,9 @@ func startAskpass(exe, pw string) (*askpass, error) {
 
 // setRoot names the process whose descendants may read the password.
 func (a *askpass) setRoot(pid int) {
+	if a == nil {
+		return
+	}
 	a.mu.Lock()
 	a.root = pid
 	a.mu.Unlock()
@@ -123,6 +126,9 @@ func descends(c *net.UnixConn, root int) bool {
 
 // Close stops serving, forgets the password and removes the directory.
 func (a *askpass) Close() {
+	if a == nil {
+		return
+	}
 	a.mu.Lock()
 	a.pw = ""
 	a.mu.Unlock()
