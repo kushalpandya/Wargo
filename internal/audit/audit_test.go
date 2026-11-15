@@ -105,3 +105,32 @@ func TestListPrefix(t *testing.T) {
 		t.Fatalf("wildcard prefix: %d", w.Code)
 	}
 }
+
+func TestListActions(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	l := New(st, httpx.NewProxyTrust(nil))
+	for _, a := range []string{"containers.update", "containers.update.self.start", "pkg.upgrade", "pkg.upgrade.finished", "brew.upgrade.finished"} {
+		l.RecordSystem(a, "x", "ok")
+	}
+	mux := http.NewServeMux()
+	l.Register(mux)
+	get := func(q string) (int, []Entry) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/audit?"+q, nil))
+		var out []Entry
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out
+	}
+	// Exact matches only, newest first.
+	_, out := get("action=containers.update&action=pkg.upgrade.finished&action=brew.upgrade.finished")
+	if len(out) != 3 || out[0].Action != "brew.upgrade.finished" || out[1].Action != "pkg.upgrade.finished" || out[2].Action != "containers.update" {
+		t.Fatalf("got %+v", out)
+	}
+	if code, _ := get("action=pkg%25"); code != 400 {
+		t.Fatalf("wildcard action: %d", code)
+	}
+}

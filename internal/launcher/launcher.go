@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Package launcher implements the optional app launcher: user-defined
-// tiles with locally cached icons, background health checks and
-// suggestions from running containers.
+// Package launcher implements Home's app tiles: the built-in Files,
+// Terminal and Torrents tiles plus user-defined ones with locally cached
+// icons, background health checks and suggestions from running containers.
 package launcher
 
 import (
@@ -22,12 +22,40 @@ import (
 	"github.com/kushalpandya/wargo/internal/store"
 )
 
-const settingsKey = "launcher"
+// settingsKey holds the launcher's display settings (shared by every
+// browser and session).
+const settingsKey = "launcher.view"
 
-// Settings controls whether and where the launcher is shown.
+// Settings is how Home shows the app tiles.
 type Settings struct {
-	Enabled   bool   `json:"enabled"`
-	Placement string `json:"placement"` // "overview" | "page"
+	// TileSize is "large" (square tiles) or "small" (icon and name in a row).
+	TileSize string `json:"tileSize"`
+}
+
+func (s *Service) settings(ctx context.Context) Settings {
+	var v Settings
+	s.st.Get(ctx, settingsKey, &v)
+	if v.TileSize != "small" {
+		v.TileSize = "large"
+	}
+	return v
+}
+
+func (s *Service) handlePutSettings(w http.ResponseWriter, r *http.Request) error {
+	var v Settings
+	if err := httpx.Decode(r, &v); err != nil {
+		return err
+	}
+	if v.TileSize != "large" && v.TileSize != "small" {
+		return httpx.BadRequest(`tileSize must be "large" or "small"`)
+	}
+	err := s.st.Set(r.Context(), settingsKey, v)
+	s.audit.Record(r, "launcher.settings", v.TileSize, err, nil)
+	if err != nil {
+		return err
+	}
+	httpx.OK(w, v)
+	return nil
 }
 
 // Tile is one launcher entry.
@@ -42,7 +70,13 @@ type Tile struct {
 	HealthURL string  `json:"healthUrl,omitempty"`
 	Enabled   bool    `json:"enabled"`
 	Status    *string `json:"status"`
+	// Builtin names a tile Wargo provides ("files", "terminal" or
+	// "torrents"): it can be reordered but not edited, hidden or deleted.
+	Builtin string `json:"builtin,omitempty"`
 }
+
+// errBuiltin rejects changes to the built-in tiles.
+var errBuiltin = httpx.BadRequest("Files, Terminal and Torrents are built in: they can be reordered but not changed or removed")
 
 // Service is the launcher feature.
 type Service struct {
@@ -73,29 +107,13 @@ func New(st *store.Store, al *audit.Log, dataDir, dockerSock string) *Service {
 	}
 }
 
-func (s *Service) settings(ctx context.Context) Settings {
-	v := Settings{Placement: "overview"}
-	if ok, err := s.st.Get(ctx, settingsKey, &v); !ok || err != nil {
-		return Settings{Placement: "overview"}
-	}
-	if v.Placement != "page" {
-		v.Placement = "overview"
-	}
-	return v
-}
-
-// Capabilities implements server.Capable.
-func (s *Service) Capabilities(ctx context.Context) (string, any) {
-	return "launcher", s.settings(ctx)
-}
-
 // Register mounts the launcher API.
 func (s *Service) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/launcher", httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
+	mux.HandleFunc("GET /api/launcher/settings", httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
 		httpx.OK(w, s.settings(r.Context()))
 		return nil
 	}))
-	mux.HandleFunc("PUT /api/launcher", httpx.Handler(s.handlePutSettings))
+	mux.HandleFunc("PUT /api/launcher/settings", httpx.Handler(s.handlePutSettings))
 	mux.HandleFunc("GET /api/launcher/tiles", httpx.Handler(s.handleList))
 	mux.HandleFunc("POST /api/launcher/tiles", httpx.Handler(s.handleCreate))
 	mux.HandleFunc("POST /api/launcher/tiles/reorder", httpx.Handler(s.handleReorder))
@@ -105,26 +123,6 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/launcher/icons/fetch", httpx.Handler(s.handleIconFetch))
 	mux.HandleFunc("GET /api/launcher/icons/{name}", httpx.Handler(s.handleIconGet))
 	mux.HandleFunc("GET /api/launcher/suggest", httpx.Handler(s.handleSuggest))
-}
-
-func (s *Service) handlePutSettings(w http.ResponseWriter, r *http.Request) error {
-	var v Settings
-	if err := httpx.Decode(r, &v); err != nil {
-		return err
-	}
-	if v.Placement != "page" && v.Placement != "overview" {
-		return httpx.BadRequest("placement must be \"overview\" or \"page\"")
-	}
-	err := s.st.Set(r.Context(), settingsKey, v)
-	s.audit.Record(r, "launcher.settings", v.Placement, err, map[string]any{"enabled": v.Enabled})
-	if err != nil {
-		return err
-	}
-	if v.Enabled {
-		s.health.kick()
-	}
-	httpx.OK(w, v)
-	return nil
 }
 
 // ---- tiles ----
@@ -192,7 +190,7 @@ func (in tileInput) validate() (Tile, error) {
 
 func (s *Service) list(ctx context.Context) ([]Tile, error) {
 	rows, err := s.st.DB.QueryContext(ctx, `SELECT id, name, url, COALESCE(icon,''), COALESCE(group_name,''), sort,
-		new_tab, COALESCE(health_url,''), enabled FROM launcher_tiles ORDER BY sort, name`)
+		new_tab, COALESCE(health_url,''), enabled, COALESCE(builtin,'') FROM launcher_tiles ORDER BY sort, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +199,7 @@ func (s *Service) list(ctx context.Context) ([]Tile, error) {
 	for rows.Next() {
 		var t Tile
 		var nt, en int
-		if err := rows.Scan(&t.ID, &t.Name, &t.URL, &t.Icon, &t.Group, &t.Sort, &nt, &t.HealthURL, &en); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.URL, &t.Icon, &t.Group, &t.Sort, &nt, &t.HealthURL, &en, &t.Builtin); err != nil {
 			return nil, err
 		}
 		t.NewTab, t.Enabled = nt != 0, en != 0
@@ -241,7 +239,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var n int
-	s.st.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM launcher_tiles`).Scan(&n)
+	s.st.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM launcher_tiles WHERE builtin IS NULL`).Scan(&n)
 	if n >= 500 {
 		return httpx.BadRequest("too many tiles")
 	}
@@ -256,14 +254,6 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) error {
 	s.audit.Record(r, "launcher.tile_create", t.Name, err, map[string]any{"url": t.URL})
 	if err != nil {
 		return err
-	}
-	// Adding the first app to a launcher that was never configured turns
-	// it on (shown on Home); explicit choices, including "hidden", stay.
-	if n == 0 {
-		var cur Settings
-		if ok, _ := s.st.Get(r.Context(), settingsKey, &cur); !ok {
-			s.st.Set(r.Context(), settingsKey, Settings{Enabled: true, Placement: "overview"})
-		}
 	}
 	if t.HealthURL != "" {
 		s.health.kick()
@@ -283,10 +273,10 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) error {
 	}
 	t.ID = r.PathValue("id")
 	res, err := s.st.DB.ExecContext(r.Context(), `UPDATE launcher_tiles SET name=?, url=?, icon=?, group_name=?, new_tab=?,
-		health_url=?, enabled=? WHERE id=?`, t.Name, t.URL, t.Icon, t.Group, b2i(t.NewTab), t.HealthURL, b2i(t.Enabled), t.ID)
+		health_url=?, enabled=? WHERE id=? AND builtin IS NULL`, t.Name, t.URL, t.Icon, t.Group, b2i(t.NewTab), t.HealthURL, b2i(t.Enabled), t.ID)
 	if err == nil {
 		if n, _ := res.RowsAffected(); n == 0 {
-			return httpx.ErrNotFound
+			return s.missingOrBuiltin(r.Context(), t.ID)
 		}
 	}
 	s.audit.Record(r, "launcher.tile_update", t.Name, err, map[string]any{"url": t.URL})
@@ -301,14 +291,30 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// missingOrBuiltin explains why an update changed no row: the tile is
+// built in, or it doesn't exist.
+func (s *Service) missingOrBuiltin(ctx context.Context, id string) error {
+	var n int
+	if err := s.st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM launcher_tiles WHERE id=?`, id).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return errBuiltin
+	}
+	return httpx.ErrNotFound
+}
+
 func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) error {
 	id := r.PathValue("id")
-	var name string
-	if err := s.st.DB.QueryRowContext(r.Context(), `SELECT name FROM launcher_tiles WHERE id=?`, id).Scan(&name); err != nil {
+	var name, builtin string
+	if err := s.st.DB.QueryRowContext(r.Context(), `SELECT name, COALESCE(builtin,'') FROM launcher_tiles WHERE id=?`, id).Scan(&name, &builtin); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return httpx.ErrNotFound
 		}
 		return err
+	}
+	if builtin != "" {
+		return errBuiltin
 	}
 	_, err := s.st.DB.ExecContext(r.Context(), `DELETE FROM launcher_tiles WHERE id=?`, id)
 	s.audit.Record(r, "launcher.tile_delete", name, err, nil)

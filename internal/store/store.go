@@ -62,6 +62,18 @@ var migrations = []string{
 	CREATE TABLE notify_subs (
 		id TEXT PRIMARY KEY, session TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE,
 		p256dh TEXT NOT NULL, auth TEXT NOT NULL, created_at INTEGER NOT NULL);`,
+	// Files, Terminal and Torrents are built-in Home tiles, ahead of the
+	// user's apps: they take part in the order like any app but cannot be
+	// edited, hidden or removed (Home shows Torrents only while Prowlarr or
+	// Transmission is set up). The launcher is always on now, so its old
+	// on/off setting goes.
+	`ALTER TABLE launcher_tiles ADD COLUMN builtin TEXT;
+	INSERT INTO launcher_tiles(id, name, url, sort, new_tab, enabled, builtin) VALUES
+		('files', 'Files', '/files', -3, 0, 1, 'files'),
+		('terminal', 'Terminal', '/terminal', -2, 0, 1, 'terminal');
+	DELETE FROM settings WHERE key = 'launcher';`,
+	`INSERT INTO launcher_tiles(id, name, url, sort, new_tab, enabled, builtin) VALUES
+		('torrents', 'Torrents', '/torrents', -1, 0, 1, 'torrents');`,
 }
 
 // Open opens (and migrates) the database in dataDir.

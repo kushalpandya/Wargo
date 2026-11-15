@@ -289,70 +289,14 @@ html.dark[data-accent="peach"] {
 }
 
 /*
- * Home: a bento grid driven by the width of <main> (container queries), so
- * wide and ultrawide screens get more columns instead of empty margins.
+ * Home: app tiles, then the system tiles, then the activity card, one under
+ * the other at every width.
  */
 .home-grid {
   display: grid;
   gap: 1rem;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "apps" "tiles" "feed" "specs";
-}
-/* Every breakpoint lists each apps/feed combination: an area left in the
-   template without its element still adds an empty row and its gap. */
-.home-grid:not([data-apps]) {
-  grid-template-areas: "tiles" "feed" "specs";
-}
-.home-grid:not([data-feed]) {
-  grid-template-areas: "apps" "tiles" "specs";
-}
-.home-grid:not([data-apps]):not([data-feed]) {
-  grid-template-areas: "tiles" "specs";
-}
-@container main (min-width: 64rem) {
-  .home-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas: "apps apps" "tiles tiles" "specs feed";
-    align-items: start;
-  }
-  .home-grid:not([data-apps]) {
-    grid-template-areas: "tiles tiles" "specs feed";
-  }
-  .home-grid:not([data-feed]) {
-    grid-template-areas: "apps apps" "tiles tiles" "specs specs";
-  }
-  .home-grid:not([data-apps]):not([data-feed]) {
-    grid-template-areas: "tiles tiles" "specs specs";
-  }
-}
-@container main (min-width: 108rem) {
-  .home-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
-    grid-template-rows: auto auto 1fr;
-    grid-template-areas: "apps apps feed" "tiles tiles feed" "specs specs feed";
-  }
-  .home-grid:not([data-apps]) {
-    grid-template-rows: auto 1fr;
-    grid-template-areas: "tiles tiles feed" "specs specs feed";
-  }
-  /* Feed collapsed or turned off: the rest of Home takes the full width. */
-  .home-grid:not([data-feed]) {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-rows: auto;
-    grid-template-areas: "apps apps" "tiles tiles" "specs specs";
-  }
-  .home-grid:not([data-apps]):not([data-feed]) {
-    grid-template-areas: "tiles tiles" "specs specs";
-  }
-  /* The feed starts at the top of the content and fills the rest of the
-     screen (below the 4rem top bar, above main's 2rem bottom padding),
-     staying in view while Home scrolls; its items scroll inside it. */
-  .home-feed {
-    position: sticky;
-    top: 4.25rem;
-    height: calc(100dvh - 4.25rem - 2rem);
-    min-height: 24rem;
-  }
+  grid-template-areas: "apps" "tiles" "feed";
 }
 
 /* Settings → About: with the two cards side by side and room to spare, the

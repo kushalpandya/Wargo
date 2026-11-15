@@ -214,22 +214,39 @@ func TestTileCRUD(t *testing.T) {
 	w := do(t, mux, "GET", "/api/launcher/tiles", nil)
 	var tiles []Tile
 	json.Unmarshal(w.Body.Bytes(), &tiles)
-	if len(tiles) != 2 || tiles[0].Name != "C" || tiles[1].Name != "A2" || tiles[1].NewTab || tiles[1].Group != "" {
+	// The built-in tiles keep their place ahead of the reordered apps.
+	if len(tiles) != 5 || tiles[0].Builtin != "files" || tiles[1].Builtin != "terminal" || tiles[2].Builtin != "torrents" ||
+		tiles[3].Name != "C" || tiles[4].Name != "A2" || tiles[4].NewTab || tiles[4].Group != "" {
 		t.Fatalf("tiles: %+v", tiles)
 	}
 }
 
-func TestSettings(t *testing.T) {
-	s, mux := newTestService(t)
-	if _, v := s.Capabilities(context.Background()); v.(Settings).Enabled {
-		t.Fatal("enabled by default")
+func TestBuiltinTiles(t *testing.T) {
+	_, mux := newTestService(t)
+	list := func() []Tile {
+		var tiles []Tile
+		json.Unmarshal(do(t, mux, "GET", "/api/launcher/tiles", nil).Body.Bytes(), &tiles)
+		return tiles
 	}
-	if w := do(t, mux, "PUT", "/api/launcher", map[string]any{"enabled": true, "placement": "elsewhere"}); w.Code != 400 {
-		t.Fatal("bad placement")
+	tiles := list()
+	if len(tiles) != 3 || tiles[0].ID != "files" || tiles[0].URL != "/files" || tiles[1].ID != "terminal" || !tiles[1].Enabled ||
+		tiles[2].ID != "torrents" || tiles[2].URL != "/torrents" {
+		t.Fatalf("built-in tiles: %+v", tiles)
 	}
-	do(t, mux, "PUT", "/api/launcher", map[string]any{"enabled": true, "placement": "page"})
-	if _, v := s.Capabilities(context.Background()); !v.(Settings).Enabled || v.(Settings).Placement != "page" {
-		t.Fatal("not saved", v)
+	if w := do(t, mux, "PUT", "/api/launcher/tiles/files", map[string]any{"name": "F", "url": "https://f.lan", "enabled": false}); w.Code != 400 {
+		t.Fatalf("built-in tile edited: %d", w.Code)
+	}
+	if w := do(t, mux, "DELETE", "/api/launcher/tiles/terminal", nil); w.Code != 400 {
+		t.Fatalf("built-in tile deleted: %d", w.Code)
+	}
+	w := do(t, mux, "POST", "/api/launcher/tiles", map[string]any{"name": "Plex", "url": "http://nas:32400"})
+	var plex Tile
+	json.Unmarshal(w.Body.Bytes(), &plex)
+	if w := do(t, mux, "POST", "/api/launcher/tiles/reorder", map[string]any{"ids": []string{"terminal", plex.ID, "files", "torrents"}}); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	if tiles := list(); len(tiles) != 4 || tiles[0].ID != "terminal" || tiles[1].ID != plex.ID || tiles[2].ID != "files" || tiles[2].Name != "Files" || tiles[3].ID != "torrents" {
+		t.Fatalf("reordered: %+v", tiles)
 	}
 }
 
@@ -361,24 +378,23 @@ func TestSuggestFakeDocker(t *testing.T) {
 	}
 }
 
-func TestFirstTileEnablesLauncher(t *testing.T) {
-	s, mux := newTestService(t)
-	ctx := context.Background()
-	if s.settings(ctx).Enabled {
-		t.Fatal("launcher should start off")
+func TestSettings(t *testing.T) {
+	_, mux := newTestService(t)
+	get := func() Settings {
+		var v Settings
+		json.Unmarshal(do(t, mux, "GET", "/api/launcher/settings", nil).Body.Bytes(), &v)
+		return v
 	}
-	if w := do(t, mux, "POST", "/api/launcher/tiles", map[string]any{"name": "Plex", "url": "http://nas:32400", "enabled": true}); w.Code != 200 {
-		t.Fatalf("create: %d %s", w.Code, w.Body)
+	if v := get(); v.TileSize != "large" {
+		t.Fatalf("default: %+v", v)
 	}
-	if v := s.settings(ctx); !v.Enabled || v.Placement != "overview" {
-		t.Fatalf("first tile should show the launcher on Home: %+v", v)
+	if w := do(t, mux, "PUT", "/api/launcher/settings", map[string]any{"tileSize": "huge"}); w.Code != 400 {
+		t.Fatalf("bad size accepted: %d", w.Code)
 	}
-
-	// An explicit "hidden" choice survives adding more apps.
-	s2, mux2 := newTestService(t)
-	do(t, mux2, "PUT", "/api/launcher", map[string]any{"enabled": false, "placement": "overview"})
-	do(t, mux2, "POST", "/api/launcher/tiles", map[string]any{"name": "Plex", "url": "http://nas:32400", "enabled": true})
-	if s2.settings(ctx).Enabled {
-		t.Fatal("explicit hidden choice was overridden")
+	if w := do(t, mux, "PUT", "/api/launcher/settings", map[string]any{"tileSize": "small"}); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	if v := get(); v.TileSize != "small" {
+		t.Fatalf("not saved: %+v", v)
 	}
 }

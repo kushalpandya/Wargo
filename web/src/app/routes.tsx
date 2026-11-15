@@ -21,7 +21,6 @@ const Terminal = lazy(() => import("@/features/terminal/Terminal"));
 const Files = lazy(() => import("@/features/files/Files"));
 const Updates = lazy(() => import("@/features/updates/Updates"));
 const Torrents = lazy(() => import("@/features/torrents/Torrents"));
-const Apps = lazy(() => import("@/features/launcher/Apps"));
 const Settings = lazy(() => import("@/features/settings/Settings"));
 
 /** Errors thrown while rendering a route outside the app shell. */
@@ -106,7 +105,6 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Home /> },
           { path: "system/*", element: <System /> },
-          { path: "apps", element: <Apps /> },
           { path: "processes", element: <Navigate to="/system/processes" replace /> },
           { path: "containers", element: <Containers /> },
           { path: "containers/:id", element: <Containers /> },

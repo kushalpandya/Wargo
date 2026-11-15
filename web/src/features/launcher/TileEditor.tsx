@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Boxes, Download, GripVertical, ImageOff, LayoutGrid, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { ArrowDown, ArrowUp, Boxes, Download, GripVertical, ImageOff, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { isHttpUrl } from "@/lib/url";
 import { Button, IconButton } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { Checkbox, FormField, Input, Switch } from "@/components/ui/form";
-import { Badge, EmptyState, ErrorNote, Notice, Skeleton, Spinner, StatusDot } from "@/components/ui/misc";
+import { Badge, EmptyState, ErrorNote, Skeleton, Spinner } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { TileGrid, TileIcon, type Tile } from "./Tiles";
-import { fetchIcon, slugify, tilesKey, uploadIcon, useTiles, type Suggestion, type TileInput } from "./api";
+import { TileDetail, TileGrid, TileIcon, TileStatus, sortTiles, tileGroups, type Tile } from "./Tiles";
+import { tileBoxClass, type TileSize } from "./layout";
+import { fetchIcon, slugify, tilesKey, uploadIcon, useTileAvailable, useTiles, type Suggestion, type TileInput } from "./api";
 
 const emptyInput: TileInput = { name: "", url: "", icon: "", group: "", newTab: true, healthUrl: "", enabled: true };
 
@@ -61,9 +62,6 @@ export function TileDialog({
     mutationFn: (body: TileInput) => (tile ? api.put<Tile>(`/api/launcher/tiles/${tile.id}`, body) : api.post<Tile>("/api/launcher/tiles", body)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: tilesKey });
-      // The first app turns the launcher on (see the launcher service).
-      qc.invalidateQueries({ queryKey: ["capabilities"] });
-      qc.invalidateQueries({ queryKey: ["launcher", "settings"] });
       toast.ok(tile ? "App updated" : "App added");
       onOpenChange(false);
     },
@@ -259,9 +257,6 @@ export function SuggestDialog({ open, onOpenChange }: { open: boolean; onOpenCha
     onSettled: () => {
       setProgress(null);
       qc.invalidateQueries({ queryKey: tilesKey });
-      // The first app turns the launcher on (see the launcher service).
-      qc.invalidateQueries({ queryKey: ["capabilities"] });
-      qc.invalidateQueries({ queryKey: ["launcher", "settings"] });
     },
   });
 
@@ -352,10 +347,38 @@ export function SuggestDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   );
 }
 
-/** Editable list of tiles: add, edit, delete and reorder. Reused by Settings → Launcher. */
+/** Asks before deleting an app tile, then deletes it. */
+function DeleteTileDialog({ tile, onClose }: { tile: Tile | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const del = useMutation({
+    mutationFn: (t: Tile) => api.del(`/api/launcher/tiles/${t.id}`),
+    onSuccess: (_, t) => {
+      toast.ok(`Removed ${t.name}`);
+      onClose();
+      qc.invalidateQueries({ queryKey: tilesKey });
+    },
+  });
+  return (
+    <ConfirmDialog
+      open={!!tile}
+      onOpenChange={(o) => !o && onClose()}
+      title={`Delete ${tile?.name ?? "app"}?`}
+      description="The tile is removed from Home. The app itself is not affected."
+      confirmLabel="Delete"
+      danger
+      loading={del.isPending}
+      onConfirm={() => tile && del.mutate(tile)}
+    >
+      {del.error && <ErrorNote error={del.error} />}
+    </ConfirmDialog>
+  );
+}
+
+/** Editable list of tiles: add, edit, delete and reorder (the built-in ones only reorder). Opened from the add button on Home. */
 export function TileEditor({ className }: { className?: string }) {
   const qc = useQueryClient();
   const { data, isLoading, error } = useTiles();
+  const available = useTileAvailable();
   const [order, setOrder] = useState<Tile[] | null>(null);
   const [editing, setEditing] = useState<Tile | null>(null);
   const [dialog, setDialog] = useState(false);
@@ -365,8 +388,8 @@ export function TileEditor({ className }: { className?: string }) {
   const [armed, setArmed] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
 
-  const tiles = useMemo(() => order ?? [...(data ?? [])].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name)), [order, data]);
-  const groups = useMemo(() => [...new Set((data ?? []).map((t) => t.group).filter(Boolean) as string[])].sort(), [data]);
+  const tiles = useMemo(() => order ?? sortTiles(data ?? []), [order, data]);
+  const groups = useMemo(() => tileGroups(data ?? []), [data]);
 
   const reorder = useMutation({
     mutationFn: (ids: string[]) => api.post("/api/launcher/tiles/reorder", { ids }),
@@ -375,14 +398,6 @@ export function TileEditor({ className }: { className?: string }) {
       setOrder(null);
     },
     onError: (e) => toast.error("Could not save order", e),
-  });
-  const del = useMutation({
-    mutationFn: (t: Tile) => api.del(`/api/launcher/tiles/${t.id}`),
-    onSuccess: (_, t) => {
-      toast.ok(`Removed ${t.name}`);
-      setDeleting(null);
-      qc.invalidateQueries({ queryKey: tilesKey });
-    },
   });
 
   const commit = (list: Tile[]) => {
@@ -426,12 +441,6 @@ export function TileEditor({ className }: { className?: string }) {
         </div>
       ) : error ? (
         <ErrorNote error={error} />
-      ) : tiles.length === 0 ? (
-        <div className="rounded-md border border-dashed border-border-strong">
-          <EmptyState icon={<LayoutGrid />} title="No apps yet">
-            Add links to the services you run, or import them from your running containers.
-          </EmptyState>
-        </div>
       ) : (
         <ul className="divide-y divide-border rounded-md border border-border bg-surface" aria-label="Apps">
           {tiles.map((t, i) => (
@@ -474,11 +483,17 @@ export function TileEditor({ className }: { className?: string }) {
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="truncate text-ui font-medium">{t.name}</span>
-                  {t.status && <StatusDot tone={t.status === "up" ? "ok" : "crit"} label={t.status === "up" ? "Online" : "Offline"} />}
+                  <TileStatus tile={t} />
                   {t.group && <Badge className="hidden sm:inline-flex">{t.group}</Badge>}
                   {!t.enabled && <Badge tone="warn">Hidden</Badge>}
+                  {t.builtin && <Badge>Built in</Badge>}
+                  {!available(t) && (
+                    <Badge tone="warn" title="Shown on Home once Prowlarr or Transmission is set up in Settings → Integrations">
+                      Not set up
+                    </Badge>
+                  )}
                 </div>
-                <div className="num truncate text-2xs text-muted">{t.url.replace(/^https?:\/\//, "")}</div>
+                <TileDetail tile={t} />
               </div>
               <div className="flex shrink-0 items-center">
                 <IconButton label={`Move ${t.name} up`} size="sm" className="max-sm:size-8" disabled={i === 0 || reorder.isPending} onClick={() => move(i, -1)}>
@@ -487,20 +502,27 @@ export function TileEditor({ className }: { className?: string }) {
                 <IconButton label={`Move ${t.name} down`} size="sm" className="max-sm:size-8" disabled={i === tiles.length - 1 || reorder.isPending} onClick={() => move(i, 1)}>
                   <ArrowDown />
                 </IconButton>
-                <IconButton
-                  label={`Edit ${t.name}`}
-                  size="sm"
-                  className="max-sm:size-8"
-                  onClick={() => {
-                    setEditing(t);
-                    setDialog(true);
-                  }}
-                >
-                  <Pencil />
-                </IconButton>
-                <IconButton label={`Delete ${t.name}`} size="sm" className="hover:text-crit max-sm:size-8" onClick={() => setDeleting(t)}>
-                  <Trash2 />
-                </IconButton>
+                {t.builtin ? (
+                  // Keeps the move arrows lined up with the other rows' (two buttons).
+                  <span className="w-16" aria-hidden="true" />
+                ) : (
+                  <>
+                    <IconButton
+                      label={`Edit ${t.name}`}
+                      size="sm"
+                      className="max-sm:size-8"
+                      onClick={() => {
+                        setEditing(t);
+                        setDialog(true);
+                      }}
+                    >
+                      <Pencil />
+                    </IconButton>
+                    <IconButton label={`Delete ${t.name}`} size="sm" className="hover:text-crit max-sm:size-8" onClick={() => setDeleting(t)}>
+                      <Trash2 />
+                    </IconButton>
+                  </>
+                )}
               </div>
             </li>
           ))}
@@ -509,32 +531,22 @@ export function TileEditor({ className }: { className?: string }) {
 
       <TileDialog open={dialog} onOpenChange={setDialog} tile={editing} groups={groups} />
       <SuggestDialog open={suggest} onOpenChange={setSuggest} />
-      <ConfirmDialog
-        open={!!deleting}
-        onOpenChange={(o) => !o && setDeleting(null)}
-        title={`Delete ${deleting?.name ?? "app"}?`}
-        description="The tile is removed from the launcher. The app itself is not affected."
-        confirmLabel="Delete"
-        danger
-        loading={del.isPending}
-        onConfirm={() => deleting && del.mutate(deleting)}
-      >
-        {del.error && <ErrorNote error={del.error} />}
-      </ConfirmDialog>
+      <DeleteTileDialog tile={deleting} onClose={() => setDeleting(null)} />
     </div>
   );
 }
 
 /**
- * The launcher grid with edit, delete and drag-to-reorder. The order is
- * saved on the server (shared by every browser), never in localStorage.
+ * Home's app grid with edit, delete, drag-to-reorder and the add button.
+ * The order is saved on the server (shared by every browser).
  */
-export function LauncherGrid({ tiles, compact }: { tiles: Tile[]; compact?: boolean }) {
+export function LauncherGrid({ tiles, size = "large" }: { tiles: Tile[]; size?: TileSize }) {
   const qc = useQueryClient();
   const { data: all } = useTiles();
+  const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Tile | null>(null);
   const [deleting, setDeleting] = useState<Tile | null>(null);
-  const groups = useMemo(() => [...new Set((all ?? []).map((t) => t.group).filter(Boolean) as string[])].sort(), [all]);
+  const groups = useMemo(() => tileGroups(all ?? []), [all]);
 
   const reorder = useMutation({
     mutationFn: (ids: string[]) => api.post("/api/launcher/tiles/reorder", { ids }),
@@ -551,20 +563,12 @@ export function LauncherGrid({ tiles, compact }: { tiles: Tile[]; compact?: bool
     },
     onSettled: () => qc.invalidateQueries({ queryKey: tilesKey }),
   });
-  const del = useMutation({
-    mutationFn: (t: Tile) => api.del(`/api/launcher/tiles/${t.id}`),
-    onSuccess: (_, t) => {
-      toast.ok(`Removed ${t.name}`);
-      setDeleting(null);
-      qc.invalidateQueries({ queryKey: tilesKey });
-    },
-  });
 
   // The grid may show only some tiles (hidden ones are left out), but the
   // server numbers exactly the ids it gets: keep hidden tiles in their
   // slots and fill the shown tiles' slots in the new order.
   const onReorder = (shown: Tile[]) => {
-    const full = [...(all ?? tiles)].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+    const full = sortTiles(all ?? tiles);
     const ids = new Set(shown.map((t) => t.id));
     const queue = shown.map((t) => t.id);
     reorder.mutate(full.map((t) => (ids.has(t.id) ? queue.shift()! : t.id)));
@@ -572,31 +576,31 @@ export function LauncherGrid({ tiles, compact }: { tiles: Tile[]; compact?: bool
 
   return (
     <>
-      <TileGrid tiles={tiles} compact={compact} edit={{ onEdit: setEditing, onDelete: setDeleting, onReorder }} />
+      <TileGrid
+        tiles={tiles}
+        size={size}
+        edit={{ onEdit: setEditing, onDelete: setDeleting, onReorder }}
+        trailing={
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            aria-label="Add or manage apps"
+            title="Add or manage apps"
+            className={cn(
+              "flex min-w-0 items-center justify-center gap-2 border border-dashed border-border-strong text-subtle transition-colors hover:border-accent hover:bg-accent-soft hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/25",
+              tileBoxClass[size],
+            )}
+          >
+            <Plus className={size === "small" ? "size-5" : "size-7"} strokeWidth={1.75} />
+            {size === "small" && <span className="text-ui font-medium">Add app</span>}
+          </button>
+        }
+      />
+      <Dialog open={adding} onOpenChange={setAdding} title="Apps" description="Add a shortcut by its URL or from a running container. Hidden apps are listed here too." size="xl">
+        <TileEditor />
+      </Dialog>
       <TileDialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)} tile={editing} groups={groups} />
-      <ConfirmDialog
-        open={!!deleting}
-        onOpenChange={(o) => !o && setDeleting(null)}
-        title={`Delete ${deleting?.name ?? "app"}?`}
-        description="The tile is removed from the launcher. The app itself is not affected."
-        confirmLabel="Delete"
-        danger
-        loading={del.isPending}
-        onConfirm={() => deleting && del.mutate(deleting)}
-      >
-        {del.error && <ErrorNote error={del.error} />}
-      </ConfirmDialog>
+      <DeleteTileDialog tile={deleting} onClose={() => setDeleting(null)} />
     </>
-  );
-}
-
-export function LauncherDisabledNotice({ action }: { action?: React.ReactNode }) {
-  return (
-    <Notice tone="frost">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span>The app launcher is turned off. Enable it to show these apps on the Overview or in the sidebar.</span>
-        {action}
-      </div>
-    </Notice>
   );
 }

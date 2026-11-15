@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useCapabilities } from "@/app/session";
+import { setPref } from "@/lib/prefs";
 import type { Tile } from "./Tiles";
-
-export interface LauncherSettings {
-  enabled: boolean;
-  placement: "overview" | "page";
-}
+import { tileSizePref, type TileSize } from "./layout";
 
 export interface TileInput {
   name: string;
@@ -31,23 +29,48 @@ export interface Suggestion {
 
 export const tilesKey = ["launcher", "tiles"] as const;
 
-export function useTiles() {
-  return useQuery({ queryKey: tilesKey, queryFn: () => api.get<Tile[]>("/api/launcher/tiles"), refetchInterval: 60_000 });
+/** How Home shows the app tiles; saved on the server, so every browser and session gets it. */
+export interface LauncherSettings {
+  tileSize: TileSize;
 }
 
+const settingsKey = ["launcher", "settings"] as const;
+
 export function useLauncherSettings() {
-  return useQuery({ queryKey: ["launcher", "settings"], queryFn: () => api.get<LauncherSettings>("/api/launcher") });
+  return useQuery({
+    queryKey: settingsKey,
+    queryFn: async () => {
+      const v = await api.get<LauncherSettings>("/api/launcher/settings");
+      setPref(tileSizePref, v.tileSize);
+      return v;
+    },
+    staleTime: 5 * 60_000,
+  });
 }
 
 export function useSaveLauncherSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: LauncherSettings) => api.put<LauncherSettings>("/api/launcher", v),
+    mutationFn: (v: LauncherSettings) => api.put<LauncherSettings>("/api/launcher/settings", v),
     onSuccess: (v) => {
-      qc.setQueryData(["launcher", "settings"], v);
-      qc.invalidateQueries({ queryKey: ["capabilities"] });
+      qc.setQueryData(settingsKey, v);
+      setPref(tileSizePref, v.tileSize);
     },
   });
+}
+
+/**
+ * Whether a tile can be shown here: Torrents needs Prowlarr or Transmission
+ * (the tile stays in the editor, so its place in the order is kept).
+ */
+export function useTileAvailable(): (t: Tile) => boolean {
+  const { data: caps } = useCapabilities();
+  const torrents = !!(caps?.prowlarr?.available || caps?.transmission?.available);
+  return (t) => t.builtin !== "torrents" || torrents;
+}
+
+export function useTiles() {
+  return useQuery({ queryKey: tilesKey, queryFn: () => api.get<Tile[]>("/api/launcher/tiles"), refetchInterval: 60_000 });
 }
 
 export async function uploadIcon(file: File): Promise<string> {

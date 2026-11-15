@@ -839,7 +839,9 @@ func (s *Service) finish(rec *pkg.RunRecord, j *jobs.Job, exit *int, runErr erro
 	if !rec.OK {
 		result = "error: " + rec.Error
 	}
-	s.d.Audit.RecordSystem("brew.upgrade.finished", rec.ID, result)
+	// Details feed Home's Activity card (how many packages changed).
+	s.d.Audit.RecordSystemDetails("brew.upgrade.finished", rec.ID, result,
+		map[string]any{"packages": rec.Packages, "upgraded": rec.Upgraded, "fake": rec.Fake})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

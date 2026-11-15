@@ -1,78 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LayoutGrid, PackageCheck, Pencil } from "lucide-react";
+import { PackageCheck } from "lucide-react";
 import { api } from "@/lib/api";
 import { ago } from "@/lib/format";
 import { useCapabilities } from "@/app/session";
-import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { Dialog } from "@/components/ui/dialog";
-import { Segmented, Select } from "@/components/ui/form";
+import { Select } from "@/components/ui/form";
 import { ErrorNote, Skeleton } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { TileEditor } from "@/features/launcher/TileEditor";
-import { useLauncherSettings, useSaveLauncherSettings, useTiles, type LauncherSettings as LS } from "@/features/launcher/api";
 import { containerUpdatesKey, useContainerUpdatesStatus } from "@/features/containers/api";
 import { useBrewStatus, usePkgStatus } from "@/features/updates/api";
 import { NotificationsCard } from "./NotificationsCard";
-import { SettingRow, SettingsList, SettingsStack, usePatchSave } from "./shared";
-
-function LauncherCard() {
-  const { data, isLoading, error } = useLauncherSettings();
-  const tiles = useTiles();
-  const save = useSaveLauncherSettings();
-  const [editing, setEditing] = useState(false);
-  const [v, update] = usePatchSave<LS>(data, save);
-  const n = tiles.data?.length ?? 0;
-
-  return (
-    <Card>
-      <CardHeader title="App launcher" icon={<LayoutGrid />} tint="iris" meta={tiles.data ? `${n} app${n === 1 ? "" : "s"}` : undefined} />
-      <CardBody>
-        {isLoading ? (
-          <Skeleton className="h-16" />
-        ) : error ? (
-          <ErrorNote error={error} />
-        ) : (
-          v && (
-            <SettingsList>
-              <SettingRow
-                title="Show apps"
-                description={
-                  !v.enabled
-                    ? "Apps are hidden and their online checks are paused."
-                    : v.placement === "page"
-                      ? "On their own page in the sidebar."
-                      : "At the top of Home."
-                }
-              >
-                <Segmented
-                  label="Where to show apps"
-                  value={!v.enabled ? "off" : v.placement === "page" ? "page" : "overview"}
-                  onChange={(choice) => update(choice === "off" ? { enabled: false } : { enabled: true, placement: choice })}
-                  options={[
-                    { value: "overview", label: "On Home" },
-                    { value: "page", label: "Sidebar" },
-                    { value: "off", label: "Hidden" },
-                  ]}
-                />
-              </SettingRow>
-              <SettingRow title="Apps" description="Shortcuts to your services, with an online check every minute.">
-                <Button size="sm" icon={<Pencil />} onClick={() => setEditing(true)}>
-                  Manage apps
-                </Button>
-              </SettingRow>
-            </SettingsList>
-          )
-        )}
-      </CardBody>
-      <Dialog open={editing} onOpenChange={setEditing} title="Apps" description="Add, edit, reorder or remove your shortcuts." size="xl">
-        <TileEditor />
-      </Dialog>
-    </Card>
-  );
-}
+import { SettingRow, SettingsList, SettingsStack } from "./shared";
 
 const every: Record<number, string> = {
   0: "Off",
@@ -169,7 +108,6 @@ function UpdateChecksCard() {
 export default function General() {
   return (
     <SettingsStack>
-      <LauncherCard />
       <UpdateChecksCard />
       <NotificationsCard />
     </SettingsStack>

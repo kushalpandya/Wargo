@@ -101,7 +101,7 @@ func (h *healthChecker) probe(ctx context.Context, url string) bool {
 	return err == nil && code < 500
 }
 
-// Run checks tile health every minute while the launcher is enabled.
+// Run checks tile health every minute.
 func (s *Service) Run(ctx context.Context) {
 	t := time.NewTicker(healthInterval)
 	defer t.Stop()
@@ -118,9 +118,6 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) checkAll(ctx context.Context) {
-	if !s.settings(ctx).Enabled {
-		return
-	}
 	tiles, err := s.list(ctx)
 	if err != nil {
 		return

@@ -169,6 +169,20 @@ func (l *Log) Register(mux *http.ServeMux) {
 			where = append(where, `action >= ? AND action < ?`)
 			args = append(args, p, p+"\xff")
 		}
+		// action picks exact actions (repeatable), e.g. the finished updates
+		// Home's Activity card lists.
+		if acts := r.URL.Query()["action"]; len(acts) > 0 {
+			if len(acts) > 10 {
+				return httpx.BadRequest("too many actions")
+			}
+			for _, a := range acts {
+				if len(a) > 40 || !validPrefix(a) {
+					return httpx.BadRequest("invalid action")
+				}
+				args = append(args, a)
+			}
+			where = append(where, `action IN (?`+strings.Repeat(",?", len(acts)-1)+`)`)
+		}
 		if len(where) > 0 {
 			q += ` WHERE ` + strings.Join(where, " AND ")
 		}

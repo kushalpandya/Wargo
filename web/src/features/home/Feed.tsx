@@ -4,6 +4,8 @@ import { Link } from "react-router";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import {
   ArrowDownToLine,
+  Beer,
+  Boxes,
   CheckCircle2,
   CircleAlert,
   Clapperboard,
@@ -12,11 +14,10 @@ import {
   FileX2,
   FolderInput,
   Music,
-  PanelRightClose,
+  PackageCheck,
   Sparkles,
   Tv,
 } from "lucide-react";
-import { IconButton } from "@/components/ui/button";
 import { api, qs } from "@/lib/api";
 import { ago } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -28,7 +29,7 @@ import { plexEpisode, plexLabel, plexThumb, usePlexActivity, type PlexItem } fro
 import type { AuditEntry } from "@/features/settings/Audit";
 
 /*
- * Home's feed: recent history (Plex, downloads, files), from data Wargo already has.
+ * Home's Activity card: recent history (Plex, installed updates, downloads, files), from data Wargo already has.
  * Live activity and problems live in the notifications panel.
  * It reuses the queries (and caches) of the pages it summarises, polled
  * gently (1 to 5 minutes), and adds no background work on the server.
@@ -47,6 +48,22 @@ const fileVerb: Record<string, [string, ReactNode]> = {
   "files.trash": ["Moved to trash", <FileX2 key="i" />],
   "files.delete": ["Deleted", <FileX2 key="i" />],
 };
+
+/** Finished update installs, from the audit log (newest first). */
+const UPDATE_ACTIONS = ["containers.update", "pkg.upgrade.finished", "brew.upgrade.finished"] as const;
+
+/** One finished install as a feed row: what was updated, how it went, and the Updates tab it belongs to. */
+function updateRow(e: AuditEntry): { title: string; detail: string; icon: ReactNode; to: string } {
+  const ok = e.result === "ok";
+  const d = (e.details ?? {}) as { image?: string; upgraded?: number; fake?: boolean };
+  const count = (verb: string) => (d.upgraded ? `${d.upgraded} package${d.upgraded === 1 ? "" : "s"} ${verb}` : verb[0].toUpperCase() + verb.slice(1));
+  const sim = d.fake ? " (simulated)" : "";
+  if (e.action === "containers.update")
+    return { title: e.target, detail: ok ? `Container updated${d.image ? ` · ${d.image}` : ""}` : "Container update failed", icon: <Boxes />, to: "/updates/containers" };
+  if (e.action === "brew.upgrade.finished")
+    return { title: "Homebrew", detail: (ok ? count("updated") : "Update failed") + sim, icon: <Beer />, to: "/updates/brew" };
+  return { title: "System packages", detail: (ok ? count("updated") : "Update failed") + sim, icon: <PackageCheck />, to: "/updates/system" };
+}
 
 const baseName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
 
@@ -237,7 +254,7 @@ function addedDetail(r: PlexItem) {
   return r.type;
 }
 
-export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void }) {
+export const Feed = memo(function Feed() {
   const { data: caps } = useCapabilities();
   const torrentsOn = !!caps?.transmission?.available;
   const plexOn = !!caps?.plex?.available;
@@ -249,9 +266,17 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
     queryFn: () => api.get<AuditEntry[]>(`/api/audit${qs({ prefix: "files.", limit: 40 })}`),
     refetchInterval: 60_000,
   });
+  const updateLog = useQuery({
+    queryKey: ["audit", "updates"],
+    // qs() can't repeat a key; the server takes several "action" values.
+    queryFn: () => api.get<AuditEntry[]>(`/api/audit?${new URLSearchParams([...UPDATE_ACTIONS.map((a) => ["action", a]), ["limit", "20"]])}`),
+    refetchInterval: 60_000,
+  });
   const list = torrents.data?.torrents ?? [];
   const twoDays = Date.now() / 1000 - 2 * 86400;
   const finished = list.filter((t) => t.percentDone >= 1 && t.addedDate > twoDays && t.error === 0).slice(0, 3);
+  const weekAgo = Date.now() - 7 * 86_400_000;
+  const installed = (updateLog.data ?? []).filter((e) => new Date(e.ts).getTime() > weekAgo).slice(0, 5);
   const recentFiles = (files.data ?? []).filter((e) => e.result === "ok" && fileVerb[e.action]).slice(0, 6);
   const plexData = plexOn ? plex.data : undefined;
   const watched = groupWatched(plexData?.history ?? []).slice(0, 3);
@@ -259,6 +284,7 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
   const plexLink = plexData?.webUrl;
 
   const sources: [string, UseQueryResult][] = [
+    ["Updates", updateLog],
     ["Downloads", torrents],
     ["Recent files", files],
   ];
@@ -272,6 +298,7 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
   if (plexOn && (plex.isError || (plexData?.errors && Object.keys(plexData.errors).length))) failed.push("Plex");
   const quiet =
     !finished.length &&
+    !installed.length &&
     !watched.length &&
     !added.length &&
     !recentFiles.length &&
@@ -281,16 +308,9 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
   return (
     <Card className="flex h-full min-h-0 flex-col">
       <CardHeader
-        title="Feed"
+        title="Activity"
         icon={<Sparkles />}
         tint="iris"
-        actions={
-          onCollapse && (
-            <IconButton label="Collapse the feed" size="sm" onClick={onCollapse}>
-              <PanelRightClose />
-            </IconButton>
-          )
-        }
       />
       <div className="scroll-area min-h-0 flex-1">
         {loading ? (
@@ -330,6 +350,17 @@ export const Feed = memo(function Feed({ onCollapse }: { onCollapse?: () => void
                     ))}
                   </SubSection>
                 )}
+              </Section>
+            )}
+            {installed.length > 0 && (
+              <Section title="Updates" icon={<PackageCheck />} tint="mint" to="/updates">
+                <SubSection>
+                  {installed.map((e) => {
+                    const r = updateRow(e);
+                    const ok = e.result === "ok";
+                    return <Row key={e.id} to={r.to} icon={ok ? r.icon : <CircleAlert />} tone={ok ? "ok" : "crit"} title={r.title} detail={r.detail} aside={ago(e.ts)} />;
+                  })}
+                </SubSection>
               </Section>
             )}
             {finished.length > 0 && (

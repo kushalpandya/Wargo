@@ -792,7 +792,9 @@ func (s *Service) finish(rec *RunRecord, j *jobs.Job, exit *int, runErr error, s
 		"rebootReason": rec.RebootReason, "configFiles": rec.ConfigFiles, "log": rec.Log, "fake": rec.Fake,
 	})
 	slog.Info("pkg: upgrade finished", "unit", rec.Unit, "ok", rec.OK, "exit", exit, "fake", rec.Fake)
-	s.d.Audit.RecordSystem("pkg.upgrade.finished", rec.Unit, resultText(rec))
+	// Details feed Home's Activity card (how many packages changed).
+	s.d.Audit.RecordSystemDetails("pkg.upgrade.finished", rec.Unit, resultText(rec),
+		map[string]any{"backend": rec.Backend, "packages": rec.Packages, "upgraded": rec.Upgraded, "fake": rec.Fake})
 
 	s.mu.Lock()
 	if s.job == j {
