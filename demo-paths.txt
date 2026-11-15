@@ -1,4 +1,5 @@
 /api/*
+/api/appearance
 /api/audit
 /api/auth/login
 /api/auth/logout
@@ -46,10 +47,10 @@
 /api/jobs
 /api/jobs/:id
 /api/jobs/:id/cancel
-/api/launcher
 /api/launcher/icons
 /api/launcher/icons/:name
 /api/launcher/icons/fetch
+/api/launcher/settings
 /api/launcher/suggest
 /api/launcher/tiles
 /api/launcher/tiles/:id

@@ -356,7 +356,7 @@ function finishRun(rec: RunRecord, ups: PkgUpdate[], lines: string[]) {
     s.logs = { [done.id]: [...lines, "Wargo: upgrade finished with exit status 0"] };
     delete s.inflight;
   });
-  recordAudit({ action: "pkg.upgrade.finished", target: done.unit, result: "ok", system: true });
+  recordAudit({ action: "pkg.upgrade.finished", target: done.unit, result: "ok", system: true, details: { backend: "apt", packages: done.packages, upgraded: done.upgraded } });
 }
 
 // A run interrupted by a page reload finishes "in the background".

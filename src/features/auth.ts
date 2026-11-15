@@ -162,7 +162,6 @@ export const authHandlers = [
       prowlarr: (({ available, configured, hasTransmissionClient, version, error }) => ({ available, configured, hasTransmissionClient, version, error }))(prowlarrStatus()),
       transmission: (({ available, configured, version, error }) => ({ available, configured, version, error }))(transmissionStatus()),
       plex: (({ available, configured, version, error }) => ({ available, configured, version, error }))(plexStatus()),
-      launcher: launcherCapability(),
       pkg: { backend: "apt", available: true, distro: "debian" },
       files: {
         roots: [
@@ -184,8 +183,3 @@ export const authHandlers = [
   ),
 ];
 
-/** The launcher feature fills this in (placement and on/off live there). */
-export let launcherCapability: () => Capabilities["launcher"] = () => ({ enabled: true, placement: "overview" });
-export function setLauncherCapability(fn: typeof launcherCapability) {
-  launcherCapability = fn;
-}

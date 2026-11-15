@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The app launcher: tiles on Home and the Apps page, their icons (bundled
-// dashboard-icons or uploads kept in this browser) and "Add from containers".
+// Home's app tiles: the built-in Files, Terminal and Torrents plus the
+// visitor's apps, their icons (bundled dashboard-icons or uploads kept in
+// this browser), the tile size and "Add from containers".
 import type { RequestHandler, WebSocketHandler } from "msw";
 import type { Tile } from "@/features/launcher/Tiles";
 import type { LauncherSettings, Suggestion } from "@/features/launcher/api";
 import { api, badRequest, body, fail, json, notFound } from "../core/http";
 import { persisted } from "../core/store";
-import { setLauncherCapability } from "./auth";
 import { CONTAINERS } from "./host";
 import { ICONS, iconResponse } from "./icons";
 
@@ -80,8 +80,7 @@ const iconExists = (name: string) => BUNDLED.has(name) || !!uploads.get()[name];
 
 // --- settings and tiles ---
 
-const settings = persisted<LauncherSettings>("launcher.settings", () => ({ enabled: true, placement: "overview" }));
-setLauncherCapability(() => ({ ...settings.get() }));
+const settings = persisted<LauncherSettings>("launcher.view", () => ({ tileSize: "large" }));
 
 type StoredTile = Omit<Tile, "status">;
 
@@ -110,10 +109,23 @@ function defaultTiles(): StoredTile[] {
     t("Uptime Kuma", url(3001), "uptime-kuma", "Tools"),
     t("Paperless", url(8010), "paperless-ngx", "Tools"),
   ];
-  return list.map((x, i) => ({ ...x, sort: i }));
+  // Built in, ahead of the apps, like the server's migration: moved but never edited or removed.
+  const builtin = (b: NonNullable<Tile["builtin"]>, name: string, sort: number): StoredTile => ({
+    id: b,
+    name,
+    url: `/${b}`,
+    sort,
+    newTab: false,
+    enabled: true,
+    builtin: b,
+  });
+  return [builtin("files", "Files", -3), builtin("terminal", "Terminal", -2), builtin("torrents", "Torrents", -1), ...list.map((x, i) => ({ ...x, sort: i }))];
 }
 
-const tiles = persisted<StoredTile[]>("launcher.tiles", defaultTiles);
+// Version 2 added the built-in tiles.
+const tiles = persisted<StoredTile[]>("launcher.tiles", defaultTiles, 2);
+
+const BUILTIN = "Files, Terminal and Torrents are built in: they can be reordered but not changed or removed";
 
 /** Health check result: a tile is down when it points at a stopped container. */
 function health(t: StoredTile): Tile["status"] {
@@ -190,12 +202,12 @@ const prettify = (n: string) =>
     .join(" ");
 
 export const handlers: (RequestHandler | WebSocketHandler)[] = [
-  api.get("/api/launcher", () => json(settings.get())),
+  api.get("/api/launcher/settings", () => json(settings.get())),
 
-  api.put("/api/launcher", async ({ request }) => {
+  api.put("/api/launcher/settings", async ({ request }) => {
     const v = await body<Partial<LauncherSettings>>(request);
-    if (v.placement !== "page" && v.placement !== "overview") return badRequest('placement must be "overview" or "page"');
-    return json(settings.set({ enabled: !!v.enabled, placement: v.placement }));
+    if (v.tileSize !== "large" && v.tileSize !== "small") return badRequest('tileSize must be "large" or "small"');
+    return json(settings.set({ tileSize: v.tileSize }));
   }),
 
   api.get("/api/launcher/tiles", () => json(sorted(tiles.get()).map((t) => ({ ...t, status: health(t) }) satisfies Tile))),
@@ -217,7 +229,7 @@ export const handlers: (RequestHandler | WebSocketHandler)[] = [
     const v = validate(await body<TileBody>(request));
     if (v instanceof Response) return v;
     const list = tiles.get();
-    if (list.length >= 500) return badRequest("too many tiles");
+    if (list.filter((t) => !t.builtin).length >= 500) return badRequest("too many tiles");
     const t: StoredTile = { id: newTileId(), ...v, sort: list.reduce((m, x) => Math.max(m, x.sort), 0) + 1 };
     tiles.set([...list, t]);
     return json({ ...t, status: null } satisfies Tile);
@@ -228,13 +240,16 @@ export const handlers: (RequestHandler | WebSocketHandler)[] = [
     if (v instanceof Response) return v;
     const cur = tiles.get().find((x) => x.id === params.id);
     if (!cur) return notFound();
+    if (cur.builtin) return badRequest(BUILTIN);
     const t: StoredTile = { id: cur.id, ...v, sort: cur.sort };
     tiles.set((list) => list.map((x) => (x.id === cur.id ? t : x)));
     return json({ ...t, status: null } satisfies Tile);
   }),
 
   api.del("/api/launcher/tiles/:id", ({ params }) => {
-    if (!tiles.get().some((x) => x.id === params.id)) return notFound();
+    const cur = tiles.get().find((x) => x.id === params.id);
+    if (!cur) return notFound();
+    if (cur.builtin) return badRequest(BUILTIN);
     tiles.set((list) => list.filter((x) => x.id !== params.id));
     return json({ ok: true });
   }),

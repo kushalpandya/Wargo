@@ -12,6 +12,7 @@ import { requireApproval } from "../core/elevation";
 import { DAY, GB, HOUR, MB, MIN, pick, seeded, Walk } from "../core/rand";
 import { CONTAINERS, HOST, HOME, type DemoContainer } from "./host";
 import { iconResponse } from "./icons";
+import { recordAudit } from "./settings";
 
 // ---------- small helpers ----------
 
@@ -1347,6 +1348,7 @@ export const handlers: (RequestHandler | WebSocketHandler)[] = [
             cur.update = null;
             cur.checkError = undefined;
             cur.created = Date.now();
+            recordAudit({ action: "containers.update", target: name, details: { id, strategy, image: cur.image, job: job.id } });
             if (wasRunning) {
               cur.state = "running";
               cur.startedAt = Date.now();

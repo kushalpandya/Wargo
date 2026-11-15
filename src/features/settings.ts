@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Settings endpoints not owned elsewhere: the audit log (GET /api/audit).
-// Appearance is client-side; security, integrations, launcher and about
-// live in auth.ts, integrations.ts, launcher.ts and system.ts.
+// Settings endpoints not owned elsewhere: the audit log (GET /api/audit,
+// shown in System Monitor) and the accent colour (GET/PUT /api/appearance).
+// Security, integrations, launcher and about live in auth.ts,
+// integrations.ts, launcher.ts and system.ts.
 import type { RequestHandler, WebSocketHandler } from "msw";
-import { api, json, query } from "../core/http";
+import { api, badRequest, body, json, query } from "../core/http";
 import { persisted } from "../core/store";
 import { DAY, HOUR, MIN, pick, seeded } from "../core/rand";
 import { CONTAINERS, HOME } from "./host";
@@ -171,13 +172,14 @@ function generate(): AuditEntry[] {
     elevation: "sudo",
     details: { argv: ["systemd-run", `--unit=wargo-${runId}`, "--collect", "--", WARGO, "helper", "pkg-run", "--", "apt-get", "-y", "-q", "full-upgrade"] },
   });
-  add(plain(11, 1.12), { ip: "local", ua: "", action: "pkg.upgrade.finished", target: `wargo-${runId}`, result: ok });
+  add(plain(11, 1.12), { ip: "local", ua: "", action: "pkg.upgrade.finished", target: `wargo-${runId}`, result: ok, details: { backend: "apt", packages: 19, upgraded: 19 } });
   for (const [name, days] of [["sonarr", 9], ["vaultwarden", 6], ["uptime-kuma", 6], ["home-assistant", 3]] as const) {
-    add(plain(days, 0.5), { ...laptop, action: "containers.update", target: name, result: ok, details: { id: hex(r, 64), strategy: "compose", job: "j" + hex(r, 6) } });
+    const image = CONTAINERS.find((c) => c.name === name)?.image;
+    add(plain(days, 0.5), { ...laptop, action: "containers.update", target: name, result: ok, details: { id: hex(r, 64), strategy: "compose", ...(image ? { image } : {}), job: "j" + hex(r, 6) } });
   }
   add(plain(8, 0.3), { ...laptop, action: "integrations.transmission.update", target: "http://192.168.1.20:9091/transmission/rpc", result: ok, details: { username: "demo", passwordChanged: true } });
   add(plain(8, 0.32), { ...laptop, action: "integrations.prowlarr.import_key", target: "prowlarr", result: ok, details: { container: "prowlarr" } });
-  add(plain(5, 0.2), { ...laptop, action: "launcher.settings", target: "sidebar", result: ok, details: { enabled: true } });
+  add(plain(5, 0.2), { ...laptop, action: "launcher.settings", target: "small", result: ok });
   add(plain(4, 0.1), { ...laptop, action: "launcher.icon_fetch", target: "paperless-ngx", result: ok });
   add(plain(2, 0.4), { ...laptop, action: "auth.revoke_sessions", target: "2", result: ok });
   add(plain(2, 0.1), { ...laptop, action: "auth.recovery_regenerate", target: "", result: ok });
@@ -195,7 +197,11 @@ function hex(r: () => number, n: number) {
   return s;
 }
 
-const log = persisted<AuditEntry[]>("audit", generate, 2);
+// Version 3: update entries carry the details Home's Activity card reads.
+const log = persisted<AuditEntry[]>("audit", generate, 3);
+
+const ACCENTS = ["periwinkle", "lilac", "sky", "mint", "rose", "peach", "mono"];
+const appearance = persisted<{ accent: string }>("appearance", () => ({ accent: "periwinkle" }));
 
 /** Adds an entry for something the visitor did (other demo modules may call this). */
 export function recordAudit(e: { action: string; target: string; result?: string; elevation?: string; details?: unknown; system?: boolean }) {
@@ -221,13 +227,26 @@ export const handlers: (RequestHandler | WebSocketHandler)[] = [
     const limit = Math.min(Math.max(Number(q.get("limit")) || 100, 1), 500);
     const before = Number(q.get("before")) || 0;
     const prefix = q.get("prefix") ?? "";
+    // Repeatable exact matches, like the server (Home's Activity card).
+    const actions = q.getAll("action");
+    if (actions.length > 10) return badRequest("too many actions");
     const rows: AuditEntry[] = [];
     const all = log.get();
     for (let i = all.length - 1; i >= 0 && rows.length < limit; i--) {
       if (before > 0 && all[i].id >= before) continue;
       if (prefix && !all[i].action.startsWith(prefix)) continue;
+      if (actions.length && !actions.includes(all[i].action)) continue;
       rows.push(all[i]);
     }
     return json(rows);
+  }),
+
+  api.get("/api/appearance", () => json(appearance.get())),
+
+  api.put("/api/appearance", async ({ request }) => {
+    const { accent } = await body<{ accent?: string }>(request);
+    if (!accent || !ACCENTS.includes(accent)) return badRequest("unknown accent colour");
+    recordAudit({ action: "appearance.settings", target: accent });
+    return json(appearance.set({ accent }));
   }),
 ];
