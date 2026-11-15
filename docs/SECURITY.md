@@ -53,10 +53,10 @@ This section describes the native install. See
   - launcher health checks and the integrations you set up (Prowlarr,
     Transmission and Plex). Plex is only contacted at the address you
     configure, read only: a health check about every 30 seconds while
-    Wargo is open in a browser, activity while Home's feed is open (at most
+    Wargo is open in a browser, activity while Home's Activity card is open (at most
     every 10 seconds, failures included), and posters (cached in the
     browser for a day).
-- **System → Events** reads the systemd journal on the server (as your
+- **System Monitor → Events** reads the systemd journal on the server (as your
   account natively, as root in container mode), Docker's recent event
   history, and Wargo's own audit log. Nothing is sent anywhere.
 - The systemd unit deliberately doesn't use filesystem sandboxing
@@ -319,7 +319,7 @@ library image paths, so the browser never needs the Plex token.
 Sign-ins, account changes, every approved admin action and every change Wargo
 makes (process signals, container actions, file changes, torrent actions,
 upgrades) are logged with the time, visitor IP, browser, result and approval
-method. See Settings → Audit log.
+method. See System Monitor → Audit.
 
 ## Recommendations
 

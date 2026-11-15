@@ -15,17 +15,17 @@
 
 ## What you get
 
-- **Home:** CPU, memory, network and disks at a glance, your server's specs, every container's health, and your app shortcuts.
-- **System:** live charts for each CPU core, sensors, network, drives and partitions, a process list, and an events log of recent errors and warnings.
+- **Home:** your apps (with Files, Terminal and Torrents built in), CPU, memory, network and disks at a glance, and recent activity such as installed updates and finished downloads.
+- **System Monitor:** live charts for each CPU core, sensors, network, drives and partitions, a process list, an events log of recent errors and warnings, and Wargo's audit log.
 - **Containers:** status, logs and live usage. Start, stop or restart them, and update images in one click (rolled back if the update fails).
 - **Files:** a full file manager with split view, drives, bookmarks, uploads, previews and a code editor.
 - **Terminal:** real shells in your browser, including root and container shells, in tabs.
 - **Updates:** check for and install newer container images, OS updates and Homebrew formulae and casks, only when you choose.
 - **Torrents:** search all your Prowlarr indexers and manage Transmission downloads.
 - **Notifications:** a bell with recent events, and optional push to your phone or browser, set per category.
-- **Apps:** shortcuts to your other self-hosted services, shown on Home or on their own page.
+- **Apps:** shortcuts to your other self-hosted services on Home, as large or small tiles, with online checks.
 
-Light and dark themes, works on phones, and uses about 25 MB of memory.
+Light and dark themes with a choice of accent colours, works on phones, and uses about 25 MB of memory.
 
 ## Install
 
