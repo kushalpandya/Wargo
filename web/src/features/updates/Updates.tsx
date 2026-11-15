@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { ReactNode } from "react";
-import { useSearchParams } from "react-router";
+import { Navigate, useNavigate, useParams } from "react-router";
 import { Tabs } from "radix-ui";
 import { Beer, Boxes, PackageCheck } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -48,7 +48,9 @@ interface TabDef {
 
 /** Updates page: container images, OS packages and Homebrew, as tabs. */
 export default function UpdatesPage() {
-  const [params, setParams] = useSearchParams();
+  // The tab is part of the path (/updates/brew), like System Monitor and Settings.
+  const { "*": sub } = useParams();
+  const nav = useNavigate();
   const caps = useCapabilities().data;
   // macOS has no OS package updates; Homebrew exists only where it's installed.
   const pkgOn = !!caps && caps.pkg?.supported !== false;
@@ -108,9 +110,8 @@ export default function UpdatesPage() {
     });
   }
 
-  const param = params.get("tab");
-  // Without an explicit tab, open the first one that has something to do.
-  const tab: Tab | undefined = tabs.find((t) => t.id === param)?.id ?? (tabs.find((t) => (t.count ?? 0) > 0) ?? tabs[0])?.id;
+  // Without a tab in the path, open the first one that has something to do.
+  const tab: Tab | undefined = tabs.find((t) => t.id === sub)?.id ?? (tabs.find((t) => (t.count ?? 0) > 0) ?? tabs[0])?.id;
 
   // One check for every source; a source that's busy (installing, or
   // already checking) is left alone.
@@ -126,10 +127,19 @@ export default function UpdatesPage() {
     />
   );
 
+  // A tab this host doesn't have (no Homebrew, say) falls back to /updates.
+  if (caps && sub && !tabs.some((t) => t.id === sub)) return <Navigate to="/updates" replace />;
+
   return (
     <div className="min-w-0">
-      <Tabs.Root value={tab} onValueChange={(v) => setParams({ tab: v }, { replace: true })}>
-        <PageHeader title="Updates" description="Container images and packages, installed when you choose." />
+      <Tabs.Root
+        value={tab}
+        // Manual: arrow keys move focus and Enter picks, so each choice is one
+        // history entry (automatic activation also fires on focus).
+        activationMode="manual"
+        onValueChange={(v) => nav(`/updates/${v}`)}
+      >
+        <PageHeader title="Updates" />
         {/* Tabs on the left, the page's one "Check for updates" at the right end of the same row. */}
         <div className="mb-4 flex items-center gap-3 border-b border-border">
           <Tabs.List className="-mb-px flex min-w-0 flex-1 gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Update sources">

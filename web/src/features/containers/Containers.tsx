@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { readPref, setPref } from "@/lib/prefs";
 import { Fragment, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import {
   ArrowUpCircle,
   Boxes,
@@ -279,8 +279,8 @@ function ImageCell({ c }: { c: Container }) {
 
 export default function Page() {
   const nav = useNavigate();
-  const { id } = useParams();
-  const [params, setParams] = useSearchParams();
+  // /containers/<id> opens the details sheet; /containers/<id>/logs or /env picks its tab.
+  const { id, tab: tabParam } = useParams();
   const caps = useCapabilities().data?.docker;
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -337,9 +337,9 @@ export default function Page() {
           c.fullId.startsWith(id),
       )
     : undefined;
-  const tab = (params.get("tab") as SheetTab) || "overview";
-  const open = (c: Container, t: SheetTab = "overview") =>
-    nav(`/containers/${c.id}${t !== "overview" ? `?tab=${t}` : ""}`);
+  const tab: SheetTab = tabParam === "logs" || tabParam === "env" ? tabParam : "overview";
+  const sheetPath = (cid: string, t: SheetTab) => `/containers/${cid}${t !== "overview" ? `/${t}` : ""}`;
+  const open = (c: Container, t: SheetTab = "overview") => nav(sheetPath(c.id, t));
   const setGroupPersist = (v: boolean) => {
     setGroup(v);
     setPref("wargo.containers.group", v ? "1" : "0");
@@ -360,14 +360,7 @@ export default function Page() {
 
   return (
     <div>
-      <PageHeader
-        title="Containers"
-        description={
-          caps?.version
-            ? `Docker ${caps.version}${caps.casaos ? " · CasaOS detected" : ""}`
-            : "Docker containers on this host"
-        }
-      />
+      <PageHeader title="Containers" />
       <Summary list={data} checkedAt={updates.data?.checkedAt} />
       <Card>
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
@@ -618,9 +611,8 @@ export default function Page() {
         id={id ?? null}
         summary={selected}
         tab={tab}
-        onTab={(t) =>
-          setParams(t === "overview" ? {} : { tab: t }, { replace: true })
-        }
+        // Switching tabs replaces the entry, so Back still closes the sheet.
+        onTab={(t) => id && nav(sheetPath(id, t), { replace: true })}
         onClose={() => nav("/containers")}
         stats={selected ? stats?.[selected.id] : undefined}
         onAction={actions.request}

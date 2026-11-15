@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo } from "react";
 import { Navigate, useParams } from "react-router";
-import { ArrowDown, ArrowUp, Activity, HardDrive, ListTree, Network, ScrollText } from "lucide-react";
+import { ArrowDown, ArrowUp, Activity, HardDrive, ListTree, Network, ScrollText, ShieldCheck } from "lucide-react";
 import { useIsDark } from "@/lib/theme";
 import { NavTabs } from "@/components/ui/tabs";
 import { bytes, level, pct, rate } from "@/lib/format";
@@ -15,6 +15,7 @@ import { SensorsCard } from "@/features/system/Sensors";
 import { ProcessesPanel } from "@/features/processes/Processes";
 import { SummaryTiles } from "./Tiles";
 import { EventsPanel } from "./Events";
+import { AuditPanel } from "./Audit";
 import { LinkIcon, linkDetails, linkName } from "./LinkLabel";
 import { useCapabilities } from "@/app/session";
 
@@ -268,29 +269,21 @@ export default function System() {
   const { "*": sub } = useParams();
   // No journal (macOS): no Events tab, and its URL falls back to the overview.
   const events = useCapabilities().data?.events?.supported !== false;
-  if (sub && sub !== "processes" && !(sub === "events" && events)) return <Navigate to="/system" replace />;
+  if (sub && sub !== "processes" && sub !== "audit" && !(sub === "events" && events)) return <Navigate to="/system" replace />;
   const tab = sub || "activity";
   return (
     <div className="min-w-0">
-      <PageHeader
-        title="System"
-        description={
-          tab === "processes"
-            ? "Everything running on this host."
-            : tab === "events"
-              ? "Recent errors and warnings from the system, the kernel, containers and Wargo."
-              : "Live resource usage, hardware sensors, network and storage."
-        }
-      />
+      <PageHeader title="System Monitor" />
       <NavTabs
         label="System sections"
         items={[
-          { to: "/system", end: true, label: <><Activity /> Activity Monitor</> },
+          { to: "/system", end: true, label: <><Activity /> Activity</> },
           { to: "/system/processes", label: <><ListTree /> Processes</> },
           ...(events ? [{ to: "/system/events", label: <><ScrollText /> Events</> }] : []),
+          { to: "/system/audit", label: <><ShieldCheck /> Audit</> },
         ]}
       />
-      {tab === "processes" ? <ProcessesPanel embedded /> : tab === "events" ? <EventsPanel /> : <ActivityMonitor />}
+      {tab === "processes" ? <ProcessesPanel /> : tab === "events" ? <EventsPanel /> : tab === "audit" ? <AuditPanel /> : <ActivityMonitor />}
     </div>
   );
 }

@@ -14,7 +14,8 @@ import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/form";
 import { FilterMenu, radioGroup } from "@/components/ui/filter-menu";
-import { EmptyState, ErrorNote, Meter, PageHeader, Skeleton } from "@/components/ui/misc";
+import { EmptyState, ErrorNote, Meter, Skeleton } from "@/components/ui/misc";
+import { StatStrip, type StatItem } from "@/components/ui/stat-strip";
 import { SortTh, Table, Td, Th, THead, Tr, type SortDir, type SortState } from "@/components/ui/table";
 import { ProcessSheet } from "./ProcessSheet";
 import { cpuTone, memTone, stateNames, type Proc, type ProcList } from "./types";
@@ -98,7 +99,7 @@ function Summary({ data }: { data?: ProcList }) {
     }
     return { cpu: cpu / Math.max(1, data.cpus), rss, running, threads, zombies };
   }, [data]);
-  const items: { label: string; value: string; sub?: string; tone?: "warn" | "crit"; meter?: number }[] = s && data
+  const items: StatItem[] | null = s && data
     ? [
         { label: "Processes", value: String(data.procs.length), sub: `${s.threads.toLocaleString()} threads` },
         { label: "Running", value: String(s.running), sub: s.zombies ? `${s.zombies} zombie` : "0 zombies", tone: s.zombies ? "warn" : undefined },
@@ -110,31 +111,8 @@ function Summary({ data }: { data?: ProcList }) {
           meter: (s.rss / data.totalMem) * 100,
         },
       ]
-    : [];
-  return (
-    <Card className="mb-4 grid grid-cols-2 divide-border max-sm:[&>*:nth-child(n+3)]:border-t sm:grid-cols-4 sm:divide-x">
-      {s
-        ? items.map((it, i) => (
-            <div key={it.label} className={cn("min-w-0 px-4 py-3", i % 2 === 1 && "max-sm:border-l max-sm:border-border")}>
-              <div className="text-2xs font-medium uppercase tracking-wider text-subtle">{it.label}</div>
-              <div className={cn("num mt-0.5 text-xl font-medium leading-tight", it.tone && toneText[it.tone])}>{it.value}</div>
-              {/* Cells without a meter keep its space, so all cells are the same height. */}
-              {it.meter !== undefined ? (
-                <Meter value={it.meter} tone={it.tone ?? "accent"} className="mt-1.5" label={it.label} />
-              ) : (
-                <div className="mt-1.5 h-1.5" aria-hidden="true" />
-              )}
-              <div className="mt-1 truncate text-xs text-muted">{it.sub}</div>
-            </div>
-          ))
-        : Array.from({ length: 4 }, (_, i) => (
-            <div key={i} className="px-4 py-3">
-              <Skeleton className="h-3 w-16" />
-              <Skeleton className="mt-2 h-6 w-20" />
-            </div>
-          ))}
-    </Card>
-  );
+    : null;
+  return <StatStrip items={items} />;
 }
 
 const ProcRow = memo(function ProcRow({
@@ -298,13 +276,9 @@ const COMMAND_MIN = 240;
 
 const PAGE = 200;
 
-export default function Page() {
-  return <ProcessesPanel />;
-}
-
-/** Process list; `embedded` leaves the title to the System page's tab. */
+/** System Monitor → Processes: the live process list. */
 // Memoised: parents re-render on every 1 s metrics tick.
-export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embedded?: boolean }) {
+export const ProcessesPanel = memo(function ProcessesPanel() {
   const qc = useQueryClient();
   const [live, setLive] = useState(true);
   const [q, setQ] = useState("");
@@ -375,34 +349,17 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
   const now = data?.sampledAt ?? Date.now();
   const tree = view === "tree";
 
-  const Header = embedded ? SectionHeader : PageHeader;
   return (
     <div>
-      <Header
-        title="Processes"
-        description={data ? `${data.procs.length} processes on this host` : "Live view of everything running on this host"}
-        actions={
-          <>
-            <Button
-              size="sm"
-              variant={live ? "secondary" : "primary"}
-              aria-pressed={!live}
-              onClick={() => setLive((v) => !v)}
-              icon={live ? <Pause /> : <Play />}
-              title={live ? "Pause live updates" : "Resume live updates"}
-            >
-              {live ? "Pause" : "Resume"}
-            </Button>
-            <IconButton label="Refresh now" size="sm" variant="secondary" onClick={() => query.refetch()}>
-              <RefreshCw className={cn(query.isFetching && "animate-spin")} />
-            </IconButton>
-          </>
-        }
-      />
+      {/* The System Monitor page's "Processes" tab is the visible title. */}
+      <h2 className="sr-only">
+        Processes
+      </h2>
       <Summary data={data} />
       <Card>
-        <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
-          <SearchInput value={q} onChange={(v) => (setQ(v), setLimit(PAGE))} placeholder="Filter by name, PID, user or command…" className="min-w-0 flex-1 basis-56" label="Filter processes" />
+        {/* One line at every width: the search shrinks, the buttons don't wrap. */}
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+          <SearchInput value={q} onChange={(v) => (setQ(v), setLimit(PAGE))} placeholder="Filter by name, PID, user or command…" className="min-w-0 flex-1" label="Filter processes" />
           <FilterMenu
             active={(scope !== "all" ? 1 : 0) + (kernel ? 1 : 0)}
             onClear={() => {
@@ -435,7 +392,20 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
               },
             ]}
           />
-          {!live && <span className="text-xs font-medium text-warn" role="status">Paused</span>}
+          {!live && <span className="shrink-0 text-xs font-medium text-warn max-sm:sr-only" role="status">Paused</span>}
+          <IconButton
+            label={live ? "Pause live updates" : "Resume live updates"}
+            size="sm"
+            variant={live ? "secondary" : "primary"}
+            aria-pressed={!live}
+            onClick={() => setLive((v) => !v)}
+            className="shrink-0"
+          >
+            {live ? <Pause /> : <Play />}
+          </IconButton>
+          <IconButton label="Refresh now" size="sm" variant="secondary" onClick={() => query.refetch()} className="shrink-0">
+            <RefreshCw className={cn(query.isFetching && "animate-spin")} />
+          </IconButton>
         </div>
         {query.error ? (
           <div className="p-4">
@@ -530,18 +500,3 @@ export const ProcessesPanel = memo(function ProcessesPanel({ embedded }: { embed
     </div>
   );
 });
-
-function SectionHeader({ title, description, actions }: { title: string; description?: React.ReactNode; actions?: React.ReactNode }) {
-  return (
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-      <div className="min-w-0">
-        {/* The System page's "Processes" tab is the visible title. */}
-        <h2 id="processes-heading" className="sr-only">
-          {title}
-        </h2>
-        {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
-      </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
-    </div>
-  );
-}

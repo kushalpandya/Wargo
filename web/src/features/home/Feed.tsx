@@ -26,7 +26,7 @@ import { Card, CardHeader, IconChip, type Tint } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/misc";
 import { useTorrents } from "@/features/torrents/api";
 import { plexEpisode, plexLabel, plexThumb, usePlexActivity, type PlexItem } from "@/features/plex/api";
-import type { AuditEntry } from "@/features/settings/Audit";
+import type { AuditEntry } from "@/features/system/Audit";
 
 /*
  * Home's Activity card: recent history (Plex, installed updates, downloads, files), from data Wargo already has.
