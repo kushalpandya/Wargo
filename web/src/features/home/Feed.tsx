@@ -312,7 +312,7 @@ export const Feed = memo(function Feed() {
         icon={<Sparkles />}
         tint="iris"
       />
-      <div className="scroll-area min-h-0 flex-1">
+      <div className="flex-1">
         {loading ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 5 }, (_, i) => (

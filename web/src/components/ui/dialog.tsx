@@ -50,7 +50,7 @@ export function Dialog({
               <X className="size-4" />
             </D.Close>
           </div>
-          {children && <div className="scroll-area min-h-0 flex-1 px-4 py-3">{children}</div>}
+          {children && <div className="scroll-area min-h-0 flex-1 overscroll-contain px-4 py-3">{children}</div>}
           {footer && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-4 py-3">{footer}</div>}
         </D.Content>
       </D.Portal>
@@ -145,7 +145,7 @@ export function Sheet({
               <X className="size-4" />
             </D.Close>
           </div>
-          <div className="scroll-area min-h-0 flex-1">{children}</div>
+          <div className="scroll-area min-h-0 flex-1 overscroll-contain">{children}</div>
         </D.Content>
       </D.Portal>
     </D.Root>

@@ -337,9 +337,12 @@ html[data-accent="mono"] .dark {
 }
 
 @layer utilities {
+  /* No overscroll-behavior here: Chrome applies contain even when the box has
+     nothing to scroll, so a wheel or swipe over a short list would never reach
+     the page. Modal surfaces (dialogs, drawers) add overscroll-contain
+     themselves. */
   .scroll-area {
     overflow: auto;
-    overscroll-behavior: contain;
   }
 }
 

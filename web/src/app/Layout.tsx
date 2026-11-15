@@ -383,7 +383,7 @@ export function Layout() {
                 <X className="size-4" />
               </D.Close>
             </div>
-            <div className="scroll-area flex-1 px-3 py-2">
+            <div className="scroll-area flex-1 overscroll-contain px-3 py-2">
               <NavLinks onNavigate={() => setDrawer(false)} />
               <div className="mt-4 border-t border-border pt-3">
                 <SignOut />
