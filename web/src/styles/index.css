@@ -5,23 +5,37 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * Wargo palette: "Daylight" (light) and "Dusk" (dark). Pastel hues on cool,
- * lilac-tinted neutrals, written in OKLCH so lightness (and therefore
+ * Wargo palette: "Daylight" (light) and "Dusk" (dark). Pastel hues on cool
+ * neutrals tinted with the accent's hue, written in OKLCH so lightness (and therefore
  * contrast) stays predictable across hues. Text-on-surface colours meet
  * WCAG AA in both themes; the -soft colours are tints for fills only.
  * Every colour is a CSS variable, so light and dark swap in one place.
  */
+/*
+ * --tint is the accent's hue. The neutrals (page, sidebar, cards, borders,
+ * text) carry a little of it, so the whole UI leans towards the accent
+ * without colouring it: chroma stays at 0.003-0.036. Set on <html> only, so
+ * the scoped .theme-light / .dark previews in Appearance inherit it.
+ * --tint-c scales that colour (0 = pure greys, for the Mono accent) and
+ * --wash is the colour washed in at the top of the page.
+ */
+:root {
+  --tint: 282;
+  --tint-c: 1;
+  --wash: var(--accent);
+}
+
 :root,
 .theme-light {
-  --bg: oklch(0.972 0.007 285);
-  --surface: oklch(1 0 0);
-  --surface-2: oklch(0.983 0.005 285);
-  --surface-3: oklch(0.953 0.011 285);
-  --border: oklch(0.918 0.012 285);
-  --border-strong: oklch(0.852 0.018 285);
-  --fg: oklch(0.255 0.03 282);
-  --fg-muted: oklch(0.43 0.028 282);
-  --fg-subtle: oklch(0.52 0.024 282);
+  --bg: oklch(0.97 calc(0.012 * var(--tint-c)) var(--tint));
+  --surface: oklch(0.997 calc(0.003 * var(--tint-c)) var(--tint));
+  --surface-2: oklch(0.982 calc(0.008 * var(--tint-c)) var(--tint));
+  --surface-3: oklch(0.95 calc(0.016 * var(--tint-c)) var(--tint));
+  --border: oklch(0.915 calc(0.018 * var(--tint-c)) var(--tint));
+  --border-strong: oklch(0.85 calc(0.026 * var(--tint-c)) var(--tint));
+  --fg: oklch(0.255 calc(0.03 * var(--tint-c)) var(--tint));
+  --fg-muted: oklch(0.43 calc(0.028 * var(--tint-c)) var(--tint));
+  --fg-subtle: oklch(0.52 calc(0.024 * var(--tint-c)) var(--tint));
 
   /* Accent: periwinkle. */
   --accent: oklch(0.53 0.17 278);
@@ -54,23 +68,23 @@
   --butter: oklch(0.7 0.12 90);
   --butter-tint: oklch(0.968 0.04 95);
 
-  --shadow: 0 1px 2px oklch(0.3 0.05 280 / 0.05), 0 6px 20px -10px oklch(0.3 0.06 280 / 0.12);
-  --shadow-pop: 0 2px 6px oklch(0.3 0.05 280 / 0.08), 0 16px 40px -12px oklch(0.3 0.08 280 / 0.22);
-  --overlay: oklch(0.2 0.03 280 / 0.35);
+  --shadow: 0 1px 2px oklch(0.3 calc(0.05 * var(--tint-c)) var(--tint) / 0.05), 0 6px 20px -10px oklch(0.3 calc(0.06 * var(--tint-c)) var(--tint) / 0.12);
+  --shadow-pop: 0 2px 6px oklch(0.3 calc(0.05 * var(--tint-c)) var(--tint) / 0.08), 0 16px 40px -12px oklch(0.3 calc(0.08 * var(--tint-c)) var(--tint) / 0.22);
+  --overlay: oklch(0.2 calc(0.03 * var(--tint-c)) var(--tint) / 0.35);
   color-scheme: light;
 }
 
 .dark {
-  /* Deep ink-violet, never pure black: easy on OLED screens at night. */
-  --bg: oklch(0.13 0.016 282);
-  --surface: oklch(0.168 0.018 282);
-  --surface-2: oklch(0.188 0.019 282);
-  --surface-3: oklch(0.218 0.021 282);
-  --border: oklch(0.245 0.02 282);
-  --border-strong: oklch(0.32 0.024 282);
-  --fg: oklch(0.935 0.014 282);
-  --fg-muted: oklch(0.79 0.02 282);
-  --fg-subtle: oklch(0.69 0.022 282);
+  /* Deep ink in the accent's hue, never pure black: easy on OLED screens at night. */
+  --bg: oklch(0.13 calc(0.022 * var(--tint-c)) var(--tint));
+  --surface: oklch(0.168 calc(0.025 * var(--tint-c)) var(--tint));
+  --surface-2: oklch(0.188 calc(0.027 * var(--tint-c)) var(--tint));
+  --surface-3: oklch(0.218 calc(0.03 * var(--tint-c)) var(--tint));
+  --border: oklch(0.245 calc(0.03 * var(--tint-c)) var(--tint));
+  --border-strong: oklch(0.32 calc(0.034 * var(--tint-c)) var(--tint));
+  --fg: oklch(0.935 calc(0.014 * var(--tint-c)) var(--tint));
+  --fg-muted: oklch(0.79 calc(0.02 * var(--tint-c)) var(--tint));
+  --fg-subtle: oklch(0.69 calc(0.022 * var(--tint-c)) var(--tint));
 
   --accent: oklch(0.79 0.115 280);
   --accent-strong: oklch(0.85 0.09 280);
@@ -102,79 +116,130 @@
 
   --shadow: inset 0 1px 0 oklch(1 0 0 / 0.035), 0 1px 2px oklch(0 0 0 / 0.25);
   --shadow-pop: inset 0 1px 0 oklch(1 0 0 / 0.05), 0 18px 48px -12px oklch(0 0 0 / 0.6);
-  --overlay: oklch(0.1 0.02 282 / 0.6);
+  --overlay: oklch(0.1 calc(0.02 * var(--tint-c)) var(--tint) / 0.6);
   color-scheme: dark;
 }
 
 /*
- * Accent colours (Settings → Appearance), per browser: html[data-accent].
+ * Accent colours (Settings → Appearance): html[data-accent], from the
+ * choice saved on the server (the browser keeps a copy for first paint).
  * Periwinkle is the default (the base palette above). Text in the accent
- * colour stays above WCAG AA on surfaces in both themes.
+ * colour stays above WCAG AA on surfaces in both themes. Each rule also
+ * reaches the scoped .theme-light / .dark previews (Appearance), which
+ * would otherwise reset the accent to periwinkle.
  */
-html[data-accent="lilac"]:not(.dark) {
+html[data-accent="lilac"] {
+  --tint: 305;
+}
+html[data-accent="lilac"]:not(.dark),
+html[data-accent="lilac"] .theme-light {
   --accent: oklch(0.52 0.17 305);
   --accent-strong: oklch(0.46 0.17 305);
   --accent-soft: oklch(0.945 0.035 305);
   --focus: oklch(0.52 0.17 305);
 }
-html.dark[data-accent="lilac"] {
+html.dark[data-accent="lilac"],
+html[data-accent="lilac"] .dark {
   --accent: oklch(0.79 0.12 305);
   --accent-strong: oklch(0.85 0.096 305);
   --accent-soft: oklch(0.26 0.05 305);
   --accent-fg: oklch(0.2 0.04 305);
   --focus: oklch(0.79 0.12 305);
 }
-html[data-accent="sky"]:not(.dark) {
+html[data-accent="sky"] {
+  --tint: 235;
+}
+html[data-accent="sky"]:not(.dark),
+html[data-accent="sky"] .theme-light {
   --accent: oklch(0.5 0.13 235);
   --accent-strong: oklch(0.44 0.13 235);
   --accent-soft: oklch(0.945 0.035 235);
   --focus: oklch(0.5 0.13 235);
 }
-html.dark[data-accent="sky"] {
+html.dark[data-accent="sky"],
+html[data-accent="sky"] .dark {
   --accent: oklch(0.8 0.1 235);
   --accent-strong: oklch(0.86 0.08 235);
   --accent-soft: oklch(0.26 0.05 235);
   --accent-fg: oklch(0.2 0.04 235);
   --focus: oklch(0.8 0.1 235);
 }
-html[data-accent="mint"]:not(.dark) {
+html[data-accent="mint"] {
+  --tint: 165;
+}
+html[data-accent="mint"]:not(.dark),
+html[data-accent="mint"] .theme-light {
   --accent: oklch(0.5 0.11 165);
   --accent-strong: oklch(0.44 0.11 165);
   --accent-soft: oklch(0.945 0.035 165);
   --focus: oklch(0.5 0.11 165);
 }
-html.dark[data-accent="mint"] {
+html.dark[data-accent="mint"],
+html[data-accent="mint"] .dark {
   --accent: oklch(0.82 0.11 165);
   --accent-strong: oklch(0.88 0.088 165);
   --accent-soft: oklch(0.26 0.05 165);
   --accent-fg: oklch(0.2 0.04 165);
   --focus: oklch(0.82 0.11 165);
 }
-html[data-accent="rose"]:not(.dark) {
+html[data-accent="rose"] {
+  --tint: 10;
+}
+html[data-accent="rose"]:not(.dark),
+html[data-accent="rose"] .theme-light {
   --accent: oklch(0.53 0.17 10);
   --accent-strong: oklch(0.47 0.17 10);
   --accent-soft: oklch(0.945 0.035 10);
   --focus: oklch(0.53 0.17 10);
 }
-html.dark[data-accent="rose"] {
+html.dark[data-accent="rose"],
+html[data-accent="rose"] .dark {
   --accent: oklch(0.78 0.12 10);
   --accent-strong: oklch(0.84 0.096 10);
   --accent-soft: oklch(0.26 0.05 10);
   --accent-fg: oklch(0.2 0.04 10);
   --focus: oklch(0.78 0.12 10);
 }
-html[data-accent="peach"]:not(.dark) {
+html[data-accent="peach"] {
+  --tint: 55;
+}
+html[data-accent="peach"]:not(.dark),
+html[data-accent="peach"] .theme-light {
   --accent: oklch(0.53 0.14 55);
   --accent-strong: oklch(0.47 0.14 55);
   --accent-soft: oklch(0.945 0.035 55);
   --focus: oklch(0.53 0.14 55);
 }
-html.dark[data-accent="peach"] {
+html.dark[data-accent="peach"],
+html[data-accent="peach"] .dark {
   --accent: oklch(0.83 0.11 55);
   --accent-strong: oklch(0.89 0.088 55);
   --accent-soft: oklch(0.26 0.05 55);
   --accent-fg: oklch(0.2 0.04 55);
   --focus: oklch(0.83 0.11 55);
+}
+/* Mono: pure greys and an ink accent (near-black on light, near-white on
+   dark); no colour anywhere but the status colours and charts. */
+html[data-accent="mono"] {
+  --tint: 0;
+  --tint-c: 0;
+  --wash: transparent;
+}
+html[data-accent="mono"]:not(.dark),
+html[data-accent="mono"] .theme-light {
+  --accent: oklch(0.3 0 0);
+  --accent-strong: oklch(0.2 0 0);
+  --accent-soft: oklch(0.925 0 0);
+  --accent-fg: oklch(0.99 0 0);
+  --focus: oklch(0.35 0 0);
+}
+html.dark[data-accent="mono"],
+html[data-accent="mono"] .dark {
+  --accent: oklch(0.92 0 0);
+  --accent-strong: oklch(0.98 0 0);
+  --accent-soft: oklch(0.28 0 0);
+  --accent-fg: oklch(0.16 0 0);
+  --focus: oklch(0.85 0 0);
 }
 
 @theme inline {
@@ -282,7 +347,7 @@ html.dark[data-accent="peach"] {
    it wins over .wargo-canvas, which the same element also carries. */
 .wargo-canvas.wargo-auth {
   background:
-    radial-gradient(40rem 30rem at 15% 10%, color-mix(in oklab, var(--iris) 22%, transparent), transparent 70%),
+    radial-gradient(40rem 30rem at 15% 10%, color-mix(in oklab, var(--wash) 22%, transparent), transparent 70%),
     radial-gradient(36rem 28rem at 85% 85%, color-mix(in oklab, var(--mint) 20%, transparent), transparent 70%),
     radial-gradient(30rem 22rem at 80% 10%, color-mix(in oklab, var(--peach) 14%, transparent), transparent 70%),
     var(--bg);
@@ -339,8 +404,9 @@ html.dark[data-accent="peach"] {
 /* App background: a faint pastel wash at the top so the canvas isn't flat. */
 .wargo-canvas {
   background:
-    radial-gradient(60rem 28rem at 12% -6rem, color-mix(in oklab, var(--iris) 14%, transparent), transparent 70%),
-    radial-gradient(50rem 24rem at 88% -8rem, color-mix(in oklab, var(--mint) 12%, transparent), transparent 70%),
+    /* The accent washes in from the top corners, stronger on the left. */
+    radial-gradient(60rem 28rem at 12% -6rem, color-mix(in oklab, var(--wash) 14%, transparent), transparent 70%),
+    radial-gradient(50rem 24rem at 88% -8rem, color-mix(in oklab, var(--wash) 8%, transparent), transparent 70%),
     var(--bg);
   background-repeat: no-repeat;
 }

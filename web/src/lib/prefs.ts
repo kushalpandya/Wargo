@@ -2,9 +2,9 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 /*
- * Small per-browser preferences (Home feed shown or collapsed, accent
- * colour…), kept in localStorage under "wargo.*". Components re-render when
- * a preference changes, in this tab or another.
+ * Small per-browser preferences (colour mode, sidebar…), kept in
+ * localStorage under "wargo.*". Components re-render when a preference
+ * changes, in this tab or another.
  */
 
 const listeners = new Set<() => void>();

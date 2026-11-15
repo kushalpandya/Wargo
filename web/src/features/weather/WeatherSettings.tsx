@@ -25,7 +25,7 @@ export function WeatherSettings() {
 
   return (
     <Card>
-      <CardHeader title="Weather" icon={<CloudSun />} tint="sky" meta="from Open-Meteo" />
+      <CardHeader title="Weather" icon={<CloudSun />} tint="sky" />
       <CardBody>
         {isLoading ? (
           <Skeleton className="h-24" />

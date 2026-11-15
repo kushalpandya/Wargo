@@ -2,32 +2,34 @@
 import type { ReactNode } from "react";
 import { Check, Contrast, House, Moon, Paintbrush, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { ACCENTS, setAccent, setTheme, useAccent, useIsDark, useThemeMode, type ThemeMode } from "@/lib/theme";
-import { usePref } from "@/lib/prefs";
-import { Switch, useRadioGroup } from "@/components/ui/form";
+import { ACCENTS, setTheme, useAccent, useThemeMode, type Accent, type ThemeMode } from "@/lib/theme";
+import { useSaveAccent } from "./accent";
+import { Segmented, useRadioGroup } from "@/components/ui/form";
+import { ErrorNote, Skeleton } from "@/components/ui/misc";
+import { toast } from "@/components/ui/toast";
+import { useLauncherSettings, useSaveLauncherSettings } from "@/features/launcher/api";
+import type { TileSize } from "@/features/launcher/layout";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { WeatherSettings } from "@/features/weather/WeatherSettings";
-import { SettingsStack } from "./shared";
+import { SettingRow, SettingsList, SettingsStack } from "./shared";
 
-/** Miniature dashboard drawn in the given palette (scoped with the `dark` class). */
+/** A tiny dashboard in the given palette (scoped with the `dark` class). */
 function Preview({ dark }: { dark: boolean }) {
   return (
     <div className={cn(dark ? "dark" : "theme-light", "pointer-events-none")} aria-hidden="true">
-      <div className="flex h-24 overflow-hidden rounded-md border border-border bg-bg text-fg">
-        <div className="flex w-7 flex-col items-center gap-1.5 border-r border-border bg-surface py-2">
-          <span className="size-3 rounded-sm bg-accent" />
-          <span className="h-1 w-3.5 rounded-full bg-surface-3" />
-          <span className="h-1 w-3.5 rounded-full bg-surface-3" />
-          <span className="h-1 w-3.5 rounded-full bg-surface-3" />
+      <div className="flex h-14 overflow-hidden rounded-md border border-border bg-bg">
+        <div className="flex w-4 flex-col items-center gap-1 border-r border-border bg-surface py-1.5">
+          <span className="size-2 rounded-[2px] bg-accent" />
+          <span className="h-0.5 w-2 rounded-full bg-surface-3" />
+          <span className="h-0.5 w-2 rounded-full bg-surface-3" />
         </div>
-        <div className="flex flex-1 flex-col gap-1.5 p-2">
-          <div className="h-1.5 w-12 rounded-full bg-fg/70" />
-          <div className="grid flex-1 grid-cols-3 gap-1.5">
-            {[0.62, 0.35, 0.8].map((v, i) => (
-              <div key={i} className="flex flex-col justify-between rounded border border-border bg-surface p-1.5">
-                <div className="h-1 w-6 rounded-full bg-muted/60" />
-                <div className="h-1 overflow-hidden rounded-full bg-surface-3">
-                  <div className={cn("h-full rounded-full", i === 2 ? "bg-warn" : i === 1 ? "bg-frost" : "bg-ok")} style={{ width: `${v * 100}%` }} />
+        <div className="flex flex-1 flex-col gap-1 p-1.5">
+          <div className="h-1 w-8 rounded-full bg-fg/70" />
+          <div className="grid flex-1 grid-cols-2 gap-1">
+            {[0.6, 0.35].map((v, i) => (
+              <div key={i} className="flex flex-col justify-end rounded-[3px] border border-border bg-surface p-1">
+                <div className="h-0.5 overflow-hidden rounded-full bg-surface-3">
+                  <div className={cn("h-full rounded-full", i ? "bg-frost" : "bg-ok")} style={{ width: `${v * 100}%` }} />
                 </div>
               </div>
             ))}
@@ -38,6 +40,7 @@ function Preview({ dark }: { dark: boolean }) {
   );
 }
 
+/** Light on the left, dark on the right: "Match system". */
 function SplitPreview() {
   return (
     <div className="relative">
@@ -49,112 +52,151 @@ function SplitPreview() {
   );
 }
 
-const options: { value: ThemeMode; label: string; icon: ReactNode; hint: string }[] = [
-  { value: "auto", label: "Match system", icon: <Contrast />, hint: "Follows your device's light or dark setting" },
-  { value: "light", label: "Light", icon: <Sun />, hint: "Bright surfaces, best in daylight" },
-  { value: "dark", label: "Dark", icon: <Moon />, hint: "Deep, low-glare colours for night" },
+// Same order as the switch at the bottom of the sidebar.
+const modes: { value: ThemeMode; label: string; title: string; icon: ReactNode }[] = [
+  { value: "light", label: "Light", title: "Light", icon: <Sun /> },
+  { value: "auto", label: "Auto", title: "Match system", icon: <Contrast /> },
+  { value: "dark", label: "Dark", title: "Dark", icon: <Moon /> },
 ];
 
-function AccentCard() {
-  const accent = useAccent();
+/** A setting with its label above the control (the choices are too wide to sit beside it). */
+function StackedRow({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2.5 py-3 first:pt-0 last:pb-0">
+      <div className="text-sm font-medium">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function ColourMode() {
+  const mode = useThemeMode();
   const radio = useRadioGroup(
-    ACCENTS.map((a) => a.id),
-    accent,
-    setAccent,
+    modes.map((m) => m.value),
+    mode,
+    setTheme,
   );
   return (
+    <div {...radio.group} aria-label="Colour mode" className="grid max-w-md grid-cols-3 gap-2">
+      {modes.map((m) => {
+        const active = mode === m.value;
+        return (
+          <button
+            key={m.value}
+            type="button"
+            {...radio.item(m.value)}
+            onClick={() => setTheme(m.value)}
+            aria-label={m.title}
+            title={m.title}
+            className={cn(
+              "flex min-w-0 flex-col gap-1.5 rounded-lg border p-1.5 text-left transition-colors",
+              active ? "border-accent bg-accent-soft/40 ring-1 ring-accent" : "border-border hover:border-border-strong hover:bg-surface-2",
+            )}
+          >
+            {m.value === "auto" ? <SplitPreview /> : <Preview dark={m.value === "dark"} />}
+            <span className="flex items-center gap-1.5 px-0.5 text-ui font-medium">
+              <span className={cn("[&_svg]:size-3.5", active ? "text-accent" : "text-subtle")}>{m.icon}</span>
+              {m.label}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** How Home looks: saved on the server, so it is the same in every browser. */
+function HomeCard() {
+  const { data, isLoading, error } = useLauncherSettings();
+  const save = useSaveLauncherSettings();
+  const size = save.isPending && save.variables ? save.variables.tileSize : data?.tileSize;
+  return (
     <Card>
-      <CardHeader title="Accent colour" icon={<Paintbrush />} tint="iris" meta="this browser" />
+      <CardHeader title="Home" icon={<House />} tint="mint" />
       <CardBody>
-        <div {...radio.group} aria-label="Accent colour" className="flex flex-wrap gap-2">
-          {ACCENTS.map((a) => {
-            const active = accent === a.id;
-            return (
-              <button
-                key={a.id}
-                type="button"
-                {...radio.item(a.id)}
-                onClick={() => setAccent(a.id)}
-                className={cn(
-                  "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-ui font-medium transition-colors",
-                  active ? "border-accent bg-accent-soft text-fg" : "border-border text-muted hover:border-border-strong hover:text-fg",
-                )}
-              >
-                <span className="size-4 rounded-full ring-1 ring-black/10" style={{ background: a.swatch }} aria-hidden="true" />
-                {a.label}
-                {active && <Check className="size-3.5 text-accent" aria-hidden="true" />}
-              </button>
-            );
-          })}
-        </div>
+        {isLoading ? (
+          <Skeleton className="h-10" />
+        ) : error ? (
+          <ErrorNote error={error} />
+        ) : (
+          <SettingsList>
+            <SettingRow title="App tiles" description="Large squares, or small tiles with the icon beside the name so more fit on a line.">
+              <Segmented<TileSize>
+                label="App tile size"
+                value={size ?? "large"}
+                onChange={(tileSize) => save.mutate({ tileSize }, { onError: (e) => toast.error("Could not save tile size", e) })}
+                options={[
+                  { value: "large", label: "Large" },
+                  { value: "small", label: "Small" },
+                ]}
+              />
+            </SettingRow>
+          </SettingsList>
+        )}
       </CardBody>
     </Card>
   );
 }
 
-/** What Home shows (per browser). */
-function HomeCard() {
-  const [feed, setFeed] = usePref("wargo.home.feed", "on", ["on", "off"] as const);
+function AccentPicker() {
+  const accent = useAccent();
+  const save = useSaveAccent();
+  const pick = (a: Accent) => save.mutate(a, { onError: (e) => toast.error("Could not save accent colour", e) });
+  const radio = useRadioGroup(
+    ACCENTS.map((a) => a.id),
+    accent,
+    pick,
+  );
+  return (
+    <div {...radio.group} aria-label="Accent colour" className="flex flex-wrap gap-2">
+      {ACCENTS.map((a) => {
+        const active = accent === a.id;
+        return (
+          <button
+            key={a.id}
+            type="button"
+            {...radio.item(a.id)}
+            onClick={() => pick(a.id)}
+            className={cn(
+              "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-ui font-medium transition-colors",
+              active ? "border-accent bg-accent-soft text-fg" : "border-border text-muted hover:border-border-strong hover:text-fg",
+            )}
+          >
+            <span className="size-4 rounded-full ring-1 ring-black/10" style={{ background: a.swatch }} aria-hidden="true" />
+            {a.label}
+            {active && <Check className="size-3.5 text-accent" aria-hidden="true" />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Colour mode and accent colour, together. */
+function LookAndFeelCard() {
   return (
     <Card>
-      <CardHeader title="Home" icon={<House />} tint="mint" meta="this browser" />
+      <CardHeader title="Look & Feel" icon={<Paintbrush />} tint="iris" />
       <CardBody>
-        <Switch
-          checked={feed === "on"}
-          onCheckedChange={(on) => setFeed(on ? "on" : "off")}
-          label="Show the feed"
-          description="Updates, containers needing attention, downloads, what is playing on Plex, recent files and system errors, beside the rest of Home."
-        />
+        <SettingsList>
+          <StackedRow title="Colour mode">
+            <ColourMode />
+          </StackedRow>
+          <StackedRow title="Accent colour">
+            <AccentPicker />
+          </StackedRow>
+        </SettingsList>
       </CardBody>
     </Card>
   );
 }
 
 export default function Appearance() {
-  const mode = useThemeMode();
-  const dark = useIsDark();
-  const radio = useRadioGroup(
-    options.map((o) => o.value),
-    mode,
-    setTheme,
-  );
   return (
     <SettingsStack>
-      <Card>
-        <CardHeader title="Theme" meta={mode === "auto" ? `currently ${dark ? "dark" : "light"}` : undefined} />
-        <CardBody>
-          <div {...radio.group} aria-label="Theme" className="grid gap-3 sm:grid-cols-3">
-            {options.map((o) => {
-              const active = mode === o.value;
-              return (
-                <button
-                  key={o.value}
-                  type="button"
-                  {...radio.item(o.value)}
-                  onClick={() => setTheme(o.value)}
-                  className={cn(
-                    "flex flex-col gap-2.5 rounded-lg border p-2.5 text-left transition-colors",
-                    active ? "border-accent bg-accent-soft/40 ring-1 ring-accent" : "border-border hover:border-border-strong hover:bg-surface-2",
-                  )}
-                >
-                  {o.value === "auto" ? <SplitPreview /> : <Preview dark={o.value === "dark"} />}
-                  <div className="flex items-start gap-2 px-0.5">
-                    <span className={cn("mt-0.5 [&_svg]:size-4", active ? "text-accent" : "text-subtle")}>{o.icon}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium">{o.label}</div>
-                      <div className="text-xs text-muted">{o.hint}</div>
-                    </div>
-                    {active && <Check className="size-4 shrink-0 text-accent" aria-hidden="true" />}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </CardBody>
-      </Card>
-      <AccentCard />
-      <WeatherSettings />
+      <LookAndFeelCard />
       <HomeCard />
+      <WeatherSettings />
     </SettingsStack>
   );
 }

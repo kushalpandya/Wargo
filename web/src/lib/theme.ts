@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { prefValue, readPref, setPref, subscribePrefs, usePref } from "./prefs";
 
 export type ThemeMode = "auto" | "light" | "dark";
@@ -13,16 +13,33 @@ function read(): ThemeMode {
   return v === "light" || v === "dark" ? v : "auto";
 }
 
-/** The page background (--bg) per theme, also used for the browser and iOS
- *  status bar colour. public/theme-init.js keeps a copy for first paint. */
-export const THEME_BG = { light: "#f5f5fa", dark: "#06070d" } as const;
+/** The page background (--bg) per accent and theme, also used for the
+ *  browser and iOS status bar colour. The neutrals take the accent's hue, so
+ *  each accent has its own pair. public/theme-init.js keeps a copy for first
+ *  paint; regenerate both when --bg changes in styles/index.css. */
+export const THEME_BG: Record<string, { light: string; dark: string }> = {
+  periwinkle: { light: "#f3f4fd", dark: "#060610" },
+  lilac: { light: "#f7f3fc", dark: "#09050e" },
+  sky: { light: "#eef7fc", dark: "#01080f" },
+  mint: { light: "#eef8f3", dark: "#010a06" },
+  rose: { light: "#fdf2f3", dark: "#0f0406" },
+  peach: { light: "#fcf3ee", dark: "#0e0502" },
+  mono: { light: "#f5f5f5", dark: "#070707" },
+};
+
+/** Sets the status bar colour from the current theme and accent. */
+function syncThemeColor() {
+  const root = document.documentElement;
+  const bg = THEME_BG[root.dataset.accent ?? "periwinkle"] ?? THEME_BG.periwinkle;
+  document.getElementById("theme-color")?.setAttribute("content", root.classList.contains("dark") ? bg.dark : bg.light);
+}
 
 function apply(mode: ThemeMode) {
   const dark = mode === "dark" || (mode === "auto" && media.matches);
   const root = document.documentElement;
   root.classList.toggle("dark", dark);
   root.dataset.theme = mode;
-  document.getElementById("theme-color")?.setAttribute("content", dark ? THEME_BG.dark : THEME_BG.light);
+  syncThemeColor();
   listeners.forEach((l) => l());
 }
 
@@ -57,6 +74,8 @@ export const ACCENTS = [
   { id: "mint", label: "Mint", swatch: "oklch(0.66 0.12 165)" },
   { id: "rose", label: "Rose", swatch: "oklch(0.63 0.16 10)" },
   { id: "peach", label: "Peach", swatch: "oklch(0.7 0.13 55)" },
+  // Greys only: half ink, half paper.
+  { id: "mono", label: "Mono", swatch: "linear-gradient(135deg, oklch(0.25 0 0) 50%, oklch(0.96 0 0) 50%)" },
 ] as const;
 export type Accent = (typeof ACCENTS)[number]["id"];
 
@@ -69,11 +88,16 @@ function applyAccent() {
   const root = document.documentElement;
   if (a === "periwinkle") delete root.dataset.accent;
   else root.dataset.accent = a;
+  syncThemeColor();
 }
 // One listener covers this tab's setAccent and changes made in other tabs.
 subscribePrefs(applyAccent);
 
-/** Applies and remembers the accent; the default is stored as no value. */
+/**
+ * Applies the accent in this browser and keeps it as the copy theme-init.js
+ * paints the first frame with; the default is stored as no value. The saved
+ * choice lives on the server (features/settings/accent.ts).
+ */
 export function setAccent(a: Accent) {
   setPref(ACCENT_KEY, a === "periwinkle" ? null : a);
 }
@@ -85,8 +109,4 @@ export function useAccent(): Accent {
 /** Reads a CSS custom property (for canvas-based charts). */
 export function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-export function useApplyTheme() {
-  useEffect(() => apply(read()), []);
 }

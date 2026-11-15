@@ -28,6 +28,7 @@ import { cn } from "@/lib/cn";
 import { setTheme, useThemeMode, type ThemeMode } from "@/lib/theme";
 import { useSocketStatus } from "@/lib/ws";
 import { useCapabilities, useMe } from "./session";
+import { useAccentSync } from "@/features/settings/accent";
 import { Logo } from "./Logo";
 import { PageSlotsContext } from "./pageSlots";
 import { UpdatesBadge } from "@/features/updates/UpdatesBadge";
@@ -280,6 +281,8 @@ function useSidebarCollapsed(): [boolean, () => void] {
 }
 
 export function Layout() {
+  // The accent colour is saved on the server; apply it once signed in.
+  useAccentSync();
   const [drawer, setDrawer] = useState(false);
   const [titleSlot, setTitleSlot] = useState<HTMLDivElement | null>(null);
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
