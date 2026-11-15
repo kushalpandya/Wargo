@@ -4,28 +4,18 @@ import { readPref } from "@/lib/prefs";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/components/ui/misc";
 import { Logo } from "./Logo";
+import { TilePlaceholders, lastTileSize } from "@/features/launcher/layout";
 
 /*
- * Placeholders built from the same markup as the real Home cards (tiles in
- * features/system/Tiles.tsx, SpecsCard and Feed in features/home), so each
+ * Placeholders built from the same markup as the real Home cards (app
+ * tiles in features/launcher, system tiles in features/system/Tiles.tsx,
+ * the Activity card in features/home/Feed.tsx), so each
  * one is exactly as tall as the card it stands in for at every breakpoint.
  * A text line keeps its real font size and line height; a grey bar sits in
  * it instead of the text. Keep these in step when those cards change.
  */
 
 const pulse = "animate-pulse rounded bg-surface-3";
-
-/**
- * How many facts each section of the host card showed last time (Hardware,
- * Software, Network), saved by SpecsCard so the placeholder card is as tall
- * as the real one on this device.
- */
-export const specsShapeKey = "wargo.home.specsShape";
-
-function specsShape(): number[] {
-  const v = (readPref(specsShapeKey) ?? "").split(",").map(Number);
-  return v.length === 3 && v.every((n) => Number.isInteger(n) && n >= 0 && n <= 20) ? v : [3, 6, 4];
-}
 
 /** One line of text at the given text classes, shown as a bar of width w. */
 function Line({ className, w }: { className?: string; w: string }) {
@@ -74,7 +64,7 @@ function FeedSkeleton() {
     <section className="flex h-full min-h-0 min-w-0 flex-col rounded-xl border border-border bg-surface shadow-card">
       <header className="flex min-h-14 items-center gap-3 border-b border-border/70 px-4 py-2.5">
         <span className={cn("size-8 shrink-0 rounded-lg", pulse)} />
-        <Line className="text-md font-semibold" w="w-12" />
+        <Line className="text-md font-semibold" w="w-16" />
       </header>
       <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
         <span className={cn("size-7 rounded-full", pulse)} />
@@ -85,62 +75,15 @@ function FeedSkeleton() {
   );
 }
 
-/** Mirrors SpecItem. */
-function SpecSkeleton() {
-  return (
-    <div className="flex min-w-0 items-start gap-2.5 py-1.5">
-      <span className={cn("mt-0.5 size-7 shrink-0 rounded-md", pulse)} />
-      <div className="min-w-0 flex-1">
-        <Line className="text-2xs font-medium uppercase tracking-wider" w="w-12" />
-        <Line className="num text-ui" w="w-28" />
-      </div>
-    </div>
-  );
-}
-
-/** Mirrors SpecsCard: identity banner, then Hardware, Software and Network sections. */
-function SpecsSkeleton() {
-  return (
-    <section className="@container flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-card">
-      <div className="relative flex items-center gap-4 border-b border-border bg-surface-2 px-4 py-4">
-        <div className="flex size-14 shrink-0 items-center justify-center rounded-xl border border-border bg-surface p-2">
-          <span className={cn("size-full", pulse)} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <Line className="text-lg font-semibold leading-tight tracking-tight" w="w-40" />
-          <Line className="text-sm" w="w-48" />
-        </div>
-      </div>
-      <div className="flex flex-1 flex-col gap-4 p-4">
-        {specsShape().map((n, s) =>
-          n === 0 ? null : (
-            <div key={s} className="min-w-0">
-              <Line className="mb-0.5 text-2xs font-semibold uppercase tracking-wider" w="w-20" />
-              <div className="grid grid-cols-1 gap-x-4 @md:grid-cols-2">
-                {Array.from({ length: n }, (_, i) => (
-                  <SpecSkeleton key={i} />
-                ))}
-              </div>
-            </div>
-          ),
-        )}
-      </div>
-    </section>
-  );
-}
-
-/** Home's layout (tiles, feed, host card) as placeholders, while the page or its data loads. */
+/** Home's layout (apps, tiles, activity) as placeholders, while the page or its data loads. */
 export function HomeSkeleton() {
-  // Same preferences Home reads: the feed can be turned off or collapsed.
-  const feed = readPref("wargo.home.feed") !== "off" && readPref("wargo.home.feedCollapsed") !== "yes";
   return (
     <div aria-hidden="true">
-      {/* Phones show Home's Files and Terminal buttons under the top bar. */}
-      <div className="mb-4 flex gap-2 md:hidden">
-        <span className={cn("h-8 w-[78px] rounded-md", pulse)} />
-        <span className={cn("h-8 w-[103px] rounded-md", pulse)} />
-      </div>
-      <div className="home-grid" data-feed={feed || undefined}>
+      <div className="home-grid">
+        {/* Files and Terminal are always there, at the size this browser last saw; other apps load in after them. */}
+        <div className="min-w-0 [grid-area:apps]">
+          <TilePlaceholders size={lastTileSize()} />
+        </div>
         <div className="min-w-0 [grid-area:tiles]">
           <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
             {[0, 1, 2, 3].map((i) => (
@@ -148,14 +91,9 @@ export function HomeSkeleton() {
             ))}
           </div>
         </div>
-        <div className="min-w-0 [grid-area:specs]">
-          <SpecsSkeleton />
+        <div className="min-w-0 [grid-area:feed]">
+          <FeedSkeleton />
         </div>
-        {feed && (
-          <div className="home-feed min-w-0 [grid-area:feed]">
-            <FeedSkeleton />
-          </div>
-        )}
       </div>
     </div>
   );

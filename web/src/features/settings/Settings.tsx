@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Suspense, lazy, type ReactNode } from "react";
 import { Navigate, NavLink, useNavigate, useParams } from "react-router";
-import { Info, Palette, Plug, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Palette, Plug, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Select } from "@/components/ui/form";
 import { PageHeader, Spinner } from "@/components/ui/misc";
@@ -10,7 +10,6 @@ const General = lazy(() => import("./General"));
 const Appearance = lazy(() => import("./Appearance"));
 const Security = lazy(() => import("./Security"));
 const Integrations = lazy(() => import("./Integrations"));
-const About = lazy(() => import("./About"));
 
 interface Section {
   id: string;
@@ -24,18 +23,14 @@ const sections: Section[] = [
   { id: "appearance", label: "Appearance", icon: <Palette />, el: <Appearance /> },
   { id: "integrations", label: "Integrations", icon: <Plug />, el: <Integrations /> },
   { id: "security", label: "Security", icon: <ShieldCheck />, el: <Security /> },
-  { id: "about", label: "About", icon: <Info />, el: <About /> },
 ];
-
-/** Older section links that moved. */
-const moved: Record<string, string> = { launcher: "/settings/general", audit: "/settings/about#audit" };
 
 export default function Settings() {
   const params = useParams();
   const nav = useNavigate();
   const id = (params["*"] ?? "").split("/")[0];
   const current = sections.find((s) => s.id === id);
-  if (!current) return <Navigate to={moved[id] ?? "/settings/general"} replace />;
+  if (!current) return <Navigate to="/settings/general" replace />;
 
   return (
     <div className="min-w-0">

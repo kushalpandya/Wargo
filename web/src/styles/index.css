@@ -364,35 +364,6 @@ html[data-accent="mono"] .dark {
   grid-template-areas: "apps" "tiles" "feed";
 }
 
-/* Settings → About: with the two cards side by side and room to spare, the
-   page fills the screen below the top bar (4rem, plus main's 0.25rem top
-   and 2rem bottom padding) and the audit log takes what is left, scrolling
-   inside its card. It needs room for the top cards (~25rem), the log's
-   heading and filter (~5.5rem) and an 18rem log, so shorter or narrower
-   screens scroll the page to reach the log instead. */
-@media (min-width: 64rem) and (min-height: 52rem) {
-  .about-fit {
-    display: flex;
-    flex-direction: column;
-    height: calc(100dvh - 6.25rem);
-  }
-  .about-fit .audit-slot,
-  .about-fit .audit-log,
-  .about-fit .audit-card {
-    flex: 1;
-    min-height: 0;
-  }
-  .about-fit .audit-slot {
-    display: flex;
-    flex-direction: column;
-  }
-  .about-fit .audit-card {
-    height: auto;
-    max-height: none;
-    min-height: 18rem;
-  }
-}
-
 /* One card per row, capped so lines stay readable on wide screens. */
 .settings-stack {
   display: flex;

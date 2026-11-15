@@ -70,7 +70,6 @@ export interface Capabilities {
   prowlarr?: { available: boolean; configured: boolean; hasTransmissionClient: boolean; version?: string; error?: string };
   transmission?: { available: boolean; configured: boolean; version?: string; error?: string };
   plex?: { available: boolean; configured: boolean; version?: string; error?: string };
-  launcher?: { enabled: boolean; placement: "overview" | "page" };
   /** supported: false where OS updates don't exist (macOS). */
   pkg?: { backend?: string; available: boolean; distro?: string; supported?: boolean };
   /** Homebrew updates; available when an installation was found (macOS and Linux, not in container mode). */

@@ -37,6 +37,8 @@ function preloadFont(): Plugin {
 export default defineConfig({
   plugins: [react(), tailwindcss(), preloadFont(), serviceWorker()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
+  // The Node version that built the UI, for About (Node does not run on the server).
+  define: { __NODE_VERSION__: JSON.stringify(process.versions.node) },
   server: {
     proxy: {
       "/api": { target: api, changeOrigin: false, xfwd },

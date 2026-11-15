@@ -6,11 +6,9 @@ import { Dialog as D } from "radix-ui";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
-  FolderTree,
   Gauge,
   House,
-  Magnet,
-  LayoutGrid,
+  Info,
   LogOut,
   Menu as MenuIcon,
   Contrast,
@@ -19,7 +17,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings2,
-  SquareTerminal,
   Sun,
   X,
 } from "lucide-react";
@@ -28,6 +25,7 @@ import { cn } from "@/lib/cn";
 import { setTheme, useThemeMode, type ThemeMode } from "@/lib/theme";
 import { useSocketStatus } from "@/lib/ws";
 import { useCapabilities, useMe } from "./session";
+import { useRadioGroup } from "@/components/ui/form";
 import { useAccentSync } from "@/features/settings/accent";
 import { Logo } from "./Logo";
 import { PageSlotsContext } from "./pageSlots";
@@ -35,7 +33,7 @@ import { UpdatesBadge } from "@/features/updates/UpdatesBadge";
 import { SelfUpdateDialog } from "@/features/containers/SelfUpdateDialog";
 import { Bell } from "@/features/notifications/Bell";
 import { clearAppBadge } from "@/features/notifications/push";
-import { Menu, MenuItem, MenuLabel, Tooltip } from "@/components/ui/menu";
+import { Tooltip } from "@/components/ui/menu";
 import { IconButton } from "@/components/ui/button";
 import { Badge, Spinner, StatusDot } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
@@ -52,16 +50,13 @@ interface NavItem {
 
 function useNav(): NavItem[] {
   const { data: caps } = useCapabilities();
-  const torrents = !!(caps?.prowlarr?.available || caps?.transmission?.available);
   const items: NavItem[] = [
     { to: "/", label: "Home", icon: <House /> },
+    { to: "/system", label: "System Monitor", icon: <Gauge /> },
     { to: "/containers", label: "Containers", icon: <Boxes /> },
-    { to: "/system", label: "System", icon: <Gauge /> },
-    { to: "/files", label: "Files", icon: <FolderTree /> },
-    { to: "/terminal", label: "Terminal", icon: <SquareTerminal /> },
-    { to: "/torrents", label: "Torrents", icon: <Magnet />, show: torrents },
     { to: "/updates", label: "Updates", icon: <PackageCheck />, badge: <UpdatesBadge />, show: caps?.pkg?.supported !== false || !!caps?.docker?.available || !!caps?.brew?.available },
-    { to: "/apps", label: "Apps", icon: <LayoutGrid />, show: caps?.launcher?.enabled && caps.launcher.placement === "page" },
+    // Files, Terminal and Torrents are tiles on Home.
+    { to: "/settings", label: "Settings", icon: <Settings2 /> },
   ];
   return items.filter((i) => i.show !== false);
 }
@@ -113,29 +108,55 @@ function NavLinks({ compact, onNavigate }: { compact?: boolean; onNavigate?: () 
   );
 }
 
-const settingsItem: NavItem = { to: "/settings", label: "Settings", icon: <Settings2 /> };
+// Below Sign out: this server's details and Wargo's version.
+const aboutItem: NavItem = { to: "/about", label: "About", icon: <Info /> };
 
 // Auto uses a half-filled circle, like the appearance control on Apple devices.
 const themeIcon: Record<ThemeMode, ReactNode> = { auto: <Contrast />, light: <Sun />, dark: <Moon /> };
 
-function ThemeMenu({ align = "end" }: { align?: "start" | "end" }) {
+const themeModes: { mode: ThemeMode; label: string }[] = [
+  { mode: "light", label: "Light" },
+  { mode: "auto", label: "Match system" },
+  { mode: "dark", label: "Dark" },
+];
+
+/**
+ * Light, Auto and Dark as one row of icon buttons: one click to switch, the
+ * current mode raised like a segmented control. Stacked in the collapsed rail.
+ */
+function ThemeSwitch({ vertical }: { vertical?: boolean }) {
   const mode = useThemeMode();
+  const radio = useRadioGroup(
+    themeModes.map((t) => t.mode),
+    mode,
+    setTheme,
+  );
   return (
-    <Menu
-      align={align}
-      trigger={
-        <IconButton label={`Theme: ${mode === "auto" ? "match system" : mode}`} size="sm">
-          {themeIcon[mode]}
-        </IconButton>
-      }
-    >
-      <MenuLabel>Appearance</MenuLabel>
-      {(["auto", "light", "dark"] as ThemeMode[]).map((m) => (
-        <MenuItem key={m} icon={themeIcon[m]} onSelect={() => setTheme(m)} shortcut={mode === m ? "✓" : undefined}>
-          {m === "auto" ? "Match system" : m === "light" ? "Light" : "Dark"}
-        </MenuItem>
-      ))}
-    </Menu>
+    <div {...radio.group} aria-label="Colour mode" className={cn("flex gap-0.5 rounded-lg bg-surface-3 p-0.5", vertical ? "flex-col" : "w-full")}>
+      {themeModes.map((t) => {
+        const on = mode === t.mode;
+        const button = (
+          <button
+            type="button"
+            {...radio.item(t.mode)}
+            aria-label={t.label}
+            onClick={() => setTheme(t.mode)}
+            className={cn(
+              "inline-flex h-7 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/25 [&_svg]:size-3.5",
+              vertical ? "w-8" : "flex-1",
+              on ? "bg-surface text-fg shadow-sm ring-1 ring-border" : "text-subtle hover:text-fg",
+            )}
+          >
+            {themeIcon[t.mode]}
+          </button>
+        );
+        return (
+          <Tooltip key={t.mode} content={t.label} side={vertical ? "right" : "top"}>
+            {button}
+          </Tooltip>
+        );
+      })}
+    </div>
   );
 }
 
@@ -246,7 +267,9 @@ function TopBar({
     <header
       className={cn(
         // Clears the iPhone status bar in the Home Screen app, where iOS blurs whatever sits under it.
-        "sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)] transition-[background-color,border-color] duration-200 sm:px-5 lg:px-7",
+        // The left padding lines the title up with the page. On the right, the bell sits as far from
+        // the edge as from the top: half of the bar (4rem, less its 1px border) minus the 2.25rem button.
+        "sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-center gap-3 border-b pl-3 pr-[calc((4rem-1px-2.25rem)/2)] pt-[env(safe-area-inset-top)] transition-[background-color,border-color] duration-200 sm:pl-5 lg:pl-7",
         scrolled ? "border-border bg-bg/75 backdrop-blur-md" : "border-transparent",
       )}
     >
@@ -290,7 +313,6 @@ export function Layout() {
   const [collapsed, toggleCollapsed] = useSidebarCollapsed();
   const loc = useLocation();
   const { data: me } = useMe();
-  const { data: caps } = useCapabilities();
   useEffect(() => setDrawer(false), [loc.pathname]);
 
   // Ctrl/Cmd+B toggles the sidebar (outside text fields and the terminal).
@@ -339,14 +361,11 @@ export function Layout() {
           <NavLinks compact={collapsed} />
         </div>
         <div className="flex flex-col gap-0.5 border-t border-border p-3">
-          <SideLink item={settingsItem} compact={collapsed} />
           <SignOut compact={collapsed} />
-          {!collapsed && (
-            <div className="mt-1 flex items-center justify-between pl-3">
-              <span className="num text-2xs text-subtle">v{caps?.version ?? ""}</span>
-              <ThemeMenu align="start" />
-            </div>
-          )}
+          <SideLink item={aboutItem} compact={collapsed} />
+        </div>
+        <div className="flex justify-center border-t border-border p-3">
+          <ThemeSwitch vertical={collapsed} />
         </div>
       </aside>
 
@@ -360,19 +379,19 @@ export function Layout() {
             <div className="flex h-16 items-center gap-2.5 px-4">
               <Logo className="size-8" />
               <span className="text-lg font-bold tracking-tight">Wargo</span>
-              <div className="ml-auto">
-                <ThemeMenu align="start" />
-              </div>
-              <D.Close className="rounded p-1 text-subtle hover:text-fg" aria-label="Close navigation">
+              <D.Close className="ml-auto rounded p-1 text-subtle hover:text-fg" aria-label="Close navigation">
                 <X className="size-4" />
               </D.Close>
             </div>
             <div className="scroll-area flex-1 px-3 py-2">
               <NavLinks onNavigate={() => setDrawer(false)} />
               <div className="mt-4 border-t border-border pt-3">
-                <SideLink item={settingsItem} onNavigate={() => setDrawer(false)} />
                 <SignOut />
+                <SideLink item={aboutItem} onNavigate={() => setDrawer(false)} />
               </div>
+            </div>
+            <div className="border-t border-border p-3">
+              <ThemeSwitch />
             </div>
           </D.Content>
         </D.Portal>

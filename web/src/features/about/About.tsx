@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, Scale, Server } from "lucide-react";
+import { ExternalLink, Scale } from "lucide-react";
 import { api } from "@/lib/api";
 import { bytes, duration } from "@/lib/format";
 import { Logo } from "@/app/Logo";
-import { Card, CardBody, CardHeader, Stat } from "@/components/ui/card";
-import { ErrorNote, Field, Skeleton } from "@/components/ui/misc";
-import { AuditLog } from "./Audit";
+import { Card, CardBody, Stat } from "@/components/ui/card";
+import { ErrorNote, Field, PageHeader, Skeleton } from "@/components/ui/misc";
+import { useMetrics } from "@/features/system/useMetrics";
+import { SpecsCard } from "./SpecsCard";
 
 interface Self {
   version: string;
@@ -21,19 +22,6 @@ interface Self {
   container?: boolean;
   hostRoot?: string;
   containerId?: string;
-}
-
-interface Info {
-  hostname: string;
-  os: string;
-  kernel: string;
-  arch: string;
-  cpuModel: string;
-  cores: number;
-  threads: number;
-  memTotal: number;
-  bootTime: number;
-  virtualization?: string;
 }
 
 const REPO = "https://github.com/kushalpandya/wargo";
@@ -72,11 +60,12 @@ function WargoCard({ s, error }: { s?: Self; error: unknown }) {
           <Skeleton className="h-32" />
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
               <Stat label="Memory (RSS)" value={bytes(s.rssBytes).split(" ")[0]} unit={bytes(s.rssBytes).split(" ")[1]} sub={`heap ${bytes(s.heapBytes)}`} />
               <Stat label="Goroutines" value={s.goroutines} />
               <Stat label="Uptime" value={duration(s.uptimeSec)} />
               <Stat label="Runtime" value={s.goVersion.replace(/^go/, "")} sub="Go" />
+              <Stat label="UI build" value={__NODE_VERSION__} sub="Node" />
             </div>
             <dl className="mt-4 divide-y divide-border border-t border-border text-sm">
               <Field label="Mode">
@@ -119,48 +108,17 @@ function WargoCard({ s, error }: { s?: Self; error: unknown }) {
   );
 }
 
+/** The About page (below Sign out in the sidebar): this server, then Wargo itself. */
 export default function About() {
   const self = useQuery({ queryKey: ["system", "self"], queryFn: () => api.get<Self>("/api/system/self"), refetchInterval: 5000 });
-  const info = useQuery({ queryKey: ["system", "info"], queryFn: () => api.get<Info>("/api/system/info"), staleTime: Infinity });
-  const i = info.data;
+  const { latest } = useMetrics();
   return (
-    <div className="about-fit max-w-[calc(3*42rem+2*1rem)]">
-      {/* Two cards side by side on wide screens, then the audit log. */}
-      <div className="grid gap-4 lg:grid-cols-2">
+    <>
+      <PageHeader title="About" />
+      <div className="flex max-w-[calc(2*42rem+1rem)] flex-col gap-4">
+        <SpecsCard snap={latest} />
         <WargoCard s={self.data} error={self.error} />
-        <Card>
-          <CardHeader title="Host" icon={<Server />} />
-          <CardBody>
-            {info.error ? (
-              <ErrorNote error={info.error} />
-            ) : !i ? (
-              <Skeleton className="h-24" />
-            ) : (
-              <dl className="divide-y divide-border text-sm">
-                <Field label="Hostname" mono>
-                  {i.hostname}
-                </Field>
-                <Field label="Operating system">{i.os}</Field>
-                <Field label="Kernel" mono>
-                  {i.kernel} ({i.arch})
-                </Field>
-                <Field label="CPU">
-                  <span title={i.cpuModel}>
-                    {i.cpuModel} · {i.cores}C/{i.threads}T
-                  </span>
-                </Field>
-                <Field label="Memory" mono>
-                  {bytes(i.memTotal)}
-                </Field>
-                {i.virtualization && <Field label="Virtualization">{i.virtualization}</Field>}
-              </dl>
-            )}
-          </CardBody>
-        </Card>
       </div>
-      <div className="audit-slot mt-6">
-        <AuditLog />
-      </div>
-    </div>
+    </>
   );
 }

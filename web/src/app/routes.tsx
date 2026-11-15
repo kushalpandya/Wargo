@@ -22,6 +22,7 @@ const Files = lazy(() => import("@/features/files/Files"));
 const Updates = lazy(() => import("@/features/updates/Updates"));
 const Torrents = lazy(() => import("@/features/torrents/Torrents"));
 const Settings = lazy(() => import("@/features/settings/Settings"));
+const About = lazy(() => import("@/features/about/About"));
 
 /** Errors thrown while rendering a route outside the app shell. */
 function RouteError() {
@@ -115,6 +116,7 @@ export const router = createBrowserRouter([
           { path: "torrents/search", element: <Navigate to="/torrents" replace /> },
           { path: "torrents/downloads", element: <Navigate to="/torrents?tab=downloads" replace /> },
           { path: "settings/*", element: <Settings /> },
+          { path: "about", element: <About /> },
           { path: "*", element: <Navigate to="/" replace /> },
         ],
       },
