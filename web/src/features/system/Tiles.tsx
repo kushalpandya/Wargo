@@ -8,6 +8,7 @@ import { Ring, Sparkline } from "@/components/charts/Sparkline";
 import type { Point, Snapshot } from "@/features/system/useMetrics";
 import { useStorage, type Filesystem } from "@/features/system/Storage";
 import { LinkIcon, linkDetails, linkName } from "./LinkLabel";
+import { SECTIONS, type Section } from "./sections";
 
 type Pastel = "iris" | "mint" | "sky" | "peach";
 type Tone = "ok" | "warn" | "crit" | Pastel;
@@ -57,14 +58,15 @@ function Tile({
   corner?: ReactNode;
   spark: number[];
   sparkMax?: number;
-  to?: string;
+  /** The System Monitor card the tile opens. */
+  to: Section;
 }) {
   const body = (
     <section
       className={cn(
         "relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-border/60 shadow-card",
         tileBg[tint],
-        to && "transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-pop",
+        "transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-pop",
       )}
     >
       <div className="flex items-start gap-3 p-3 pb-1 sm:p-4 sm:pb-1">
@@ -93,12 +95,10 @@ function Tile({
       </div>
     </section>
   );
-  return to ? (
-    <Link to={to} className="block h-full rounded-xl focus-visible:outline-offset-2" title="Open System">
+  return (
+    <Link to={`/system#${to}`} className="block h-full rounded-xl focus-visible:outline-offset-2" title={`Show ${title} in System Monitor`}>
       {body}
     </Link>
-  ) : (
-    body
   );
 }
 
@@ -116,8 +116,11 @@ export function diskTotals(fs: Filesystem[] | undefined) {
   return { used, total, pct: total ? (used / total) * 100 : 0, count: seen.size };
 }
 
-/** CPU (with temperature), memory, network and disks — shared by Home and System. */
-export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null; points: Point[]; link?: boolean }) {
+/**
+ * CPU (with temperature), memory, network and disks, shared by Home and
+ * System. Each opens its card on System Monitor's Activity tab.
+ */
+export function SummaryTiles({ snap: s, points }: { snap: Snapshot | null; points: Point[] }) {
   const recent = useMemo(() => points.slice(-90), [points]);
   const storage = useStorage();
   const disk = diskTotals(storage.data?.filesystems);
@@ -125,7 +128,6 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
   const mem = s?.memory.usedPct ?? 0;
   const hasTemp = !!s?.cpuTemp;
   const tt = hasTemp ? tempTone(s!.cpuTemp) : "ok";
-  const to = link ? "/system" : undefined;
   const primary = s?.net?.find((n) => n.name === s.primaryIf) ?? s?.net?.find((n) => n.link?.up && n.link.kind !== "bridge");
   const [rxV, rxU] = split(rate(s?.netRx ?? 0));
   const [memV, memU] = split(bytes(s?.memory.used ?? 0));
@@ -133,7 +135,7 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
   return (
     <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <Tile
-        to={to}
+        to={SECTIONS.cpuMemory}
         icon={<Cpu />}
         title="CPU"
         value={s ? cpu.toFixed(0) : "–"}
@@ -157,7 +159,7 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
         sparkMax={100}
       />
       <Tile
-        to={to}
+        to={SECTIONS.cpuMemory}
         icon={<MemoryStick />}
         title="Memory"
         value={s ? memV : "–"}
@@ -170,7 +172,7 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
         sparkMax={100}
       />
       <Tile
-        to={to}
+        to={SECTIONS.network}
         icon={<Network />}
         title="Network"
         corner={
@@ -188,7 +190,7 @@ export function SummaryTiles({ snap: s, points, link }: { snap: Snapshot | null;
         spark={recent.map((p) => p.rx + p.tx)}
       />
       <Tile
-        to={to}
+        to={SECTIONS.storage}
         icon={<HardDrive />}
         title="Disks"
         value={storage.data ? disk.pct.toFixed(0) : "–"}

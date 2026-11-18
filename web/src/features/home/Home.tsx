@@ -28,7 +28,7 @@ export default function Home() {
           <LauncherStrip />
         </div>
         <div className="min-w-0 [grid-area:tiles]">
-          <SummaryTiles snap={latest} points={points} link />
+          <SummaryTiles snap={latest} points={points} />
         </div>
         <div className="min-w-0 [grid-area:feed]">
           <Feed />

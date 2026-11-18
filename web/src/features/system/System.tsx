@@ -17,6 +17,7 @@ import { SummaryTiles } from "./Tiles";
 import { EventsPanel } from "./Events";
 import { AuditPanel } from "./Audit";
 import { LinkIcon, linkDetails, linkName } from "./LinkLabel";
+import { SECTIONS, sectionScrollMargin, useSectionScroll } from "./sections";
 import { useCapabilities } from "@/app/session";
 
 const toneOf = (p: number) => level(p);
@@ -240,11 +241,14 @@ function ActivityMonitor() {
   const tempSeries = useSeries(points, ["temp"]);
   // No hwmon (macOS): no Sensors card, the CPU card takes the full row.
   const sensors = useCapabilities().data?.metrics?.sensors !== false;
+  useSectionScroll();
+  // Section targets: focusable from script only, without a focus ring.
+  const section = cn("min-w-0 outline-none", sectionScrollMargin);
   return (
     <>
       <SummaryTiles snap={s} points={points} />
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <div className={cn("min-w-0", !sensors && "lg:col-span-2")}>
+        <div id={SECTIONS.cpuMemory} tabIndex={-1} className={cn(section, !sensors && "lg:col-span-2")}>
           <CpuMemoryCard snap={s} points={points} />
         </div>
         {sensors && (
@@ -255,10 +259,13 @@ function ActivityMonitor() {
         )}
       </div>
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <NetworkCard snap={s} points={points} />
+        {/* A flex column, so the card still stretches to the row's height. */}
+        <div id={SECTIONS.network} tabIndex={-1} className={cn(section, "flex flex-col *:flex-1")}>
+          <NetworkCard snap={s} points={points} />
+        </div>
         <DiskIOCard snap={s} points={points} />
       </div>
-      <div className="mt-3">
+      <div id={SECTIONS.storage} tabIndex={-1} className={cn("mt-3", section)}>
         <StorageCard />
       </div>
     </>
