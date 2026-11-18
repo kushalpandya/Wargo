@@ -223,6 +223,9 @@ func (c *Center) sendPush(ctx context.Context, cat Category, key, title, body, l
 	if c.closed {
 		return
 	}
+	// Logged whether or not a device has push enabled, so what would be
+	// pushed can be followed with -debug.
+	slog.Debug("notifications: push", "category", cat, "title", p.Title, "body", p.Body)
 	c.sending.Go(func() { c.deliver(ctx, p) })
 }
 
@@ -235,6 +238,9 @@ func (c *Center) Close() {
 	c.closeMu.Lock()
 	c.closed = true
 	c.closeMu.Unlock()
+	c.mu.Lock()
+	c.stopHeldPushLocked()
+	c.mu.Unlock()
 	done := make(chan struct{})
 	go func() {
 		c.sending.Wait()

@@ -18,6 +18,9 @@ func (e *testEnv) disks(list ...Disk) {
 	e.c.ReportDisks(context.Background(), list)
 }
 
+// settle waits until any held updates push has been sent.
+func (e *testEnv) settle() { e.wait(updatesHoldMax) }
+
 // baselineUpdates reports every source empty so later reports are not baseline.
 func (e *testEnv) baselineUpdates() {
 	for _, s := range []string{"containers", "system", "homebrew"} {
@@ -40,8 +43,13 @@ func TestUpdatesAggregate(t *testing.T) {
 		it.Body != "Containers 3 · System 4 · Homebrew 2" || it.Link != "/updates" {
 		t.Errorf("item = %+v", it)
 	}
-	if len(e.pushes) != 3 {
-		t.Errorf("pushes = %d, want 3 (one per source with new names)", len(e.pushes))
+	if len(e.pushes) != 0 {
+		t.Errorf("pushed %+v before the checks settled", e.pushes)
+	}
+	e.settle()
+	want := pushed{UpdatesFound, "pending", "9 updates available", "Containers 3 · System 4 · Homebrew 2", "/updates"}
+	if len(e.pushes) != 1 || e.pushes[0] != want {
+		t.Errorf("pushes = %+v, want one combined push", e.pushes)
 	}
 	e.updates("system", true)
 	it = e.snap(t).Recent[0]
@@ -65,8 +73,11 @@ func TestUpdatesSameSetNoPush(t *testing.T) {
 	e := newTestCenter(t)
 	e.baselineUpdates()
 	e.updates("containers", true, "a", "b")
+	e.settle()
 	e.updates("containers", true, "a", "b")
+	e.settle()
 	e.updates("containers", true, "b")
+	e.settle()
 	if len(e.pushes) != 1 {
 		t.Fatalf("pushes = %d, want 1", len(e.pushes))
 	}
@@ -76,6 +87,7 @@ func TestUpdatesManualNoPush(t *testing.T) {
 	e := newTestCenter(t)
 	e.baselineUpdates()
 	e.updates("containers", false, "a")
+	e.settle()
 	if len(e.pushes) != 0 {
 		t.Fatalf("manual check pushed: %+v", e.pushes)
 	}
@@ -105,6 +117,7 @@ func TestUpdatesNewNamesShowClearedItemAgain(t *testing.T) {
 	ctx := context.Background()
 	e.baselineUpdates()
 	e.updates("containers", true, "a")
+	e.settle()
 	id := e.snap(t).Recent[0].ID
 	if err := e.c.Clear(ctx, id); err != nil {
 		t.Fatal(err)
@@ -114,6 +127,7 @@ func TestUpdatesNewNamesShowClearedItemAgain(t *testing.T) {
 		t.Fatalf("same set un-cleared the item (%d recent)", got)
 	}
 	e.updates("containers", true, "a", "b")
+	e.settle()
 	s := e.snap(t)
 	if len(s.Recent) != 1 || s.Recent[0].Title != "2 updates available" || s.Badge != 1 {
 		t.Fatalf("recent = %+v badge %d, want the item back", s.Recent, s.Badge)
@@ -179,7 +193,9 @@ func TestUpdatesSwappedNameSameCountPushes(t *testing.T) {
 	e := newTestCenter(t)
 	e.baselineUpdates()
 	e.updates("containers", true, "a")
+	e.settle()
 	e.updates("containers", true, "b")
+	e.settle()
 	if len(e.pushes) != 2 {
 		t.Fatalf("pushes = %d, want 2", len(e.pushes))
 	}
@@ -205,6 +221,7 @@ func TestUpdatesPartialBaselineKeepsClearedItem(t *testing.T) {
 	}
 	e2.updates("system", true, "p1", "p2", "p3", "p4")
 	e2.updates("homebrew", true)
+	e2.settle()
 	s := e2.snap(t)
 	if len(s.Recent) != 0 || s.Badge != 0 {
 		t.Fatalf("cleared item came back: %+v badge %d", s.Recent, s.Badge)
@@ -246,6 +263,7 @@ func TestUpdatesWindowCloses(t *testing.T) {
 	e.updates("homebrew", true)
 	e.clock.advance(11 * time.Minute)
 	e.updates("system", true, "p1", "p2")
+	e.settle()
 	s := e.snap(t)
 	if len(s.Recent) != 1 || s.Recent[0].Title != "2 updates available" || s.Recent[0].Body != "System 2" {
 		t.Fatalf("after the window: %+v", s.Recent)
@@ -259,6 +277,7 @@ func TestUpdatesWindowCloses(t *testing.T) {
 	}
 	// Containers reports at last: its first report never pushes.
 	e.updates("containers", true, "a")
+	e.settle()
 	if s := e.snap(t); len(s.Recent) != 1 || s.Recent[0].Title != "1 update available" || len(e.pushes) != 1 {
 		t.Fatalf("late first report: %+v pushes %d", s.Recent, len(e.pushes))
 	}
@@ -299,18 +318,25 @@ func TestUpdatesNotifiedSetRemembered(t *testing.T) {
 	e := newTestCenter(t)
 	e.baselineUpdates()
 	e.updates("containers", true, "a", "b")
+	e.settle()
 	e.updates("containers", true, "b")
+	e.settle()
 	e.updates("containers", true, "a", "b")
+	e.settle()
 	if len(e.pushes) != 2 {
 		t.Fatalf("pushes = %d, want 2 (a came back: a new update)", len(e.pushes))
 	}
 	e.updates("homebrew", false, "a", "b", "c")
+	e.settle()
 	e.updates("homebrew", true, "a", "b", "c")
+	e.settle()
 	if len(e.pushes) != 2 {
 		t.Fatalf("pushes = %d, want 2 (manual check already showed a, b, c)", len(e.pushes))
 	}
 	e.updates("system", true, "a", "b")
+	e.settle()
 	e.updates("system", true, "a", "b")
+	e.settle()
 	if len(e.pushes) != 3 {
 		t.Fatalf("pushes = %d, want 3 (same automatic set again)", len(e.pushes))
 	}
@@ -375,5 +401,130 @@ func TestFlakyMountNotRepushed(t *testing.T) {
 	}
 	if n := e.countPushes(DiskFull); n != 1 {
 		t.Fatalf("pushes = %d, want 1", n)
+	}
+}
+
+// The held push waits for an automatic check still running, then goes out
+// once, after updatesHold of quiet, with every source's count.
+func TestUpdatesPushWaitsForRunningChecks(t *testing.T) {
+	e := newTestCenter(t)
+	e.baselineUpdates()
+	endSystem := e.c.BeginUpdateCheck("system")
+	endBrew := e.c.BeginUpdateCheck("homebrew")
+	endContainers := e.c.BeginUpdateCheck("containers")
+	e.updates("containers", true, "a")
+	endContainers()
+	e.wait(updatesHold - 2*time.Second)
+	e.updates("homebrew", true, "x", "y")
+	endBrew()
+	e.wait(updatesHold + time.Minute) // system still running
+	if len(e.pushes) != 0 {
+		t.Fatalf("pushed %+v while a check was running", e.pushes)
+	}
+	e.updates("system", true, "p1")
+	endSystem()
+	endSystem() // a second call does nothing
+	e.wait(updatesHold - time.Second)
+	if len(e.pushes) != 0 {
+		t.Fatalf("pushed %+v before updatesHold of quiet", e.pushes)
+	}
+	e.wait(time.Second)
+	want := pushed{UpdatesFound, "pending", "4 updates available", "Containers 1 · System 1 · Homebrew 2", "/updates"}
+	if len(e.pushes) != 1 || e.pushes[0] != want {
+		t.Fatalf("pushes = %+v, want %+v", e.pushes, want)
+	}
+}
+
+// A check that hangs holds the push for at most updatesHoldMax.
+func TestUpdatesPushHoldIsBounded(t *testing.T) {
+	e := newTestCenter(t)
+	e.baselineUpdates()
+	end := e.c.BeginUpdateCheck("system")
+	defer end()
+	e.updates("containers", true, "a")
+	e.wait(updatesHoldMax - time.Second)
+	if len(e.pushes) != 0 {
+		t.Fatalf("pushed %+v early", e.pushes)
+	}
+	e.wait(time.Second)
+	if len(e.pushes) != 1 {
+		t.Fatalf("pushes = %d, want 1 after updatesHoldMax", len(e.pushes))
+	}
+}
+
+// A held push is dropped when, before it goes out, the new updates were
+// installed, the owner cleared the item, or push was turned off.
+func TestUpdatesHeldPushDropped(t *testing.T) {
+	ctx := context.Background()
+	for name, act := range map[string]func(t *testing.T, e *testEnv){
+		"installed": func(t *testing.T, e *testEnv) { e.updates("containers", false) },
+		"cleared": func(t *testing.T, e *testEnv) {
+			if err := e.c.Clear(ctx, e.snap(t).Recent[0].ID); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"push off": func(t *testing.T, e *testEnv) {
+			if err := e.c.SetModes(ctx, map[Category]Mode{UpdatesFound: ModeApp}); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newTestCenter(t)
+			e.baselineUpdates()
+			e.updates("containers", true, "a")
+			act(t, e)
+			e.settle()
+			if len(e.pushes) != 0 {
+				t.Fatalf("pushes = %+v, want none", e.pushes)
+			}
+		})
+	}
+}
+
+// Updates already notified do not carry a held push whose new ones were
+// installed during the hold.
+func TestUpdatesHeldPushNeedsNewName(t *testing.T) {
+	e := newTestCenter(t)
+	e.baselineUpdates()
+	e.updates("system", true, "p1", "p2")
+	e.settle()
+	e.pushes = nil
+	e.updates("containers", true, "a")
+	e.updates("containers", false) // a was updated during the hold
+	e.settle()
+	if len(e.pushes) != 0 {
+		t.Fatalf("pushes = %+v, want none (only System, already notified, is left)", e.pushes)
+	}
+	if s := e.snap(t); len(s.Recent) != 1 || s.Recent[0].Body != "System 2" {
+		t.Fatalf("recent = %+v", s.Recent)
+	}
+}
+
+// After Close the held push is dropped and no new hold starts.
+func TestUpdatesCloseDropsHeldPush(t *testing.T) {
+	e := newTestCenter(t)
+	e.baselineUpdates()
+	end := e.c.BeginUpdateCheck("system")
+	e.updates("containers", true, "a")
+	e.c.Close()
+	e.updates("homebrew", true, "x")
+	end()
+	e.settle()
+	if len(e.pushes) != 0 || len(e.timers) != 0 {
+		t.Fatalf("pushes = %+v, timers = %d after Close, want none", e.pushes, len(e.timers))
+	}
+}
+
+// A manual check during the hold changes nothing about the push: it goes
+// out once, with the counts as they are when it is sent.
+func TestUpdatesManualDuringHold(t *testing.T) {
+	e := newTestCenter(t)
+	e.baselineUpdates()
+	e.updates("containers", true, "a")
+	e.updates("system", false, "p1", "p2")
+	e.settle()
+	if len(e.pushes) != 1 || e.pushes[0].title != "3 updates available" {
+		t.Fatalf("pushes = %+v", e.pushes)
 	}
 }

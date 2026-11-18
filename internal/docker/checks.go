@@ -348,7 +348,12 @@ func (s *Service) autoCheck(ctx context.Context) {
 		if !due {
 			continue
 		}
+		end := func() {}
+		if s.notify != nil {
+			end = s.notify.BeginUpdateCheck("containers")
+		}
 		if err := s.CheckUpdates(ctx); err != nil {
+			end()
 			slog.Debug("docker: background update check failed", "err", err)
 			if ctx.Err() != nil {
 				return
@@ -360,6 +365,7 @@ func (s *Service) autoCheck(ctx context.Context) {
 			continue
 		}
 		s.reportUpdates(ctx, true)
+		end()
 	}
 }
 

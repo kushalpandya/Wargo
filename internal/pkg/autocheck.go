@@ -43,9 +43,13 @@ func (s *Service) autoCheck(ctx context.Context) {
 		s.backgroundCheck)
 }
 
-// backgroundCheck lists updates without asking for approval, unless a check
-// or upgrade is already running (schedule.ErrSkipped).
-func (s *Service) backgroundCheck(ctx context.Context) error {
+// backgroundCheck is the scheduled check (see quietCheck).
+func (s *Service) backgroundCheck(ctx context.Context) error { return s.quietCheck(ctx, true) }
+
+// quietCheck lists updates without asking for approval, unless a check or
+// upgrade is already running (schedule.ErrSkipped). automatic is true for
+// the scheduled check, the only one whose new updates may push.
+func (s *Service) quietCheck(ctx context.Context, automatic bool) error {
 	s.mu.Lock()
 	busy := s.checking || s.job != nil
 	if !busy {
@@ -55,6 +59,9 @@ func (s *Service) backgroundCheck(ctx context.Context) error {
 	if busy {
 		return schedule.ErrSkipped
 	}
+	if automatic && s.d.Notify != nil {
+		defer s.d.Notify.BeginUpdateCheck("system")()
+	}
 	s.publish()
 	res, err := s.list(ctx, true)
 	s.mu.Lock()
@@ -62,7 +69,7 @@ func (s *Service) backgroundCheck(ctx context.Context) error {
 	s.mu.Unlock()
 	s.publish()
 	if err == nil {
-		s.reportUpdates(ctx, res, true)
+		s.reportUpdates(ctx, res, automatic)
 	}
 	return err
 }
@@ -85,7 +92,8 @@ func (s *Service) reportUpdates(ctx context.Context, res *CheckResult, automatic
 
 // recheck refreshes the list after an upgrade, so the Updates page shows
 // what is still pending instead of the list from before it. The upgrade
-// already refreshed the package databases, so no approval is needed.
+// already refreshed the package databases, so no approval is needed. The
+// owner started the upgrade, so what it finds is not pushed.
 func (s *Service) recheck(runID string, ok bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -102,7 +110,7 @@ func (s *Service) recheck(runID string, ok bool) {
 			s.last = &c
 		}
 		s.mu.Unlock()
-	} else if err := s.backgroundCheck(ctx); err != nil {
+	} else if err := s.quietCheck(ctx, false); err != nil {
 		if err != schedule.ErrSkipped {
 			slog.Warn("pkg: check after upgrade failed", "err", err)
 		}

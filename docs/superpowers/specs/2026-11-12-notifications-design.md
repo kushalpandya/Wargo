@@ -109,8 +109,13 @@ not shown in Active.
   one occurrence, not one per restart.
 - **Updates found:** one occurrence per automatic check result that
   contains updates not already notified. The same pending set found again
-  is not new. A manual "Check for updates" on the Updates page updates the
-  panel item but never pushes (the owner is already looking).
+  is not new. Automatic checks of containers, system packages and Homebrew
+  that run together send one push: it waits until none of them is running
+  and three minutes pass with no check starting or finishing (at most 20
+  minutes), then carries the counts of every source. A manual "Check for
+  updates" on the Updates page, and the recheck after an upgrade the owner
+  started, update the panel item but never push (the owner is already
+  looking).
 - **Download error:** one per torrent until its error clears.
 - **Disk nearly full:** a filesystem at 90% or more; one occurrence until it
   drops below 85%.

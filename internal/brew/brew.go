@@ -288,16 +288,23 @@ func (s *Service) reportSaved(ctx context.Context) {
 	s.reportUpdates(ctx, last, false)
 }
 
-// backgroundCheck lists updates unless a check or update is already
-// running (schedule.ErrSkipped).
-func (s *Service) backgroundCheck(ctx context.Context) error {
+// backgroundCheck is the scheduled check (see quietCheck).
+func (s *Service) backgroundCheck(ctx context.Context) error { return s.quietCheck(ctx, true) }
+
+// quietCheck lists updates unless a check or update is already running
+// (schedule.ErrSkipped). automatic is true for the scheduled check, the
+// only one whose new updates may push.
+func (s *Service) quietCheck(ctx context.Context, automatic bool) error {
 	if !s.begin() {
 		return schedule.ErrSkipped
 	}
 	defer s.end()
+	if automatic && s.d.Notify != nil {
+		defer s.d.Notify.BeginUpdateCheck("homebrew")()
+	}
 	res, err := s.list(ctx, true)
 	if err == nil {
-		s.reportUpdates(ctx, res, true)
+		s.reportUpdates(ctx, res, automatic)
 	}
 	return err
 }
@@ -320,7 +327,8 @@ func (s *Service) reportUpdates(ctx context.Context, res *pkg.CheckResult, autom
 }
 
 // recheck refreshes the list after an update, so the Updates page shows
-// what is still outdated instead of the list from before it.
+// what is still outdated instead of the list from before it. The owner
+// started the update, so what it finds is not pushed.
 func (s *Service) recheck(runID string, ok bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -338,7 +346,7 @@ func (s *Service) recheck(runID string, ok bool) {
 			s.last = &c
 		}
 		s.mu.Unlock()
-	} else if err := s.backgroundCheck(ctx); err != nil {
+	} else if err := s.quietCheck(ctx, false); err != nil {
 		if err != schedule.ErrSkipped {
 			slog.Warn("brew: check after update failed", "err", err)
 		}

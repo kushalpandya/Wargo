@@ -29,6 +29,7 @@ type notifier interface {
 	Reconcile(ctx context.Context, cat notify.Category, current []string, resolvedTitle func(key string) string)
 	Move(ctx context.Context, from, title string, o notify.Occurrence) bool
 	ReportUpdates(ctx context.Context, source string, names []string, automatic bool)
+	BeginUpdateCheck(source string) (end func())
 }
 
 // stableAfter is how long a container must stay up after a start before a

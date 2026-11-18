@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,14 @@ const (
 	// daemon never up) counts as nothing pending; its first report later
 	// is still a baseline.
 	updatesWindow = 10 * time.Minute
+
+	// An automatic check that finds new updates does not push at once: the
+	// push waits until no automatic check has started or finished for
+	// updatesHold and none is running, so checks of every source that run
+	// together send one push with all of their counts. It waits no longer
+	// than updatesHoldMax after it became due.
+	updatesHold    = 3 * time.Minute
+	updatesHoldMax = 20 * time.Minute
 )
 
 // updateSources lists the sources ReportUpdates takes, in body order.
@@ -33,9 +42,23 @@ var updateSources = []struct{ id, label string }{
 	{"homebrew", "Homebrew"},
 }
 
-// updatesState is what ReportUpdates remembers per source: the names the
-// last report held. Guarded by Center.mu.
-type updatesState map[string]map[string]bool
+// updatesState is what ReportUpdates remembers. Guarded by Center.mu.
+type updatesState struct {
+	// names lists, per source, the names its last report held.
+	names map[string]map[string]bool
+	// running counts the automatic checks under way, per source.
+	running map[string]int
+	// due is when the held push became due; zero when none is held.
+	due time.Time
+	// fresh lists, per source, the new names behind the held push: it is
+	// only sent if one of them is still pending.
+	fresh map[string]map[string]bool
+	// timer sends the held push; gen tells a stale timer from the current one.
+	timer func() bool
+	gen   int
+	// closed is set by Close: nothing is held or sent after it.
+	closed bool
+}
 
 // Disk is one filesystem and how full it is (0..100).
 type Disk struct {
@@ -62,6 +85,10 @@ type diskState struct {
 // (automatic false) updates the item and never pushes. The first report per
 // source after New is the baseline: it is shown, never pushed. When the
 // owner cleared the item and new names then appear, it shows again.
+//
+// The push is held until the automatic checks running together are done
+// (see updatesHold and BeginUpdateCheck), then sent once with the counts of
+// every source.
 func (c *Center) ReportUpdates(ctx context.Context, source string, names []string, automatic bool) {
 	known := false
 	for _, s := range updateSources {
@@ -77,35 +104,29 @@ func (c *Center) ReportUpdates(ctx context.Context, source string, names []strin
 	}
 
 	c.mu.Lock()
-	if c.upd == nil {
-		c.upd = updatesState{}
+	defer c.mu.Unlock()
+	if c.upd.names == nil {
+		c.upd.names = map[string]map[string]bool{}
 	}
-	prev, seen := c.upd[source]
-	fresh := false
+	prev, seen := c.upd.names[source]
+	var added []string
 	for n := range set {
 		if !prev[n] {
-			fresh = true
+			added = append(added, n)
 		}
 	}
-	c.upd[source] = set
+	fresh := len(added) > 0
+	c.upd.names[source] = set
 	baseline := !seen
-	total := 0
-	var parts []string
-	for _, s := range updateSources {
-		if n := len(c.upd[s.id]); n > 0 {
-			total += n
-			parts = append(parts, fmt.Sprintf("%s %d", s.label, n))
-		}
-	}
+	o, total := c.updatesItemLocked()
 	// Until every source has reported since New, the totals are partial:
 	// never delete or rewrite the stored item from them (that would drop
 	// what a source not yet heard from contributed, and a later report
 	// would bring it back uncleared). Only create it if there is none,
 	// or rewrite it when a source reports names it did not have before.
 	// The wait ends updatesWindow after New.
-	window := len(c.upd) < len(updateSources) && c.now().Sub(c.started) < updatesWindow
+	window := len(c.upd.names) < len(updateSources) && c.now().Sub(c.started) < updatesWindow
 	if total == 0 && window {
-		c.mu.Unlock()
 		return
 	}
 	if total == 0 {
@@ -116,16 +137,7 @@ func (c *Center) ReportUpdates(ctx context.Context, source string, names []strin
 		if changed {
 			c.publishLocked(ctx)
 		}
-		c.mu.Unlock()
 		return
-	}
-	o := Occurrence{
-		Category: UpdatesFound, Key: updatesKey, Link: updatesLink,
-		Title: fmt.Sprintf("%d updates available", total),
-		Body:  strings.Join(parts, " · "),
-	}
-	if total == 1 {
-		o.Title = "1 update available"
 	}
 	var changed bool
 	var err error
@@ -140,7 +152,123 @@ func (c *Center) ReportUpdates(ctx context.Context, source string, names []strin
 	if changed {
 		c.publishLocked(ctx)
 	}
-	due := fresh && automatic && !baseline && c.modeLocked(UpdatesFound) == ModePush
+	if fresh && automatic && !baseline && c.modeLocked(UpdatesFound) == ModePush {
+		if c.upd.due.IsZero() {
+			c.upd.due = c.now()
+		}
+		if c.upd.fresh == nil {
+			c.upd.fresh = map[string]map[string]bool{}
+		}
+		if c.upd.fresh[source] == nil {
+			c.upd.fresh[source] = map[string]bool{}
+		}
+		for _, n := range added {
+			c.upd.fresh[source][n] = true
+		}
+		c.holdPushLocked()
+	}
+}
+
+// updatesItemLocked returns the updates item for what every source has
+// pending now, and how many updates that is.
+func (c *Center) updatesItemLocked() (Occurrence, int) {
+	total := 0
+	var parts []string
+	for _, s := range updateSources {
+		if n := len(c.upd.names[s.id]); n > 0 {
+			total += n
+			parts = append(parts, fmt.Sprintf("%s %d", s.label, n))
+		}
+	}
+	o := Occurrence{
+		Category: UpdatesFound, Key: updatesKey, Link: updatesLink,
+		Title: fmt.Sprintf("%d updates available", total),
+		Body:  strings.Join(parts, " · "),
+	}
+	if total == 1 {
+		o.Title = "1 update available"
+	}
+	return o, total
+}
+
+// BeginUpdateCheck tells notifications that an automatic check of source
+// started, so a held updates push waits for it; call the returned func when
+// the check is over, after its ReportUpdates if it succeeded. Manual checks
+// do not call it.
+func (c *Center) BeginUpdateCheck(source string) (end func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.upd.running == nil {
+		c.upd.running = map[string]int{}
+	}
+	c.upd.running[source]++
+	c.holdPushLocked()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.upd.running[source]--; c.upd.running[source] <= 0 {
+				delete(c.upd.running, source)
+			}
+			c.holdPushLocked()
+		})
+	}
+}
+
+// holdPushLocked (re)starts the timer of the held updates push, if one is
+// held: updatesHold from now, or the end of updatesHoldMax while an
+// automatic check is still running.
+func (c *Center) holdPushLocked() {
+	if c.upd.timer != nil {
+		c.upd.timer()
+		c.upd.timer = nil
+	}
+	if c.upd.due.IsZero() || c.upd.closed {
+		return
+	}
+	now := c.now()
+	last := c.upd.due.Add(updatesHoldMax)
+	at := now.Add(updatesHold)
+	if len(c.upd.running) > 0 || at.After(last) {
+		at = last
+	}
+	c.upd.gen++
+	gen := c.upd.gen
+	c.upd.timer = c.afterFunc(max(at.Sub(now), 0), func() { c.sendHeldPush(gen) })
+}
+
+// sendHeldPush sends the held updates push, with the counts of every source
+// as they are now. Nothing is sent when none of the new names behind it is
+// still pending (they were installed meanwhile), push was turned off, or the
+// owner already cleared the item.
+func (c *Center) sendHeldPush(gen int) {
+	ctx := context.Background()
+	c.mu.Lock()
+	if gen != c.upd.gen || c.upd.due.IsZero() || c.upd.closed {
+		c.mu.Unlock()
+		return
+	}
+	fresh := c.upd.fresh
+	c.upd.due, c.upd.fresh, c.upd.timer = time.Time{}, nil, nil
+	o, _ := c.updatesItemLocked()
+	pending := false
+	for source, names := range fresh {
+		for n := range names {
+			pending = pending || c.upd.names[source][n]
+		}
+	}
+	due := pending && c.modeLocked(UpdatesFound) == ModePush
+	if due {
+		var n int
+		err := c.st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM notify_items
+			WHERE category = ? AND key = ? AND cleared_at IS NULL AND resolved_at IS NULL`,
+			string(UpdatesFound), updatesKey).Scan(&n)
+		if err != nil {
+			slog.Error("notifications: updates", "err", err)
+		}
+		due = err == nil && n > 0
+	}
 	push := c.push
 	c.mu.Unlock()
 	if due && push != nil {
@@ -232,5 +360,16 @@ func (c *Center) retitle(ctx context.Context, cat Category, key, title string) {
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		c.publishLocked(ctx)
+	}
+}
+
+// stopHeldPushLocked drops the held updates push for good (Close).
+func (c *Center) stopHeldPushLocked() {
+	c.upd.closed = true
+	c.upd.due, c.upd.fresh = time.Time{}, nil
+	c.upd.gen++
+	if c.upd.timer != nil {
+		c.upd.timer()
+		c.upd.timer = nil
 	}
 }

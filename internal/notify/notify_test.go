@@ -32,6 +32,44 @@ type testEnv struct {
 	st     *store.Store
 	clock  *fakeClock
 	pushes []pushed
+	timers []*fakeTimer
+}
+
+// fakeTimer is a Center.afterFunc timer, run by testEnv.wait.
+type fakeTimer struct {
+	at      time.Time
+	f       func()
+	stopped bool
+}
+
+// wait advances the clock by d, running each timer that falls due on the
+// way at its own time, earliest first (timers they start included).
+func (e *testEnv) wait(d time.Duration) {
+	end := e.clock.t.Add(d)
+	for {
+		var next *fakeTimer
+		for _, t := range e.timers {
+			if !t.stopped && !t.at.After(end) && (next == nil || t.at.Before(next.at)) {
+				next = t
+			}
+		}
+		if next == nil {
+			break
+		}
+		next.stopped = true
+		if next.at.After(e.clock.t) {
+			e.clock.t = next.at
+		}
+		next.f()
+	}
+	e.clock.t = end
+	var keep []*fakeTimer
+	for _, t := range e.timers {
+		if !t.stopped {
+			keep = append(keep, t)
+		}
+	}
+	e.timers = keep
 }
 
 func newTestCenter(t *testing.T) *testEnv {
@@ -56,6 +94,11 @@ func attach(t *testing.T, st *store.Store) *testEnv {
 	c.started = e.clock.t
 	c.push = func(_ context.Context, cat Category, key, title, body, link string) {
 		e.pushes = append(e.pushes, pushed{cat, key, title, body, link})
+	}
+	c.afterFunc = func(d time.Duration, f func()) func() bool {
+		t := &fakeTimer{at: e.clock.t.Add(d), f: f}
+		e.timers = append(e.timers, t)
+		return func() bool { was := !t.stopped; t.stopped = true; return was }
 	}
 	return e
 }

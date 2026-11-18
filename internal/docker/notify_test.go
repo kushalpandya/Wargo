@@ -125,6 +125,8 @@ func (f *fakeNotifier) ReportUpdates(_ context.Context, source string, names []s
 	f.updates = append(f.updates, fmt.Sprintf("%s %v: %s", source, automatic, strings.Join(names, ",")))
 }
 
+func (f *fakeNotifier) BeginUpdateCheck(string) func() { return func() {} }
+
 func cut(k string) (string, string, bool) {
 	for i := range k {
 		if k[i] == ' ' {

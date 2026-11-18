@@ -111,6 +111,9 @@ type Center struct {
 	// push is called for occurrences whose category mode is push, outside
 	// the lock. New sets it to sendPush (push.go).
 	push PushFunc
+	// afterFunc runs f after d and returns a func that stops it
+	// (time.AfterFunc; replaced in tests).
+	afterFunc func(d time.Duration, f func()) (stop func() bool)
 
 	// Web Push (push.go): the VAPID signing key, the client for push
 	// services, and the sends still running.
@@ -142,6 +145,7 @@ func New(st *store.Store, hub *events.Hub, idleCutoff func(now time.Time) time.T
 	c := &Center{st: st, hub: hub, now: time.Now, settings: defaults(), pushClient: newPushClient(),
 		idleCutoff: idleCutoff}
 	c.push = c.sendPush
+	c.afterFunc = func(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop }
 	c.started = c.now()
 	ctx := context.Background()
 	var err error
