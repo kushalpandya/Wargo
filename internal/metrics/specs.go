@@ -76,7 +76,7 @@ func computeStatic() Specs {
 		Model:      joinNonEmpty(dmi("sys_vendor"), dmi("product_name"), dmi("product_version")),
 		Board:      joinNonEmpty(dmi("board_vendor"), dmi("board_name")),
 		GPUDetails: gpuDetails(),
-		Timezone:   timezone(),
+		Timezone:   hostfs.Timezone(),
 	}
 	if s.Model == "" {
 		// Raspberry Pi and other device-tree boards.
@@ -124,21 +124,6 @@ func hostLocale() string {
 		}
 	}
 	return ""
-}
-
-func timezone() string {
-	if t := readStr(hostfs.Path("/etc/timezone")); t != "" {
-		return t
-	}
-	if l, err := os.Readlink(hostfs.Path("/etc/localtime")); err == nil {
-		if i := strings.Index(l, "zoneinfo/"); i >= 0 {
-			return l[i+len("zoneinfo/"):]
-		}
-	}
-	if hostfs.Container() {
-		return ""
-	}
-	return time.Now().Location().String()
 }
 
 // GPU is a display controller and its memory.
@@ -428,6 +413,3 @@ func serveLogo(w http.ResponseWriter, r *http.Request) {
 	}
 	http.ServeFile(w, r, rp)
 }
-
-// Timezone is the host's IANA timezone (e.g. "America/Toronto"), or "".
-func Timezone() string { return timezone() }

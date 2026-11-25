@@ -20,6 +20,7 @@ import (
 
 	"github.com/kushalpandya/wargo/internal/events"
 	"github.com/kushalpandya/wargo/internal/jobs"
+	"github.com/kushalpandya/wargo/internal/schedule"
 	"github.com/kushalpandya/wargo/internal/store"
 )
 
@@ -267,7 +268,9 @@ func TestAutoCheckRuns(t *testing.T) {
 	id := "2222222222222222222222222222222222222222222222222222222222222222"
 	f.containers[id] = appContainer(id, "myapp", "bridge")
 	s := startFake(t, f)
-	s.Configure(Options{UpdateInterval: time.Hour})
+	// 90 minutes has no fixed slots (see schedule.Next), so the first check
+	// runs after checkDelay at any time of day; slots are tested there.
+	s.Configure(Options{UpdateInterval: 90 * time.Minute})
 	s.checkDelay = 10 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -278,8 +281,8 @@ func TestAutoCheckRuns(t *testing.T) {
 		at, next := s.checkedAt, s.nextCheckAt
 		s.mu.Unlock()
 		if at > 0 {
-			if next < at+time.Hour.Milliseconds()-1000 {
-				t.Fatalf("next check %d not ~1h after %d", next, at)
+			if want := at + (90 * time.Minute).Milliseconds(); next != want {
+				t.Fatalf("next check %d after %d, want %d", next, at, want)
 			}
 			return
 		}
@@ -334,8 +337,13 @@ func TestDueAfterFailure(t *testing.T) {
 	retry := time.Now().Add(30 * time.Minute)
 	s.retryAt = retry
 	s.checkedAt = time.Now().Add(-48 * time.Hour).UnixMilli()
-	if !s.dueLocked().Equal(retry) {
-		t.Fatal("overdue check after a failure should wait for retryAt")
+	// The retry, or the daily slot when that comes first.
+	want := retry
+	if slot := schedule.Next(time.Now(), s.checkInterval); slot.Before(retry) {
+		want = slot
+	}
+	if got := s.dueLocked(); !got.Equal(want) {
+		t.Fatalf("overdue check after a failure is due %v, want %v", got, want)
 	}
 }
 

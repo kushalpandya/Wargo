@@ -13,11 +13,12 @@ import (
 // was busy; the loop then keeps its retry timing as it was.
 var ErrSkipped = errors.New("check skipped")
 
-// Every runs check in the background every N hours of h, starting a few
-// minutes after startup when the last check (last) is older than that.
-// ready reports whether checking makes sense now (the tool exists); while it
-// doesn't, or the setting is off, the loop waits for the setting to change.
-// After a failed check it retries at most every 30 minutes. check decides
+// Every runs check in the background every N hours of h, at the fixed times
+// Next gives, and a few minutes after startup when the last check (last)
+// missed one (see Due and Plan). ready reports whether checking makes sense
+// now (the tool exists); while it doesn't, or the setting is off, the loop
+// waits for the setting to change. After a failed check it retries at most
+// every 30 minutes, or at the next slot if that comes first. check decides
 // for itself whether it is too busy to run, and returns ErrSkipped if so.
 func (h *Hours) Every(ctx context.Context, name string, ready func() bool, last func() time.Time, check func(context.Context) error) {
 	first := true
@@ -33,16 +34,12 @@ func (h *Hours) Every(ctx context.Context, name string, ready func() bool, last 
 			}
 		}
 		interval := time.Duration(hours) * time.Hour
-		delay := time.Until(last().Add(interval))
-		if first && delay < 3*time.Minute {
-			delay = 3 * time.Minute // let the server settle after start
+		wait := time.Minute
+		if first {
+			wait = 3 * time.Minute // let the server settle after start
 		}
-		if r := time.Until(retryAt); r > delay {
-			delay = r
-		}
-		if delay < time.Minute {
-			delay = time.Minute
-		}
+		now := time.Now()
+		delay := Plan(now, Due(now, last(), retryAt, interval), interval, wait).Sub(now)
 		t := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -54,8 +51,10 @@ func (h *Hours) Every(ctx context.Context, name string, ready func() bool, last 
 		case <-t.C:
 		}
 		first = false
-		if time.Since(last()) < interval-time.Minute {
-			continue // a manual check ran meanwhile
+		// A manual check meanwhile postpones the background one. A retry
+		// runs regardless: a failed first check also set last.
+		if retryAt.IsZero() && time.Until(Next(last(), interval)) > time.Minute {
+			continue
 		}
 		switch err := check(ctx); {
 		case errors.Is(err, ErrSkipped):

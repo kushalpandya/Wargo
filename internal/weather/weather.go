@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/audit"
+	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
-	"github.com/kushalpandya/wargo/internal/metrics"
 	"github.com/kushalpandya/wargo/internal/store"
 )
 
@@ -117,7 +117,7 @@ type call struct {
 
 func New(st *store.Store, al *audit.Log) *Service {
 	return &Service{
-		st: st, audit: al, client: &http.Client{Timeout: 8 * time.Second}, tz: metrics.Timezone,
+		st: st, audit: al, client: &http.Client{Timeout: 8 * time.Second}, tz: host.Timezone,
 		cache: map[string]cached{}, auto: map[string]autoPlace{}, flight: map[string]*call{},
 	}
 }

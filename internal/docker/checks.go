@@ -225,7 +225,7 @@ func (s *Service) runCheck(ctx context.Context) error {
 	s.checkedAt = time.Now().UnixMilli()
 	s.retryAt = time.Time{}
 	if s.checkInterval > 0 {
-		s.nextCheckAt = s.checkedAt + s.checkInterval.Milliseconds()
+		s.nextCheckAt = s.dueLocked().UnixMilli()
 	}
 	s.list = nil
 	p := s.snapshotLocked()
@@ -303,9 +303,10 @@ func (s *Service) recheckContainer(ctx context.Context, name string) {
 }
 
 // autoCheck runs CheckUpdates in the background: first ~checkDelay after
-// start (or when the persisted result is due, whichever is later), then
-// every checkInterval. The interval can change at runtime (Settings →
-// General): a change wakes the loop, and 0 pauses it.
+// start (or when the persisted result is due, whichever is later), then at
+// the fixed times of checkInterval (see schedule.Due and schedule.Plan).
+// The interval can change at runtime (Settings → General): a change wakes
+// the loop, and 0 pauses it.
 func (s *Service) autoCheck(ctx context.Context) {
 	first := true
 	for {
@@ -313,14 +314,14 @@ func (s *Service) autoCheck(ctx context.Context) {
 		interval := s.checkInterval
 		var delay time.Duration
 		if interval > 0 {
-			delay = time.Minute
+			wait := time.Minute
 			if first {
-				delay = s.checkDelay
+				wait = s.checkDelay
 			}
-			if rem := time.Until(s.dueLocked()); rem > delay {
-				delay = rem
-			}
-			s.nextCheckAt = time.Now().Add(delay).UnixMilli()
+			now := time.Now()
+			at := schedule.Plan(now, s.dueLocked(), interval, wait)
+			delay = at.Sub(now)
+			s.nextCheckAt = at.UnixMilli()
 		} else {
 			s.nextCheckAt = 0
 		}
@@ -375,16 +376,14 @@ func (s *Service) autoCheck(ctx context.Context) {
 	}
 }
 
-// dueLocked is when the next background check should run: after a failed
-// one at retryAt, otherwise one interval after the last check.
+// dueLocked is when the next background check should run (see
+// schedule.Due); the zero time when no check ran yet.
 func (s *Service) dueLocked() time.Time {
-	if !s.retryAt.IsZero() {
-		return s.retryAt
+	var last time.Time
+	if s.checkedAt != 0 {
+		last = time.UnixMilli(s.checkedAt)
 	}
-	if s.checkedAt == 0 {
-		return time.Time{}
-	}
-	return time.UnixMilli(s.checkedAt).Add(s.checkInterval)
+	return schedule.Due(time.Now(), last, s.retryAt, s.checkInterval)
 }
 
 // newSchedule builds the interval setting edited in Settings → General.

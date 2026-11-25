@@ -112,7 +112,15 @@ not shown in Active.
   is not new. Automatic checks of containers, system packages and Homebrew
   that run together send one push: it waits until none of them is running
   and three minutes pass with no check starting or finishing (at most 20
-  minutes), then carries the counts of every source. A manual "Check for
+  minutes), then carries the counts of every source. So that they do run
+  together, automatic checks start at fixed times in the host's time zone
+  (09:00 plus whole intervals, e.g. 09:00 daily or 03:00, 09:00, 15:00 and
+  21:00 every 6 hours) rather than one interval after each source's last
+  check, which a manual check or an upgrade's recheck would move. A check
+  at startup or a retry that would run less than 15 minutes before a fixed
+  time waits for it. A container interval from `config.toml` that doesn't
+  fit a day (not a whole number of hours, or one like 5h or 36h) has no fixed times and
+  still runs one interval after the last check. A manual "Check for
   updates" on the Updates page, and the recheck after an upgrade the owner
   started, update the panel item but never push (the owner is already
   looking).

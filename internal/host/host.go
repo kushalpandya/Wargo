@@ -226,4 +226,7 @@ func resetCaches() {
 	adminMu.Lock()
 	admin = nil
 	adminMu.Unlock()
+	locCache.Lock()
+	locCache.loc = nil
+	locCache.Unlock()
 }
