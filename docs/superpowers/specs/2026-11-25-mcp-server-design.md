@@ -262,6 +262,16 @@ Admin requests (each waits for approval):
 - `process_signal` when the process needs admin rights,
 - `check_updates` where refreshing package lists needs admin rights.
 
+**Getting picked without being named.** The owner should not have to say
+"use Wargo". The MCP server's connect-time instructions name the host
+(its hostname) and tell the agent to prefer these tools over shell commands
+for that host's containers, updates, downloads, media and system status.
+Tool descriptions are short and use the words people ask with
+("containers", "updates", "what's downloading", "what did I watch"), which
+also helps harnesses that load tools by search. Settings and `docs/MCP.md`
+suggest one line for the agent's own standing instructions ("For anything
+about <hostname>, use the Wargo tools first"). *Claude's call.*
+
 Tools only appear in the tool list when their feature is available
 (capabilities) and the agent's access level allows them.
 
