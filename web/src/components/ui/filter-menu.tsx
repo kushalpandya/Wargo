@@ -57,7 +57,7 @@ export function FilterMenu({ active, onClear, groups }: { active: number; onClea
       aria-label={label}
       title={label}
       className={cn(
-        "relative inline-flex size-8 shrink-0 items-center justify-center rounded-md border transition-colors [&_svg]:size-4",
+        "relative inline-flex size-9 shrink-0 items-center justify-center rounded-md border transition-colors [&_svg]:size-4",
         "data-[state=open]:border-border-strong data-[state=open]:bg-surface-3",
         active > 0
           ? "border-accent/50 bg-accent-soft text-accent hover:border-accent"
