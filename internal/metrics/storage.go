@@ -63,5 +63,18 @@ func (c *Collector) Storage(ctx context.Context) Storage {
 		c.fs, c.fsAt = fs, time.Now()
 		c.mu.Unlock()
 	}
-	return Storage{Drives: drives(fs, temps), Filesystems: fs}
+	return newStorage(drives(fs, temps), fs)
+}
+
+// newStorage keeps both lists non-nil so they encode as [] and never null:
+// inside a plain container every mount can be filtered out (Docker volumes
+// are bind mounts), and the UI reads their lengths.
+func newStorage(d []Drive, fs []Filesystem) Storage {
+	if d == nil {
+		d = []Drive{}
+	}
+	if fs == nil {
+		fs = []Filesystem{}
+	}
+	return Storage{Drives: d, Filesystems: fs}
 }

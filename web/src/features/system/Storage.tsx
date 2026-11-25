@@ -157,7 +157,7 @@ export const StorageCard = memo(function StorageCard() {
         title="Storage"
         icon={<HardDrive />}
         tint="butter"
-        meta={data ? `${data.drives.length} drive${data.drives.length === 1 ? "" : "s"} · ${data.filesystems.length} mounted` : undefined}
+        meta={data ? `${data.drives?.length ?? 0} drive${data.drives?.length === 1 ? "" : "s"} · ${data.filesystems?.length ?? 0} mounted` : undefined}
       />
       {isLoading ? (
         <div className="grid gap-3 p-4 lg:grid-cols-2">
