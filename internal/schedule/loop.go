@@ -62,8 +62,12 @@ func (h *Hours) Every(ctx context.Context, name string, ready func() bool, last 
 		case err != nil:
 			slog.Debug(name+": background check failed", "err", err)
 			retryAt = time.Now().Add(min(interval, 30*time.Minute))
+			if ctx.Err() == nil {
+				h.Audit.Outcome(name+".check", "background", err, map[string]any{"intervalHours": hours})
+			}
 		default:
 			retryAt = time.Time{}
+			h.Audit.Outcome(name+".check", "background", nil, nil)
 		}
 	}
 }

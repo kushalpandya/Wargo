@@ -54,6 +54,8 @@ type Session struct {
 	Kind    string
 	Target  string
 	Created time.Time
+	// auditRef is the session's term.open audit entry (guarded by mu).
+	auditRef int64
 
 	cmd  *exec.Cmd
 	pty  *os.File

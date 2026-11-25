@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
 )
@@ -444,12 +445,25 @@ func (s *Service) recordSelfResult(ctx context.Context, p selfPending, res selfR
 	if !res.OK {
 		result = "error: " + res.Error
 	}
-	if s.audit != nil {
-		s.audit.RecordSystemDetails("containers.update", p.Name, result, map[string]any{
-			"id": p.Target, "strategy": "self", "image": p.Ref, "job": p.JobID, "fromVersion": res.FromVersion,
-			"toVersion": res.ToVersion, "rolledBack": res.RolledBack, "exitCode": res.ExitCode,
-		})
+	// The update was started by an earlier Wargo process: its start
+	// entry is found by the job they share.
+	span := audit.Span{Action: "containers.update.self.start", Started: time.UnixMilli(p.StartedAt),
+		Ref: s.audit.FindByDetail("containers.update.self.start", "job", p.JobID)}
+	ev := audit.Event{Action: "containers.update", Target: p.Name, Result: result, Details: map[string]any{
+		"id": p.Target, "strategy": "self", "image": p.Ref, "job": p.JobID, "fromVersion": res.FromVersion,
+		"toVersion": res.ToVersion, "rolledBack": res.RolledBack, "exitCode": res.ExitCode,
+	}}
+	if p.StartedAt > 0 {
+		ev.Duration = time.UnixMilli(res.FinishedAt).Sub(time.UnixMilli(p.StartedAt))
 	}
+	if !res.OK {
+		ev.Code = "self_update_failed"
+		if res.RolledBack {
+			ev.Code = "self_update_rolled_back"
+		}
+		ev.Output = &audit.Output{Lines: res.Log}
+	}
+	s.audit.End(span, ev)
 	slog.Info("self update finished", "ok", res.OK, "rolledBack", res.RolledBack, "from", res.FromVersion, "to", res.ToVersion)
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()

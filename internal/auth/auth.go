@@ -321,7 +321,7 @@ func (s *Service) createSession(w http.ResponseWriter, r *http.Request, method s
 	if replaced > 0 {
 		details["replaced"] = replaced
 	}
-	s.audit.Record(r, "auth.session", method, nil, details)
+	s.audit.Write(r, audit.Event{Action: "auth.session", Target: method, Details: details, Session: audit.SessionTag(sess.IDHash)})
 	cookieExp := sess.ExpiresAt
 	if remember {
 		cookieExp = now.Add(cookieLife)
@@ -495,7 +495,8 @@ func (s *Service) Require(next http.Handler) http.Handler {
 				return
 			}
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, sess)))
+		ctx := context.WithValue(r.Context(), ctxKey{}, sess)
+		next.ServeHTTP(w, r.WithContext(audit.WithSession(ctx, audit.SessionTag(sess.IDHash))))
 	})
 }
 
@@ -752,7 +753,17 @@ func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) error {
 		return errBadOrigin
 	}
 	if c, err := r.Cookie(SessionCookie); err == nil {
-		s.deleteSession(r.Context(), hashToken(c.Value))
+		h := hashToken(c.Value)
+		// Only a session that exists is recorded: anyone may call logout.
+		var method string
+		var created int64
+		known := s.st.DB.QueryRowContext(r.Context(), `SELECT method, created_at FROM sessions WHERE id_hash = ?`, h).
+			Scan(&method, &created) == nil
+		s.deleteSession(r.Context(), h)
+		if known {
+			s.audit.Write(r, audit.Event{Action: "auth.logout", Target: method, Session: audit.SessionTag(h),
+				Duration: time.Since(time.Unix(created, 0))})
+		}
 	}
 	s.setCookie(w, r, SessionCookie, "", true, time.Time{})
 	s.setCookie(w, r, CSRFCookie, "", false, time.Time{})

@@ -11,7 +11,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -69,10 +73,11 @@ var features []Feature
 func RegisterFeature(f Feature) { features = append(features, f) }
 
 type Server struct {
-	deps    *Deps
-	http    *http.Server
-	runners []Runner
-	capable []Capable
+	deps     *Deps
+	http     *http.Server
+	runners  []Runner
+	capable  []Capable
+	features []string // the services that started, for wargo.start
 }
 
 func New(cfg config.Config) (*Server, error) {
@@ -83,6 +88,7 @@ func New(cfg config.Config) (*Server, error) {
 	proxy := httpx.NewProxyTrust(cfg.Auth.TrustedProxies)
 	hub := events.NewHub()
 	al := audit.New(st, proxy)
+	al.Version = Version
 	au := auth.New(cfg, st, al, proxy)
 	hub.OriginPatterns = au.OriginPatterns()
 	d := &Deps{
@@ -92,10 +98,12 @@ func New(cfg config.Config) (*Server, error) {
 	if host.Container() {
 		d.Elevate.WithHostAuth(au)
 	}
+	d.Jobs.Audit = al
 	if d.Notify, err = notify.New(st, hub, au.IdleCutoff); err != nil {
 		st.Close()
 		return nil, err
 	}
+	d.Notify.Audit = al
 	s := &Server{deps: d}
 
 	public := http.NewServeMux()
@@ -116,12 +124,14 @@ func New(cfg config.Config) (*Server, error) {
 	for _, f := range features {
 		svc, err := f(d)
 		if err != nil {
+			al.Write(nil, audit.Event{Action: "wargo.feature_failed", Target: featureName(f), Err: err})
 			return nil, err
 		}
 		if svc == nil {
 			continue
 		}
 		svc.Register(private)
+		s.features = append(s.features, strings.TrimPrefix(fmt.Sprintf("%T", svc), "*"))
 		if r, ok := svc.(Runner); ok {
 			s.runners = append(s.runners, r)
 		}
@@ -170,7 +180,7 @@ func New(cfg config.Config) (*Server, error) {
 
 	s.http = &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           recoverer(securityHeaders(proxy, root)),
+		Handler:           httpx.RequestIDs(recoverer(al, securityHeaders(proxy, root))),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,
@@ -236,11 +246,15 @@ func (s *Server) Run(ctx context.Context) error {
 	for _, r := range s.runners {
 		go r.Run(ctx)
 	}
+	started := time.Now()
+	al := s.deps.Audit
 	ln, err := net.Listen("tcp", s.http.Addr)
 	if err != nil {
+		al.Write(nil, audit.Event{Action: "wargo.start", Target: Version, Err: err, Details: s.startDetails()})
 		return err
 	}
 	slog.Info("wargo listening", "addr", "http://"+ln.Addr().String(), "version", Version)
+	al.Write(nil, audit.Event{Action: "wargo.start", Target: Version, Details: s.startDetails()})
 	errc := make(chan error, 1)
 	go func() { errc <- s.http.Serve(ln) }()
 	select {
@@ -251,14 +265,85 @@ func (s *Server) Run(ctx context.Context) error {
 		if s.deps.Notify != nil {
 			s.deps.Notify.Close()
 		}
+		al.Write(nil, audit.Event{Action: "wargo.stop", Target: Version, Duration: time.Since(started),
+			Details: map[string]any{"reason": stopReason(ctx)}})
 		s.deps.Store.Close()
 		return nil
 	case err := <-errc:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
+		al.Write(nil, audit.Event{Action: "wargo.stop", Target: Version, Err: err, Duration: time.Since(started)})
 		return err
 	}
+}
+
+// startDetails describes this instance for the wargo.start entry, so a
+// later problem can be matched with what changed (version, host, mode).
+func (s *Server) startDetails() map[string]any {
+	cfg := s.deps.Cfg
+	d := map[string]any{
+		"mode":     map[bool]string{true: "container", false: "native"}[host.Container()],
+		"os":       runtime.GOOS + "/" + runtime.GOARCH,
+		"go":       runtime.Version(),
+		"listen":   cfg.Listen,
+		"user":     cfg.Auth.User,
+		"features": s.features,
+	}
+	if osr := hostOSName(); osr != "" {
+		d["host"] = osr
+	}
+	if k := kernelRelease(); k != "" {
+		d["kernel"] = k
+	}
+	return d
+}
+
+// stopReason is why ctx ended ("signal: terminated" and the like).
+func stopReason(ctx context.Context) string {
+	if c := context.Cause(ctx); c != nil && !errors.Is(c, context.Canceled) {
+		return c.Error()
+	}
+	return "stopped"
+}
+
+// hostOSName is the host's PRETTY_NAME from os-release ("" if unknown).
+func hostOSName() string {
+	for _, p := range []string{"/etc/os-release", "/usr/lib/os-release"} {
+		b, err := host.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(l, "PRETTY_NAME="); ok {
+				return strings.Trim(v, `"'`)
+			}
+		}
+	}
+	return ""
+}
+
+// kernelRelease is the running kernel (shared with the host in a container).
+func kernelRelease() string {
+	b, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// featureName is where a feature constructor is defined, for example
+// "cmd/wargo/feature_pkg.go".
+func featureName(f Feature) string {
+	fn := runtime.FuncForPC(reflect.ValueOf(f).Pointer())
+	if fn == nil {
+		return "unknown"
+	}
+	file, _ := fn.FileLine(fn.Entry())
+	if i := strings.LastIndex(file, "/cmd/"); i >= 0 {
+		return file[i+1:]
+	}
+	return filepath.Base(file)
 }
 
 func securityHeaders(proxy *httpx.ProxyTrust, next http.Handler) http.Handler {
@@ -292,17 +377,50 @@ func securityHeaders(proxy *httpx.ProxyTrust, next http.Handler) http.Handler {
 	})
 }
 
-func recoverer(next http.Handler) http.Handler {
+// panicFrames is how many stack frames a crash entry keeps (each frame is
+// a function line and a file line).
+const panicFrames = 30
+
+func recoverer(al *audit.Log, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if v := recover(); v != nil {
 				if v == http.ErrAbortHandler {
 					panic(v)
 				}
-				slog.Error("panic", "path", r.URL.Path, "err", v)
+				stack := debug.Stack()
+				slog.Error("panic", "path", r.URL.Path, "request", httpx.RequestID(r.Context()), "err", v, "stack", string(stack))
+				if al != nil {
+					al.Write(r, audit.Event{Action: "server.panic", Target: r.Method + " " + r.URL.Path,
+						Err: fmt.Errorf("%v", v), Code: "panic", Output: &audit.Output{Lines: stackLines(stack)}})
+				}
 				httpx.Fail(w, r, httpx.Errorf(http.StatusInternalServerError, "internal", "internal error"))
 			}
 		}()
 		next.ServeHTTP(w, r)
 	})
+}
+
+// stackLines keeps the frames from the one that panicked down, skipping
+// the runtime and the recovery itself.
+func stackLines(stack []byte) []string {
+	lines := strings.Split(strings.TrimRight(string(stack), "\n"), "\n")
+	// Frames after the last runtime/panic.go frame are the panicking code.
+	start := 1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "panic(") || strings.HasPrefix(l, "runtime.gopanic(") {
+			start = i + 2
+		}
+	}
+	if start >= len(lines) {
+		start = 1
+	}
+	out := append([]string{lines[0]}, lines[start:]...)
+	if len(out) > 1+2*panicFrames {
+		out = out[:1+2*panicFrames]
+	}
+	for i := range out {
+		out[i] = strings.TrimSpace(out[i])
+	}
+	return out
 }

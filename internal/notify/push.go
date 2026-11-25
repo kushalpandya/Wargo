@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/netx"
 	"github.com/kushalpandya/wargo/internal/store"
@@ -291,21 +292,31 @@ func (c *Center) sendOne(parent context.Context, s sub, msg []byte, now time.Tim
 	if u, err := url.Parse(s.endpoint); err == nil {
 		host = u.Host
 	}
+	device := host + " (device " + shortID(s.id) + ")"
+	// Delivery is audited like a background check: when it starts failing,
+	// when the reason changes, and when it works again.
+	var auditErr error
+	defer func() {
+		c.Audit.Outcome("notify.push", device, auditErr, nil)
+	}()
 	ctx, cancel := context.WithTimeout(parent, pushTimeout)
 	defer cancel()
 	body, err := encryptPayload(s.p256dh, s.auth, msg)
 	if err != nil {
 		slog.Error("notifications: push encryption", "host", host, "err", err)
+		auditErr = audit.WithCode(fmt.Errorf("encrypting the message: %w", err), "push_encryption")
 		return
 	}
 	auth, err := vapidHeader(s.endpoint, vapidSubject, c.vapid, now)
 	if err != nil {
 		slog.Error("notifications: push signature", "host", host, "err", err)
+		auditErr = audit.WithCode(fmt.Errorf("signing the request: %w", err), "push_signature")
 		return
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("notifications: push request", "host", host, "err", err)
+		auditErr = audit.WithCode(err, "push_request")
 		return
 	}
 	req.Header.Set("TTL", pushTTL)
@@ -320,6 +331,7 @@ func (c *Center) sendOne(parent context.Context, s sub, msg []byte, now time.Tim
 			err = ue.Err
 		}
 		slog.Warn("notifications: push failed", "host", host, "err", err)
+		auditErr = audit.WithCode(err, "push_unreachable")
 		return
 	}
 	defer netx.Drain(resp)
@@ -328,9 +340,20 @@ func (c *Center) sendOne(parent context.Context, s sub, msg []byte, now time.Tim
 		if _, err := c.st.DB.ExecContext(parent, `DELETE FROM notify_subs WHERE id = ?`, s.id); err != nil {
 			slog.Error("notifications: delete push registration", "host", host, "err", err)
 		}
+		c.Audit.Write(nil, audit.Event{Action: "notify.push_expired", Target: device,
+			Details: map[string]any{"status": resp.StatusCode}})
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		slog.Warn("notifications: push refused", "host", host, "status", resp.StatusCode)
+		auditErr = audit.WithCode(fmt.Errorf("the push service answered %s", resp.Status), "push_refused")
 	}
+}
+
+// shortID is the start of a registration ID, enough to tell devices apart.
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }
 
 // clip shortens s to at most n runes. With the limits sendPush uses, the

@@ -19,6 +19,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
@@ -28,9 +29,10 @@ const (
 	defaultIdle        = 10 * time.Minute
 )
 
-// Auditor records actions (satisfied by *audit.Log).
+// Auditor records actions (satisfied by *audit.Log). r is nil for what
+// Wargo does on its own, such as ending an idle session.
 type Auditor interface {
-	Record(r *http.Request, action, target string, err error, details any)
+	Write(r *http.Request, ev audit.Event) int64
 }
 
 type Service struct {
@@ -156,6 +158,15 @@ func (s *Service) reap(now time.Time) {
 	s.mu.Unlock()
 	for _, se := range victims {
 		slog.Info("term: reaping session", "id", se.ID, "kind", se.Kind, "target", se.Target)
+		se.mu.Lock()
+		reason, code := "idle", any(nil)
+		if se.exited {
+			reason, code = "exited", se.exitCode
+		}
+		ref := se.auditRef
+		se.mu.Unlock()
+		s.audit.Write(nil, audit.Event{Action: "term.end", Target: auditTarget(se.Kind, se.Target), Ref: ref,
+			Duration: now.Sub(se.Created), Details: map[string]any{"id": se.ID, "kind": se.Kind, "reason": reason, "exitCode": code}})
 		go se.kill()
 	}
 }
@@ -220,7 +231,13 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) error {
 	if se != nil {
 		details["id"] = se.ID
 	}
-	s.audit.Record(r, "term.open", auditTarget(req.Kind, req.Target), err, details)
+	ref := s.audit.Write(r, audit.Event{Action: "term.open", Target: auditTarget(req.Kind, req.Target), Err: err, Details: details})
+	if se != nil {
+		// The session is already reachable by reap and remove.
+		se.mu.Lock()
+		se.auditRef = ref
+		se.mu.Unlock()
+	}
 	if err != nil {
 		var he *httpx.Error
 		if errors.As(err, &he) {
@@ -317,9 +334,11 @@ func (s *Service) remove(w http.ResponseWriter, r *http.Request) error {
 	}
 	se.mu.Lock()
 	se.detachLocked(reasonKilled)
+	ref := se.auditRef
 	se.mu.Unlock()
 	se.kill()
-	s.audit.Record(r, "term.close", auditTarget(se.Kind, se.Target), nil, map[string]any{"id": se.ID, "kind": se.Kind})
+	s.audit.Write(r, audit.Event{Action: "term.close", Target: auditTarget(se.Kind, se.Target), Ref: ref,
+		Duration: time.Since(se.Created), Details: map[string]any{"id": se.ID, "kind": se.Kind}})
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

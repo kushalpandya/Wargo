@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/schedule"
 )
@@ -236,7 +237,10 @@ func (s *Service) runCheck(ctx context.Context) error {
 func (s *Service) handleCheckUpdates(w http.ResponseWriter, r *http.Request) error {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	if err := s.CheckUpdates(ctx); err != nil {
+	started := time.Now()
+	err := s.CheckUpdates(ctx)
+	s.audit.Write(r, audit.Event{Action: "containers.check_updates", Target: "manual", Err: err, Duration: time.Since(started)})
+	if err != nil {
 		return dockerErr(err)
 	}
 	l, err := s.List(ctx, false)
@@ -358,6 +362,7 @@ func (s *Service) autoCheck(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
+			s.audit.Outcome("containers.check_updates", "background", err, nil)
 			// Retry sooner than the full interval, at most every 30 minutes.
 			s.mu.Lock()
 			s.retryAt = time.Now().Add(min(s.checkInterval, 30*time.Minute))
@@ -366,6 +371,7 @@ func (s *Service) autoCheck(ctx context.Context) {
 		}
 		s.reportUpdates(ctx, true)
 		end()
+		s.audit.Outcome("containers.check_updates", "background", nil, nil)
 	}
 }
 

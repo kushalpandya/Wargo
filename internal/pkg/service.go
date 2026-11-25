@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/elevate"
 	"github.com/kushalpandya/wargo/internal/helper"
 	"github.com/kushalpandya/wargo/internal/host"
@@ -79,6 +79,9 @@ type RunRecord struct {
 	RebootRequired bool         `json:"rebootRequired"`
 	RebootReason   string       `json:"rebootReason,omitempty"`
 	ConfigFiles    []ConfigFile `json:"configFiles,omitempty"`
+	// Audit links the finished entry to the approved request that started
+	// the run, also when Wargo restarted in between.
+	Audit *audit.Span `json:"audit,omitempty"`
 }
 
 // Reboot is the host's reboot-required state.
@@ -151,6 +154,7 @@ func New(d *server.Deps) *Service {
 		s.legacyLogDir = ""
 		s.bareLogName = true
 	}
+	d.Audit.AllowLogs(s.openAuditLog)
 	s.be = Detect(s.osr, hasBin)
 	if s.be != nil {
 		switch b := s.be.(type) {
@@ -358,7 +362,13 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 		s.publish()
 	}
 
+	started := time.Now()
 	res, err := s.list(context.WithoutCancel(r.Context()), false)
+	var details map[string]any
+	if res != nil {
+		details = map[string]any{"backend": s.be.Name(), "updates": len(res.Updates), "extras": len(res.Extras)}
+	}
+	s.d.Audit.Write(r, audit.Event{Action: "pkg.check", Target: "manual", Err: err, Duration: time.Since(started), Details: details})
 	if err != nil {
 		return httpx.Errorf(http.StatusBadGateway, "check_failed", err.Error())
 	}
@@ -487,9 +497,10 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := time.Now()
 	id := now.Format("20060102-150405")
+	span := s.d.Audit.Begin(r, "pkg.upgrade", target)
 	rec := &RunRecord{
 		ID: id, Unit: "wargo-upgrade-" + id, Log: s.logPath(id),
-		Backend: s.be.Name(), Packages: pending, StartedAt: now, Fake: s.fake,
+		Backend: s.be.Name(), Packages: pending, StartedAt: now, Fake: s.fake, Audit: &span,
 	}
 	// O_EXCL never follows a symlink at the final component.
 	lf, err := os.OpenFile(host.Path(rec.Log), os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND|syscall.O_NOFOLLOW, 0o640)
@@ -792,9 +803,7 @@ func (s *Service) finish(rec *RunRecord, j *jobs.Job, exit *int, runErr error, s
 		"rebootReason": rec.RebootReason, "configFiles": rec.ConfigFiles, "log": rec.Log, "fake": rec.Fake,
 	})
 	slog.Info("pkg: upgrade finished", "unit", rec.Unit, "ok", rec.OK, "exit", exit, "fake", rec.Fake)
-	// Details feed Home's Activity card (how many packages changed).
-	s.d.Audit.RecordSystemDetails("pkg.upgrade.finished", rec.Unit, resultText(rec),
-		map[string]any{"backend": rec.Backend, "packages": rec.Packages, "upgraded": rec.Upgraded, "fake": rec.Fake})
+	s.auditFinished(rec, runErr)
 
 	s.mu.Lock()
 	if s.job == j {
@@ -830,11 +839,50 @@ func newOnly(c []ConfigFile) []ConfigFile {
 	return out
 }
 
-func resultText(r *RunRecord) string {
-	if r.OK {
-		return "ok"
+// auditFinished records the run's end. Details feed Home's Activity card
+// (how many packages changed); a failed run keeps the end of its log.
+func (s *Service) auditFinished(rec *RunRecord, runErr error) {
+	details := map[string]any{
+		"backend": rec.Backend, "packages": rec.Packages, "upgraded": rec.Upgraded, "fake": rec.Fake,
+		"unit": rec.Unit, "stage": rec.Stage, "exitStatus": rec.ExitStatus,
 	}
-	return "error: " + r.Error
+	if rec.RebootRequired {
+		details["rebootRequired"] = true
+	}
+	AuditRunFinished(s.d.Audit, "pkg.upgrade", rec, rec.Unit, host.Path(rec.Log), runErr, details)
+}
+
+// auditTailLines is how much of a failed run's log its audit entry keeps.
+const auditTailLines = 40
+
+// AuditRunFinished records the end of an upgrade run (OS packages or
+// Homebrew) as "<action>.finished", linked to the request that started it
+// (rec.Audit) and with the end of the log when it failed. logPath is where
+// Wargo reads the log (rec.Log is where the run wrote it).
+func AuditRunFinished(al *audit.Log, action string, rec *RunRecord, target, logPath string, runErr error, details map[string]any) {
+	span := audit.Span{Action: action, Started: rec.StartedAt}
+	if rec.Audit != nil {
+		span = *rec.Audit
+	}
+	out := &audit.Output{Log: rec.Log}
+	if runErr != nil {
+		if lines, err := TailLines(logPath, 256<<10); err == nil {
+			out.Lines, out.Truncated = lastN(lines, auditTailLines)
+		}
+	}
+	var took time.Duration
+	if rec.FinishedAt != nil {
+		took = rec.FinishedAt.Sub(rec.StartedAt)
+	}
+	al.End(span, audit.Event{Action: action + ".finished", Target: target, Err: runErr, Duration: took, Details: details, Output: out})
+}
+
+// lastN returns the last n lines, and whether there were more.
+func lastN(lines []string, n int) ([]string, bool) {
+	if len(lines) > n {
+		return lines[len(lines)-n:], true
+	}
+	return lines, false
 }
 
 // handleLog returns the tail of the current or last run's log.
@@ -859,6 +907,17 @@ func (s *Service) handleLog(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// openAuditLog opens an upgrade log an audit entry points at: only files
+// named like upgrade logs, directly in the directories they are kept in.
+func (s *Service) openAuditLog(path string) (*os.File, error) {
+	dir := filepath.Dir(path)
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || !upgradeLogRe.MatchString(filepath.Base(path)) ||
+		(dir != s.dataDir && (s.legacyLogDir == "" || dir != s.legacyLogDir)) {
+		return nil, audit.ErrNotMine
+	}
+	return OpenLog(host.Path(path))
+}
+
 // OpenLog opens an upgrade log for reading without following a symlink
 // planted in its place (in container mode Wargo reads it as root).
 func OpenLog(path string) (*os.File, error) {
@@ -873,21 +932,9 @@ func TailLines(path string, limit int64) ([]string, error) {
 		return nil, err
 	}
 	defer f.Close()
-	st, err := f.Stat()
+	raw, _, err := audit.TailFile(f, limit)
 	if err != nil {
 		return nil, err
-	}
-	off := max(0, st.Size()-limit)
-	if _, err := f.Seek(off, io.SeekStart); err != nil {
-		return nil, err
-	}
-	b, err := io.ReadAll(io.LimitReader(f, limit))
-	if err != nil {
-		return nil, err
-	}
-	raw := strings.Split(string(b), "\n")
-	if off > 0 && len(raw) > 0 {
-		raw = raw[1:]
 	}
 	out := make([]string, 0, len(raw))
 	for _, l := range raw {

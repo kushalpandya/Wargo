@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/config"
 	"github.com/kushalpandya/wargo/internal/fsops"
 	"github.com/kushalpandya/wargo/internal/host"
@@ -35,6 +36,7 @@ import (
 // Auditor records mutating actions (satisfied by *audit.Log).
 type Auditor interface {
 	Record(r *http.Request, action, target string, err error, details any)
+	Write(r *http.Request, ev audit.Event) int64
 }
 
 // Elevator runs privileged helper commands (satisfied by *elevate.Service).
@@ -142,6 +144,14 @@ func (r rootAuditor) Record(req *http.Request, action, target string, err error,
 		r.a.Record(req, action, target, err, details)
 		return nil
 	})
+}
+
+func (r rootAuditor) Write(req *http.Request, ev audit.Event) (id int64) {
+	host.AsRoot(func() error {
+		id = r.a.Write(req, ev)
+		return nil
+	})
+	return id
 }
 
 // prepareUploadDir lets the admin account stage uploads (container mode):
@@ -479,6 +489,13 @@ func (s *Service) tryElevated(r *http.Request, ref rootRef, op, rel, arg string,
 func (s *Service) record(r *http.Request, action string, ref rootRef, target string, err error, details any) {
 	if s.audit != nil {
 		s.audit.Record(r, action, filepath.Join(ref.Path, target), err, details)
+	}
+}
+
+// recordJob audits a background job's outcome with how long it ran.
+func (s *Service) recordJob(r *http.Request, action string, ref rootRef, target string, err error, details any, took time.Duration) {
+	if s.audit != nil {
+		s.audit.Write(r, audit.Event{Action: action, Target: filepath.Join(ref.Path, target), Err: err, Details: details, Duration: took})
 	}
 }
 

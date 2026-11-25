@@ -27,8 +27,10 @@ type jobFunc func(ctx context.Context, root *os.Root, job *jobs.Job) (map[string
 func (s *Service) startJob(r *http.Request, kind, title string, ref rootRef, target string, details any, fn jobFunc) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	job := s.jobs.Start(kind, title, cancel)
-	// Keep only what the audit record needs; r's context ends with the request.
-	ar := r.Clone(context.Background())
+	started := time.Now()
+	// r's context ends with the request; keep its values (session,
+	// elevation, request ID) for the audit record.
+	ar := r.Clone(context.WithoutCancel(r.Context()))
 	go func() {
 		defer cancel()
 		var res map[string]any
@@ -54,7 +56,7 @@ func (s *Service) startJob(r *http.Request, kind, title string, ref rootRef, tar
 			job.Log(err.Error())
 		}
 		job.Finish(err, res)
-		s.record(ar, kind, ref, target, err, details)
+		s.recordJob(ar, kind, ref, target, err, details, time.Since(started))
 	}()
 	return job.ID()
 }

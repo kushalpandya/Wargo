@@ -1,19 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { memo, useDeferredValue, useMemo, useState, type ReactNode } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { RefreshCw, ScrollText } from "lucide-react";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { Bot, ChevronRight, Copy, FileText, RefreshCw, ScrollText, Timer, User } from "lucide-react";
 import { api, qs } from "@/lib/api";
+import { copyWithToast } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
-import { ago, datetime } from "@/lib/format";
+import { ago, datetime, durationMs } from "@/lib/format";
 import { useFillViewport } from "@/lib/hooks";
 import { Button, IconButton } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Sheet } from "@/components/ui/dialog";
+import { Dialog, Sheet } from "@/components/ui/dialog";
 import { SearchInput } from "@/components/ui/form";
 import { FilterMenu, radioGroup } from "@/components/ui/filter-menu";
-import { Badge, EmptyState, ErrorNote, Field, Skeleton } from "@/components/ui/misc";
+import { Badge, EmptyState, ErrorNote, Field, OutputBlock, Skeleton, Spinner } from "@/components/ui/misc";
 import { StatStrip, type StatItem } from "@/components/ui/stat-strip";
 import { Table, Td, Th, THead, Tr } from "@/components/ui/table";
+
+export type AuditSource = "user" | "system" | "job";
+
+export interface AuditOutput {
+  lines?: string[];
+  truncated?: boolean;
+  log?: string;
+}
 
 export interface AuditEntry {
   id: number;
@@ -25,40 +34,231 @@ export interface AuditEntry {
   result: string;
   elevation?: string;
   details?: unknown;
+  /** "user": a request from a browser; "system": Wargo itself; "job": the end of a job started earlier. */
+  source: AuditSource;
+  code?: string;
+  /** The entry this one belongs to (a job's end points at its start). */
+  ref?: number;
+  session?: string;
+  request?: string;
+  route?: string;
+  version?: string;
+  durationMs?: number;
+  hasOutput?: boolean;
+  /** Only in GET /api/audit/{id}. */
+  output?: AuditOutput;
 }
 
 type ResultFilter = "all" | "ok" | "error";
+type SourceFilter = "all" | "user" | "wargo";
 
 const PAGE = 100;
 
+/** Areas for the filter, by the first part of the action. */
+const AREAS: Record<string, string> = {
+  auth: "Sign-in",
+  files: "Files",
+  containers: "Containers",
+  pkg: "Updates",
+  brew: "Updates",
+  term: "Terminal",
+  procs: "Processes",
+  integrations: "Integrations",
+  prowlarr: "Integrations",
+  transmission: "Integrations",
+  notify: "Notifications",
+  launcher: "Apps",
+  appearance: "Settings",
+  weather: "Settings",
+  jobs: "Wargo",
+  wargo: "Wargo",
+  server: "Wargo",
+};
+const areaOf = (action: string) => AREAS[action.split(".")[0]] ?? "Other";
+
+const isOk = (r: string) => r === "ok";
+const isCanceled = (r: string) => r === "canceled";
+const errorText = (r: string) => r.replace(/^error:\s*/, "");
+
 function Result({ r }: { r: string }) {
-  const ok = r === "ok";
+  if (isOk(r)) return <Badge tone="ok">OK</Badge>;
+  if (isCanceled(r)) return <Badge>Canceled</Badge>;
   return (
-    <Badge tone={ok ? "ok" : "crit"} title={ok ? undefined : r}>
-      {ok ? "OK" : "Error"}
+    <Badge tone="crit" title={errorText(r)}>
+      Error
     </Badge>
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+const SOURCES: Record<AuditSource, { label: string; icon: typeof User }> = {
+  user: { label: "Browser", icon: User },
+  system: { label: "Wargo", icon: Bot },
+  job: { label: "Job", icon: Timer },
+};
+
+function Source({ s, withLabel }: { s: AuditSource; withLabel?: boolean }) {
+  const { label, icon: Icon } = SOURCES[s] ?? SOURCES.system;
+  const title = s === "job" ? "The end of a job started earlier" : s === "system" ? "Done by Wargo itself" : "Done from a browser";
+  return (
+    <span className="inline-flex items-center gap-1.5 text-muted" title={title}>
+      <Icon className="size-3.5 shrink-0" aria-hidden />
+      {withLabel ? label : <span className="sr-only">{label}</span>}
+    </span>
+  );
+}
+
+function Section({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return (
     <section className="border-b border-border px-4 py-3 last:border-0">
-      <h3 className="mb-1 text-2xs font-semibold uppercase tracking-wider text-subtle">{title}</h3>
+      <div className="mb-1 flex min-h-6 items-center justify-between gap-2">
+        <h3 className="text-2xs font-semibold uppercase tracking-wider text-subtle">{title}</h3>
+        {action}
+      </div>
       {children}
     </section>
   );
 }
 
-/** One entry's details, in a side sheet like a process's. */
-function AuditSheet({ entry, onClose }: { entry: AuditEntry | null; onClose: () => void }) {
-  const e = entry;
+function None() {
+  return <span className="text-muted">None</span>;
+}
+
+/** The full log file an entry points at, while Wargo still keeps it. */
+function LogDialog({ entry, onClose }: { entry: AuditEntry | null; onClose: () => void }) {
+  const q = useQuery({
+    queryKey: ["audit", "log", entry?.id],
+    queryFn: () => api.get<{ path: string; lines: string[]; truncated: boolean }>(`/api/audit/${entry!.id}/log`),
+    enabled: !!entry,
+    retry: false,
+  });
   return (
-    <Sheet open={!!e} onOpenChange={(o) => !o && onClose()} title={e?.action ?? ""} description={e ? datetime(e.ts) : undefined}>
+    <Dialog
+      open={!!entry}
+      onOpenChange={(o) => !o && onClose()}
+      title="Log"
+      description={entry?.output?.log}
+      size="xl"
+      footer={
+        <>
+          {q.data && (
+            <Button icon={<Copy />} onClick={() => copyWithToast(q.data.lines.join("\n"))}>
+              Copy
+            </Button>
+          )}
+          <Button onClick={onClose}>Close</Button>
+        </>
+      }
+    >
+      {q.isLoading ? (
+        <div className="flex justify-center py-6 text-muted">
+          <Spinner />
+        </div>
+      ) : q.error ? (
+        <ErrorNote error={q.error} />
+      ) : (
+        q.data && (
+          <>
+            {q.data.truncated && <p className="mb-2 text-xs text-muted">Showing the end of the log.</p>}
+            <OutputBlock className="max-h-[60dvh]" label="Log">
+              {q.data.lines.join("\n")}
+            </OutputBlock>
+          </>
+        )
+      )}
+    </Dialog>
+  );
+}
+
+/** A linked entry: the start of a job, or its end. */
+function RelatedRow({ e, current, onOpen }: { e: AuditEntry; current: AuditEntry; onOpen: (e: AuditEntry) => void }) {
+  const relation = e.id === current.ref ? "Started by" : "Followed by";
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onOpen(e)}
+        className="flex min-h-11 w-full items-center gap-3 rounded px-2 py-1.5 text-left hover:bg-surface-2"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-2xs text-subtle">{relation}</div>
+          <div className="num truncate text-sm font-medium">{e.action}</div>
+          <div className="truncate text-xs text-subtle">{[e.target, ago(e.ts)].filter(Boolean).join(" · ")}</div>
+        </div>
+        <Result r={e.result} />
+        <ChevronRight className="size-4 shrink-0 text-subtle" aria-hidden />
+      </button>
+    </li>
+  );
+}
+
+/** One entry's details, in a side sheet like a process's. */
+function AuditSheet({ entry, onOpen, onClose }: { entry: AuditEntry | null; onOpen: (e: AuditEntry) => void; onClose: () => void }) {
+  const full = useQuery({
+    queryKey: ["audit", "entry", entry?.id],
+    queryFn: () => api.get<{ entry: AuditEntry; related: AuditEntry[] }>(`/api/audit/${entry!.id}`),
+    enabled: !!entry,
+  });
+  const [logOf, setLogOf] = useState<AuditEntry | null>(null);
+  // The list row shows at once; the full entry (output, links) follows.
+  const loaded = entry && full.data?.entry.id === entry.id ? full.data : undefined;
+  const e = loaded?.entry ?? entry;
+  const related = loaded?.related.filter((r) => r.id !== entry?.id) ?? [];
+  const out = e?.output;
+  return (
+    <Sheet
+      open={!!entry}
+      onOpenChange={(o) => !o && onClose()}
+      title={e?.action ?? ""}
+      description={e ? datetime(e.ts) : undefined}
+      actions={
+        e && (
+          <IconButton label="Copy entry as JSON" size="sm" onClick={() => copyWithToast(JSON.stringify({ entry: e, related }, null, 2), "Entry copied")}>
+            <Copy />
+          </IconButton>
+        )
+      }
+    >
       {e && (
         <>
-          {e.result !== "ok" && (
+          {!isOk(e.result) && !isCanceled(e.result) && (
             <Section title="Error">
-              <p className="break-words text-sm text-crit">{e.result.replace(/^error:\s*/, "")}</p>
+              <p className="break-words text-sm text-crit">{errorText(e.result)}</p>
+              {e.code && (
+                <p className="mt-1.5">
+                  <Badge tone="crit" className="num">
+                    {e.code}
+                  </Badge>
+                </p>
+              )}
+            </Section>
+          )}
+          {(out?.lines?.length || out?.log) && (
+            <Section
+              title="Output"
+              action={
+                out.lines?.length ? (
+                  <IconButton label="Copy output" size="xs" onClick={() => copyWithToast(out.lines!.join("\n"))}>
+                    <Copy />
+                  </IconButton>
+                ) : undefined
+              }
+            >
+              {out.lines?.length ? (
+                <>
+                  {out.truncated && <p className="mb-1 text-xs text-muted">The last lines:</p>}
+                  <OutputBlock label="Output">{out.lines.join("\n")}</OutputBlock>
+                </>
+              ) : null}
+              {out.log && (
+                <Button size="sm" icon={<FileText />} className="mt-2" onClick={() => setLogOf(e)}>
+                  Open full log
+                </Button>
+              )}
+            </Section>
+          )}
+          {e.hasOutput && !out && full.isLoading && (
+            <Section title="Output">
+              <Skeleton className="h-16" />
             </Section>
           )}
           <Section title="Entry">
@@ -66,23 +266,62 @@ function AuditSheet({ entry, onClose }: { entry: AuditEntry | null; onClose: () 
               <Field label="Result">
                 <Result r={e.result} />
               </Field>
-              <Field label="Target">{e.target ? <span title={e.target}>{e.target}</span> : <span className="text-muted">None</span>}</Field>
-              <Field label="Elevation">{e.elevation ? <Badge tone="accent">{e.elevation}</Badge> : <span className="text-muted">None</span>}</Field>
+              <Field label="Target">{e.target ? <span title={e.target}>{e.target}</span> : <None />}</Field>
+              <Field label="By">
+                <Source s={e.source} withLabel />
+              </Field>
+              <Field label="Duration" mono>
+                {durationMs(e.durationMs) ?? <None />}
+              </Field>
+              <Field label="Elevation">{e.elevation ? <Badge tone="accent">{e.elevation}</Badge> : <None />}</Field>
               <Field label="IP address" mono>
-                {e.ip}
+                {e.ip || <None />}
+              </Field>
+              <Field label="Session" mono>
+                {e.session || <None />}
+              </Field>
+              <Field label="Wargo version" mono>
+                {e.version || <None />}
               </Field>
             </dl>
           </Section>
+          {(e.route || e.request) && (
+            <Section title="Request">
+              <dl className="text-sm">
+                <Field label="Route" mono>
+                  {e.route ? <span title={e.route}>{e.route}</span> : <None />}
+                </Field>
+                <Field label="Request ID" mono>
+                  {e.request || <None />}
+                </Field>
+              </dl>
+            </Section>
+          )}
+          {related.length > 0 && (
+            <Section title="Related">
+              <ul className="-mx-2">
+                {related.map((r) => (
+                  <RelatedRow key={r.id} e={r} current={e} onOpen={onOpen} />
+                ))}
+              </ul>
+            </Section>
+          )}
           <Section title="User agent">
-            <p className="num break-all text-xs">{e.ua || <span className="text-muted">None</span>}</p>
+            <p className="num break-all text-xs">{e.ua || <None />}</p>
           </Section>
           {e.details != null && (
             <Section title="Details">
-              <pre className="num scroll-area max-h-80 overflow-auto whitespace-pre-wrap break-all rounded bg-surface-2 p-2 text-xs">{JSON.stringify(e.details, null, 2)}</pre>
+              <OutputBlock label="Details">{JSON.stringify(e.details, null, 2)}</OutputBlock>
             </Section>
+          )}
+          {full.error && (
+            <div className="p-4">
+              <ErrorNote error={full.error} />
+            </div>
           )}
         </>
       )}
+      <LogDialog entry={logOf} onClose={() => setLogOf(null)} />
     </Sheet>
   );
 }
@@ -99,8 +338,8 @@ function Summary({ entries }: { entries: AuditEntry[] | null }) {
       signIns = 0,
       failed = 0;
     for (const e of entries) {
-      const ok = e.result === "ok";
-      if (!ok) errors++;
+      const ok = isOk(e.result);
+      if (!ok && !isCanceled(e.result)) errors++;
       if (e.elevation) elevated++;
       if (ok && SIGN_INS.has(e.action)) signIns++;
       if (!ok && SIGN_IN_STEPS.has(e.action)) failed++;
@@ -120,6 +359,8 @@ function Summary({ entries }: { entries: AuditEntry[] | null }) {
 export const AuditPanel = memo(function AuditPanel() {
   const [q, setQ] = useState("");
   const [result, setResult] = useState<ResultFilter>("all");
+  const [source, setSource] = useState<SourceFilter>("all");
+  const [area, setArea] = useState("all");
   const [elevated, setElevated] = useState(false);
   const [open, setOpen] = useState<AuditEntry | null>(null);
   const dq = useDeferredValue(q.trim().toLowerCase());
@@ -130,16 +371,19 @@ export const AuditPanel = memo(function AuditPanel() {
     getNextPageParam: (last) => (last.length < PAGE ? undefined : last[last.length - 1].id),
   });
   const all = useMemo(() => query.data?.pages.flat() ?? [], [query.data]);
+  const areas = useMemo(() => [...new Set(all.map((e) => areaOf(e.action)))].sort(), [all]);
   // Filters apply to the entries loaded so far; "Load more" fetches older ones.
   const rows = useMemo(
     () =>
       all.filter(
         (e) =>
-          (result === "all" || (result === "ok") === (e.result === "ok")) &&
+          (result === "all" || (result === "ok" ? isOk(e.result) : !isOk(e.result) && !isCanceled(e.result))) &&
+          (source === "all" || (source === "user") === (e.source === "user")) &&
+          (area === "all" || areaOf(e.action) === area) &&
           (!elevated || !!e.elevation) &&
-          (!dq || [e.action, e.target, e.result, e.ip, e.elevation ?? ""].some((v) => v.toLowerCase().includes(dq))),
+          (!dq || [e.action, e.target, e.result, e.ip, e.elevation ?? "", e.code ?? "", e.request ?? ""].some((v) => v.toLowerCase().includes(dq))),
       ),
-    [all, result, elevated, dq],
+    [all, result, source, area, elevated, dq],
   );
 
   const [tableEl, setTableEl] = useState<HTMLDivElement | null>(null);
@@ -158,11 +402,13 @@ export const AuditPanel = memo(function AuditPanel() {
       <Card>
         {/* One line at every width, like Processes: the search shrinks, the buttons don't wrap. */}
         <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-          <SearchInput value={q} onChange={setQ} placeholder="Filter by action, target or IP…" className="min-w-0 flex-1" label="Filter audit log" />
+          <SearchInput value={q} onChange={setQ} placeholder="Filter by action, target, code or IP…" className="min-w-0 flex-1" label="Filter audit log" />
           <FilterMenu
-            active={(result !== "all" ? 1 : 0) + (elevated ? 1 : 0)}
+            active={(result !== "all" ? 1 : 0) + (source !== "all" ? 1 : 0) + (area !== "all" ? 1 : 0) + (elevated ? 1 : 0)}
             onClear={() => {
               setResult("all");
+              setSource("all");
+              setArea("all");
               setElevated(false);
             }}
             groups={[
@@ -171,6 +417,12 @@ export const AuditPanel = memo(function AuditPanel() {
                 { value: "ok", label: "OK" },
                 { value: "error", label: "Errors" },
               ]),
+              radioGroup<SourceFilter>("By", source, setSource, [
+                { value: "all", label: "Anyone" },
+                { value: "user", label: "From a browser" },
+                { value: "wargo", label: "Wargo and jobs" },
+              ]),
+              radioGroup("Area", area, setArea, [{ value: "all", label: "All areas" }, ...areas.map((a) => ({ value: a, label: a }))]),
               { kind: "check", title: "Only", items: [{ label: "Elevated actions", checked: elevated, onChange: setElevated }] },
             ]}
           />
@@ -200,9 +452,13 @@ export const AuditPanel = memo(function AuditPanel() {
                 <THead>
                   <tr>
                     <Th className="w-28">Time</Th>
+                    <Th className="w-10">
+                      <span className="sr-only">By</span>
+                    </Th>
                     <Th>Action</Th>
                     <Th>Target</Th>
                     <Th className="w-24">Result</Th>
+                    <Th className="max-xl:hidden">Duration</Th>
                     <Th className="max-lg:hidden">Elevation</Th>
                     <Th className="max-lg:hidden">IP</Th>
                   </tr>
@@ -225,6 +481,9 @@ export const AuditPanel = memo(function AuditPanel() {
                       <Td className="num whitespace-nowrap text-muted" title={datetime(e.ts)}>
                         {ago(e.ts)}
                       </Td>
+                      <Td>
+                        <Source s={e.source} />
+                      </Td>
                       <Td className="num whitespace-nowrap font-medium">{e.action}</Td>
                       <Td className="max-w-[18rem] truncate" title={e.target}>
                         {e.target}
@@ -232,6 +491,7 @@ export const AuditPanel = memo(function AuditPanel() {
                       <Td>
                         <Result r={e.result} />
                       </Td>
+                      <Td className="num whitespace-nowrap text-muted max-xl:hidden">{durationMs(e.durationMs)}</Td>
                       <Td className="max-lg:hidden">{e.elevation && <Badge tone="accent">{e.elevation}</Badge>}</Td>
                       <Td className="num text-muted max-lg:hidden">{e.ip}</Td>
                     </Tr>
@@ -244,6 +504,7 @@ export const AuditPanel = memo(function AuditPanel() {
                 {rows.map((e) => (
                   <li key={e.id}>
                     <button type="button" onClick={() => setOpen(e)} className="flex min-h-12 w-full items-center gap-3 border-b border-border px-4 py-2 text-left hover:bg-surface-2">
+                      <Source s={e.source} />
                       <div className="min-w-0 flex-1">
                         <div className="num truncate text-sm font-medium">{e.action}</div>
                         <div className="truncate text-xs text-subtle">{[e.target, e.ip].filter(Boolean).join(" · ")}</div>
@@ -275,7 +536,7 @@ export const AuditPanel = memo(function AuditPanel() {
           </div>
         )}
       </Card>
-      <AuditSheet entry={open} onClose={() => setOpen(null)} />
+      <AuditSheet entry={open} onOpen={setOpen} onClose={() => setOpen(null)} />
     </div>
   );
 });

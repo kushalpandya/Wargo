@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
@@ -280,6 +281,16 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request, id string
 	details := map[string]any{"id": in.ID, "strategy": strategy, "image": in.Config.Image, "job": job.ID()}
 	// Detach from the request but keep its headers (elevation credential).
 	rr := r.Clone(context.WithoutCancel(r.Context()))
+	started := time.Now()
+	// record audits the outcome with how long it took and, when it failed,
+	// the end of the job's log.
+	record := func(err error) {
+		ev := audit.Event{Action: "containers.update", Target: name, Err: err, Details: details, Duration: time.Since(started)}
+		if err != nil {
+			ev.Output = &audit.Output{Lines: job.Lines()}
+		}
+		s.audit.Write(rr, ev)
+	}
 	go func() {
 		defer jcancel()
 		defer func() {
@@ -306,10 +317,10 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request, id string
 			result = map[string]any{"strategy": "compose"}
 		default:
 			result, err = s.UpdateRecreate(jctx, job, in.ID)
-			s.audit.Record(rr, "containers.update", name, err, details)
+			record(err)
 		}
 		if strategy == "compose" && !elevated {
-			s.audit.Record(rr, "containers.update", name, err, details)
+			record(err)
 		}
 		job.Finish(err, result)
 		if err == nil {

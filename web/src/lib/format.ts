@@ -50,6 +50,12 @@ export function duration(sec: number | undefined): string {
   return `${sec}s`;
 }
 
+/** Milliseconds -> "850 ms", or duration() from a second up ("1m 15s"); undefined for none. */
+export function durationMs(ms: number | undefined): string | undefined {
+  if (!ms) return undefined;
+  return ms < 1000 ? `${ms} ms` : duration(ms / 1000);
+}
+
 const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto", style: "short" });
 
 /** Date -> "5 min. ago". */

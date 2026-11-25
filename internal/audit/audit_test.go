@@ -81,7 +81,7 @@ func TestListPrefix(t *testing.T) {
 	defer st.Close()
 	l := New(st, httpx.NewProxyTrust(nil))
 	for _, a := range []string{"files.upload", "auth.password", "files.delete"} {
-		l.RecordSystem(a, "x", "ok")
+		l.Write(nil, Event{Action: a, Target: "x"})
 	}
 	mux := http.NewServeMux()
 	l.Register(mux)
@@ -114,7 +114,7 @@ func TestListActions(t *testing.T) {
 	defer st.Close()
 	l := New(st, httpx.NewProxyTrust(nil))
 	for _, a := range []string{"containers.update", "containers.update.self.start", "pkg.upgrade", "pkg.upgrade.finished", "brew.upgrade.finished"} {
-		l.RecordSystem(a, "x", "ok")
+		l.Write(nil, Event{Action: a, Target: "x"})
 	}
 	mux := http.NewServeMux()
 	l.Register(mux)

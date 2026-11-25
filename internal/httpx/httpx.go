@@ -62,7 +62,7 @@ func OK(w http.ResponseWriter, v any) { JSON(w, http.StatusOK, v) }
 func Fail(w http.ResponseWriter, r *http.Request, err error) {
 	var e *Error
 	if !errors.As(err, &e) {
-		slog.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+		slog.Error("request failed", "method", r.Method, "path", r.URL.Path, "request", RequestID(r.Context()), "err", err)
 		e = Errorf(http.StatusInternalServerError, "internal", err.Error())
 	}
 	JSON(w, e.Status, e)

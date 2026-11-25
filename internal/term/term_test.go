@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/kushalpandya/wargo/internal/audit"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -166,8 +167,9 @@ func TestScanTitle(t *testing.T) {
 
 type nopAudit struct{ actions []string }
 
-func (n *nopAudit) Record(r *http.Request, action, target string, err error, details any) {
-	n.actions = append(n.actions, action+" "+target)
+func (n *nopAudit) Write(r *http.Request, ev audit.Event) int64 {
+	n.actions = append(n.actions, ev.Action+" "+ev.Target)
+	return int64(len(n.actions))
 }
 
 // testService returns a service whose "host" kind runs the given shell

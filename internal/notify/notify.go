@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/events"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/store"
@@ -105,6 +106,10 @@ type PushFunc func(ctx context.Context, cat Category, key, title, body, link str
 type Center struct {
 	st  *store.Store
 	hub *events.Hub
+
+	// Audit records setting changes, push registrations and push delivery
+	// problems (optional; set before serving).
+	Audit *audit.Log
 
 	// now is the clock (replaced in tests).
 	now func() time.Time

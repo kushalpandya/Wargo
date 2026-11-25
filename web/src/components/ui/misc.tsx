@@ -226,6 +226,23 @@ export function Field({ label, children, mono }: { label: ReactNode; children: R
   );
 }
 
+/**
+ * Monospace output (command output, logs, JSON) in a scrollable box that
+ * keyboard users can focus to scroll. `className` sets the height cap or
+ * the background where the default doesn't fit.
+ */
+export function OutputBlock({ children, className, label }: { children: ReactNode; className?: string; label?: string }) {
+  return (
+    <pre
+      tabIndex={0}
+      aria-label={label}
+      className={cn("num scroll-area max-h-80 overflow-auto whitespace-pre-wrap break-all rounded bg-surface-2 p-2 text-xs", className)}
+    >
+      {children}
+    </pre>
+  );
+}
+
 export function ErrorNote({ error, className }: { error: unknown; className?: string }) {
   if (!error) return null;
   const msg = error instanceof Error ? error.message : String(error);

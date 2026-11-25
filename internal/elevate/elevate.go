@@ -252,9 +252,19 @@ func (s *Service) Run(r *http.Request, action, target string, argv []string, std
 	default:
 		s.throttle.Release(ip)
 	}
-	ctx := audit.WithElevation(r.Context(), cred.Method)
-	s.audit.Record(r.WithContext(ctx), action, target, err, map[string]any{"argv": argv})
+	s.record(r, cred.Method, action, target, argv, out, err)
 	return out, err
+}
+
+// record audits an approved (or refused) command, with what it printed
+// when it failed. File operations never keep their output: for a read it
+// is the file's content (a shadow file or a key, cut off by the error).
+func (s *Service) record(r *http.Request, method, action, target string, argv []string, out []byte, err error) {
+	ev := audit.Event{Action: action, Target: target, Err: err, Details: map[string]any{"argv": argv}}
+	if err != nil && len(out) > 0 && !strings.HasPrefix(action, "files.") {
+		ev.Output = audit.OutputFrom(string(out), "")
+	}
+	s.audit.Write(r.WithContext(audit.WithElevation(r.Context(), method)), ev)
 }
 
 // ErrPasswordRequired asks the client for the account (sudo) password only,
@@ -327,8 +337,7 @@ func (s *Service) runContainer(r *http.Request, cred *Credential, ip, action, ta
 			s.throttle.Success(ip)
 			out, err = s.runApproved(r.Context(), argv, stdin)
 		}
-		ctx := audit.WithElevation(r.Context(), method)
-		s.audit.Record(r.WithContext(ctx), action, target, err, map[string]any{"argv": argv})
+		s.record(r, method, action, target, argv, out, err)
 		return err
 	})
 	return out, err

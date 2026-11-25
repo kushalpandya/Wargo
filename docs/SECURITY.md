@@ -316,10 +316,32 @@ library image paths, so the browser never needs the Plex token.
 
 ## Audit log
 
-Sign-ins, account changes, every approved admin action and every change Wargo
-makes (process signals, container actions, file changes, torrent actions,
-upgrades) are logged with the time, visitor IP, browser, result and approval
-method. See System Monitor → Audit.
+Sign-ins and sign-outs, account changes, every approved admin action and every
+change Wargo makes (process signals, container actions, file changes, terminal
+sessions, torrent actions, setting changes, upgrades) are logged with the time,
+visitor IP, browser, result and approval method. See System Monitor → Audit.
+
+To help diagnose problems later, each entry also keeps:
+
+- **Who or what did it:** you (a request from a browser), Wargo itself
+  (background checks, push delivery, start and stop), or the end of a job you
+  started earlier. A job's end entry links to the request that started it,
+  even when Wargo restarted in between.
+- **Context:** a short tag for the session, the request's route and ID (also
+  sent as the `X-Request-ID` response header and written to Wargo's own log),
+  Wargo's version and how long the action took.
+- **Why it failed:** a stable error code, and for failed commands, upgrades
+  and crashes the last lines of their output (at most 80 lines or 8 KB). The
+  full log of an upgrade can be opened from its entry while Wargo still keeps
+  the file.
+
+Background checks and push delivery are logged when they start failing, when
+the reason changes and when they work again, not on every run. Before anything
+is stored, known patterns of passwords, tokens and API keys (in URLs, headers,
+command-line options, details and output) are replaced with `[redacted]`. This
+is a safety net, not a guarantee, so features also keep secrets out of what
+they log. A failed admin file operation never keeps its output, since for a
+read that would be the file's content.
 
 ## Recommendations
 
@@ -361,7 +383,9 @@ Highlights of what was fixed:
   names, upload and zip limits; config imports don't follow symlinks anywhere
   below the container's config folder.
 - Limited growth: the audit log keeps 180 days or 50,000 entries at most, and
-  fields, event and job buffers have size limits.
+  about 32 MB of command output in total (checked at start and every 500
+  entries; the oldest output goes first), and fields, event and job buffers
+  have size limits.
 - Builds: release binaries need only glibc 2.28 and libpam; CI actions are
   pinned to exact commits with minimal permissions; releases include
   `SHA256SUMS`; `govulncheck` reports nothing with Go 1.26.10.

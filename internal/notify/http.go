@@ -4,6 +4,7 @@ package notify
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/kushalpandya/wargo/internal/auth"
 	"github.com/kushalpandya/wargo/internal/httpx"
@@ -28,7 +29,9 @@ func (c *Center) Register(mux *http.ServeMux) {
 		if err := httpx.Decode(r, &m); err != nil {
 			return err
 		}
-		if err := c.SetModes(r.Context(), m); err != nil {
+		err := c.SetModes(r.Context(), m)
+		c.Audit.Record(r, "notify.settings", "", err, m)
+		if err != nil {
 			return err
 		}
 		httpx.OK(w, c.Settings())
@@ -53,11 +56,15 @@ func (c *Center) handlePush(w http.ResponseWriter, r *http.Request) error {
 		if err := httpx.Decode(r, &s); err != nil {
 			return err
 		}
-		if err := c.subscribe(r.Context(), sess.IDHash, s); err != nil {
+		err := c.subscribe(r.Context(), sess.IDHash, s)
+		c.Audit.Record(r, "notify.push_subscribe", pushHost(s.Endpoint), err, nil)
+		if err != nil {
 			return err
 		}
 	case http.MethodDelete:
-		if err := c.unsubscribe(r.Context(), sess.IDHash); err != nil {
+		err := c.unsubscribe(r.Context(), sess.IDHash)
+		c.Audit.Record(r, "notify.push_unsubscribe", "", err, nil)
+		if err != nil {
 			return err
 		}
 	}
@@ -71,6 +78,15 @@ func (c *Center) handlePush(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.OK(w, map[string]any{"publicKey": key, "subscribed": on})
 	return nil
+}
+
+// pushHost is the push service's host: the rest of the endpoint identifies
+// the device.
+func pushHost(endpoint string) string {
+	if u, err := url.Parse(endpoint); err == nil {
+		return u.Host
+	}
+	return ""
 }
 
 // handleClear takes {"id": "..."} to clear one Recent item or {"all": true}

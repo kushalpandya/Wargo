@@ -74,6 +74,22 @@ var migrations = []string{
 	DELETE FROM settings WHERE key = 'launcher';`,
 	`INSERT INTO launcher_tiles(id, name, url, sort, new_tab, enabled, builtin) VALUES
 		('torrents', 'Torrents', '/torrents', -1, 0, 1, 'torrents');`,
+	// Audit entries carry what a later diagnosis needs: who or what wrote
+	// them, a stable error code, the entry they belong to (a job's end
+	// points at its start), the session and request, Wargo's version, how
+	// long the action took and the output of a failed command.
+	`ALTER TABLE audit_log ADD COLUMN source TEXT;
+	ALTER TABLE audit_log ADD COLUMN code TEXT;
+	ALTER TABLE audit_log ADD COLUMN ref INTEGER;
+	ALTER TABLE audit_log ADD COLUMN session TEXT;
+	ALTER TABLE audit_log ADD COLUMN request TEXT;
+	ALTER TABLE audit_log ADD COLUMN route TEXT;
+	ALTER TABLE audit_log ADD COLUMN version TEXT;
+	ALTER TABLE audit_log ADD COLUMN duration_ms INTEGER;
+	ALTER TABLE audit_log ADD COLUMN output TEXT;
+	CREATE INDEX audit_ref ON audit_log(ref);
+	CREATE INDEX audit_request ON audit_log(request);
+	CREATE INDEX audit_action ON audit_log(action, id);`,
 }
 
 // Open opens (and migrates) the database in dataDir.

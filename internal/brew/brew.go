@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/elevate"
 	"github.com/kushalpandya/wargo/internal/host"
 	"github.com/kushalpandya/wargo/internal/httpx"
@@ -117,6 +118,7 @@ func New(d *server.Deps) *Service {
 	s := &Service{d: d, supported: true, onHost: host.Container(), logDir: d.Cfg.DataDir,
 		sched: pkg.NewSchedule("brew.settings")}
 	s.sched.Store, s.sched.Audit = d.Store, d.Audit
+	d.Audit.AllowLogs(s.openAuditLog)
 	s.exe, _ = os.Executable()
 	if dir := os.Getenv("WARGO_BREW_FAKE"); dir != "" {
 		s.fake, s.fakeDir = true, dir
@@ -424,7 +426,13 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 		return httpx.Errorf(http.StatusConflict, "check_running", "A check or update is already running")
 	}
 	defer s.end()
+	started := time.Now()
 	res, err := s.list(context.WithoutCancel(r.Context()), false)
+	var details map[string]any
+	if res != nil {
+		details = map[string]any{"updates": len(res.Updates), "extras": len(res.Extras)}
+	}
+	s.d.Audit.Write(r, audit.Event{Action: "brew.check", Target: "manual", Err: err, Duration: time.Since(started), Details: details})
 	if err != nil {
 		return httpx.Errorf(http.StatusBadGateway, "check_failed", err.Error())
 	}
@@ -669,8 +677,9 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 	pruneLogs(s.logDir, 10)
 	now := time.Now()
 	id := now.Format("20060102-150405")
+	span := s.d.Audit.Begin(r, "brew.upgrade", target)
 	rec := &pkg.RunRecord{ID: id, Log: filepath.Join(s.logDir, "brew-"+id+".log"), Backend: "brew",
-		Packages: len(pending), StartedAt: now, Fake: s.fake}
+		Packages: len(pending), StartedAt: now, Fake: s.fake, Audit: &span}
 	lf, err := os.OpenFile(rec.Log, os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND|syscall.O_NOFOLLOW, 0o640)
 	if err != nil {
 		return httpx.Errorf(http.StatusConflict, "upgrade_running", "An update was just started")
@@ -843,13 +852,7 @@ func (s *Service) finish(rec *pkg.RunRecord, j *jobs.Job, exit *int, runErr erro
 		code = *exit
 	}
 	slog.Info("brew: update finished", "ok", rec.OK, "exit", code, "fake", rec.Fake)
-	result := "ok"
-	if !rec.OK {
-		result = "error: " + rec.Error
-	}
-	// Details feed Home's Activity card (how many packages changed).
-	s.d.Audit.RecordSystemDetails("brew.upgrade.finished", rec.ID, result,
-		map[string]any{"packages": rec.Packages, "upgraded": rec.Upgraded, "fake": rec.Fake})
+	s.auditFinished(rec, runErr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -897,6 +900,24 @@ func (s *Service) handleLog(w http.ResponseWriter, r *http.Request) error {
 }
 
 var logRe = regexp.MustCompile(`^brew-\d{8}-\d{6}\.log$`)
+
+// auditFinished records the update's end. Details feed Home's Activity
+// card (how many packages changed); a failed update keeps the end of its
+// log.
+func (s *Service) auditFinished(rec *pkg.RunRecord, runErr error) {
+	pkg.AuditRunFinished(s.d.Audit, "brew.upgrade", rec, rec.ID, rec.Log, runErr, map[string]any{
+		"packages": rec.Packages, "upgraded": rec.Upgraded, "fake": rec.Fake, "stage": rec.Stage, "exitStatus": rec.ExitStatus,
+	})
+}
+
+// openAuditLog opens an update log an audit entry points at: only files
+// named like update logs, directly in the directory they are kept in.
+func (s *Service) openAuditLog(path string) (*os.File, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || filepath.Dir(path) != s.logDir || !logRe.MatchString(filepath.Base(path)) {
+		return nil, audit.ErrNotMine
+	}
+	return pkg.OpenLog(path)
+}
 
 func pruneLogs(dir string, keep int) {
 	ents, err := os.ReadDir(dir)

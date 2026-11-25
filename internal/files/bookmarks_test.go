@@ -4,6 +4,7 @@ package files
 
 import (
 	"context"
+	"github.com/kushalpandya/wargo/internal/audit"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,6 +35,11 @@ type recAudit struct{ actions []string }
 
 func (a *recAudit) Record(_ *http.Request, action, target string, err error, _ any) {
 	a.actions = append(a.actions, action+" "+target)
+}
+
+func (a *recAudit) Write(r *http.Request, ev audit.Event) int64 {
+	a.Record(r, ev.Action, ev.Target, ev.Err, ev.Details)
+	return int64(len(a.actions))
 }
 
 // bmEnv builds a service with two configured roots backed by a real store.

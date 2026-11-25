@@ -7,12 +7,14 @@ package jobs
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/kushalpandya/wargo/internal/audit"
 	"github.com/kushalpandya/wargo/internal/events"
 	"github.com/kushalpandya/wargo/internal/httpx"
 )
@@ -60,6 +62,9 @@ type Manager struct {
 	hub  *events.Hub
 	mu   sync.Mutex
 	jobs map[string]*Job
+
+	// Audit records cancel requests (optional).
+	Audit *audit.Log
 }
 
 func NewManager(hub *events.Hub) *Manager {
@@ -212,6 +217,8 @@ func (j *Job) Cancel() bool {
 	return false
 }
 
+var errNotCancelable = errors.New("the job has finished or can't be canceled")
+
 // Register mounts the jobs API.
 func (m *Manager) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
@@ -230,7 +237,15 @@ func (m *Manager) Register(mux *http.ServeMux) {
 		if j == nil {
 			return httpx.ErrNotFound
 		}
-		httpx.OK(w, map[string]bool{"canceled": j.Cancel()})
+		snap := j.Snapshot()
+		ok := j.Cancel()
+		var err error
+		if !ok {
+			err = audit.WithCode(errNotCancelable, "not_cancelable")
+		}
+		m.Audit.Write(r, audit.Event{Action: "jobs.cancel", Target: snap.Title, Err: err,
+			Duration: time.Since(snap.StartedAt), Details: map[string]any{"id": snap.ID, "kind": snap.Kind, "state": snap.State}})
+		httpx.OK(w, map[string]bool{"canceled": ok})
 		return nil
 	}))
 }
