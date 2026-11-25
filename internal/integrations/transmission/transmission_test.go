@@ -118,6 +118,11 @@ func TestStatusName(t *testing.T) {
 			t.Errorf("%d: %s", i, got)
 		}
 	}
+	for _, code := range []int{-1, 7, 42} {
+		if got := transmission.StatusName(code); got != "unknown" {
+			t.Errorf("%d: %s; want unknown", code, got)
+		}
+	}
 }
 
 func TestTransmissionIgnoresProxyEnv(t *testing.T) {

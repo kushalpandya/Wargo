@@ -77,18 +77,12 @@ func TestToStreams(t *testing.T) {
 }
 
 type fakeWatchSource struct {
-	trOK, pxOK         bool
-	dlErr, stErr       error
-	dlFetches, stFetch int
-	dlNewSource        bool
+	pxOK    bool
+	stErr   error
+	stFetch int
 }
 
-func (f *fakeWatchSource) transmissionConfigured() bool { return f.trOK }
-func (f *fakeWatchSource) plexConfigured() bool         { return f.pxOK }
-func (f *fakeWatchSource) fetchDownloads(context.Context) ([]notify.Download, bool, error) {
-	f.dlFetches++
-	return nil, f.dlNewSource, f.dlErr
-}
+func (f *fakeWatchSource) plexConfigured() bool { return f.pxOK }
 func (f *fakeWatchSource) fetchStreams(context.Context) ([]notify.Stream, error) {
 	f.stFetch++
 	return nil, f.stErr
@@ -111,77 +105,53 @@ func (f *fakeWatchSink) SetStreams(context.Context, []notify.Stream)     { f.set
 func (f *fakeWatchSink) ResetDownloads()                                 { f.resetDls++ }
 func (f *fakeWatchSink) ResetStreams()                                   { f.resetStream++ }
 
-func TestWatchSkipsOnError(t *testing.T) {
+func TestWatchStreamsSkipsOnError(t *testing.T) {
 	ctx := context.Background()
-	src := &fakeWatchSource{trOK: true, pxOK: true, dlErr: errors.New("boom"), stErr: errors.New("boom")}
+	src := &fakeWatchSource{pxOK: true, stErr: errors.New("boom")}
 	dst := &fakeWatchSink{}
-	pollDownloads(ctx, src, dst)
 	pollStreams(ctx, src, dst)
-	if src.dlFetches != 1 || src.stFetch != 1 {
-		t.Fatalf("fetches = %d, %d; want 1, 1", src.dlFetches, src.stFetch)
+	if src.stFetch != 1 || dst.setStream != 0 {
+		t.Fatalf("after a failed fetch: fetches %d, Set %d; want 1, 0", src.stFetch, dst.setStream)
 	}
-	if dst.setDls != 0 || dst.setStream != 0 {
-		t.Fatalf("Set calls after a failed fetch = %d, %d; want 0, 0", dst.setDls, dst.setStream)
+	src.stErr = nil
+	pollStreams(ctx, src, dst)
+	if dst.setStream != 1 {
+		t.Fatalf("Set calls after a good fetch = %d; want 1", dst.setStream)
 	}
 
-	src.dlErr, src.stErr = nil, nil
-	pollDownloads(ctx, src, dst)
+	// Category Off, or Plex not set up: no fetch.
+	dst.modes = map[notify.Category]notify.Mode{notify.StreamStarted: notify.ModeOff}
 	pollStreams(ctx, src, dst)
-	if dst.setDls != 1 || dst.setStream != 1 {
-		t.Fatalf("Set calls after a good fetch = %d, %d; want 1, 1", dst.setDls, dst.setStream)
-	}
-
-	// Every related category Off, or the integration not configured: no fetch.
-	dst.modes = map[notify.Category]notify.Mode{
-		notify.DownloadStarted: notify.ModeOff, notify.DownloadFinished: notify.ModeOff,
-		notify.DownloadError: notify.ModeOff, notify.StreamStarted: notify.ModeOff,
-	}
-	pollDownloads(ctx, src, dst)
-	pollStreams(ctx, src, dst)
-	dst.modes[notify.DownloadError] = notify.ModeApp
 	dst.modes[notify.StreamStarted] = notify.ModeApp
-	src.trOK, src.pxOK = false, false
-	pollDownloads(ctx, src, dst)
+	src.pxOK = false
 	pollStreams(ctx, src, dst)
-	if src.dlFetches != 2 || src.stFetch != 2 {
-		t.Fatalf("fetches while off or unconfigured = %d, %d; want 2, 2 in total", src.dlFetches, src.stFetch)
-	}
-	src.trOK = true
-	pollDownloads(ctx, src, dst)
-	if src.dlFetches != 3 || dst.setDls != 2 {
-		t.Fatalf("download.error alone on: fetches %d, Set %d; want 3, 2", src.dlFetches, dst.setDls)
+	if src.stFetch != 2 {
+		t.Fatalf("fetches while off or unconfigured = %d; want 2 in total", src.stFetch)
 	}
 }
 
-// A poll skipped because every related category is Off or the integration
-// is not set up makes the next report a baseline; a failed fetch does not.
-func TestWatchSkipResetsBaseline(t *testing.T) {
+// A poll skipped because the category is Off or Plex is not set up makes
+// the next report a baseline; a failed fetch does not.
+func TestWatchStreamsSkipResetsBaseline(t *testing.T) {
 	ctx := context.Background()
-	src := &fakeWatchSource{trOK: true, pxOK: true, dlErr: errors.New("boom"), stErr: errors.New("boom")}
+	src := &fakeWatchSource{pxOK: true, stErr: errors.New("boom")}
 	dst := &fakeWatchSink{}
-	pollDownloads(ctx, src, dst)
 	pollStreams(ctx, src, dst)
-	src.dlErr, src.stErr = nil, nil
-	pollDownloads(ctx, src, dst)
+	src.stErr = nil
 	pollStreams(ctx, src, dst)
-	if dst.resetDls != 0 || dst.resetStream != 0 {
-		t.Fatalf("resets while polling = %d, %d; want 0, 0", dst.resetDls, dst.resetStream)
+	if dst.resetStream != 0 {
+		t.Fatalf("resets while polling = %d; want 0", dst.resetStream)
 	}
-	dst.modes = map[notify.Category]notify.Mode{
-		notify.DownloadStarted: notify.ModeOff, notify.DownloadFinished: notify.ModeOff,
-		notify.DownloadError: notify.ModeOff, notify.StreamStarted: notify.ModeOff,
-	}
-	pollDownloads(ctx, src, dst)
+	dst.modes = map[notify.Category]notify.Mode{notify.StreamStarted: notify.ModeOff}
 	pollStreams(ctx, src, dst)
-	if dst.resetDls != 1 || dst.resetStream != 1 {
-		t.Fatalf("resets while Off = %d, %d; want 1, 1", dst.resetDls, dst.resetStream)
+	if dst.resetStream != 1 {
+		t.Fatalf("resets while Off = %d; want 1", dst.resetStream)
 	}
 	dst.modes = nil
-	src.trOK, src.pxOK = false, false
-	pollDownloads(ctx, src, dst)
+	src.pxOK = false
 	pollStreams(ctx, src, dst)
-	if dst.resetDls != 2 || dst.resetStream != 2 {
-		t.Fatalf("resets while not set up = %d, %d; want 2, 2", dst.resetDls, dst.resetStream)
+	if dst.resetStream != 2 {
+		t.Fatalf("resets while not set up = %d; want 2", dst.resetStream)
 	}
 }
 
@@ -203,118 +173,4 @@ func newWatchHarness(t *testing.T) (*harness, *transmissiontest.Fake) {
 	cfg := config.Config{}
 	cfg.Integrations.Transmission = config.Transmission{URL: ft.RPCURL(), Username: "kushal", Password: "s3cret"}
 	return newHarness(t, cfg), ft
-}
-
-// The watcher asks Transmission for the torrent list alone, with only the
-// fields notifications use.
-func TestWatchFetchesOnlyTorrents(t *testing.T) {
-	h, ft := newWatchHarness(t)
-	dst := &countingSink{}
-	pollDownloads(context.Background(), h.s, dst)
-	if got := ft.Methods(); len(got) != 1 || got[0] != "torrent-get" {
-		t.Fatalf("calls = %v; want one torrent-get", got)
-	}
-	want := map[string]bool{
-		"hashString": true, "name": true, "status": true, "percentDone": true,
-		"rateDownload": true, "eta": true, "error": true, "errorString": true, "addedDate": true,
-	}
-	fields := ft.LastFields()
-	if len(fields) != len(want) {
-		t.Fatalf("fields = %v; want %d", fields, len(want))
-	}
-	for _, f := range fields {
-		if !want[f] {
-			t.Fatalf("unexpected field %q in %v", f, fields)
-		}
-	}
-	if dst.setDls != 1 || len(dst.lists[0]) != 1 || dst.lists[0][0].Name != "debian.iso" || dst.lists[0][0].Status != "downloading" {
-		t.Fatalf("SetDownloads = %d, %+v", dst.setDls, dst.lists)
-	}
-	if got := dst.lists[0][0].Added; !got.Equal(time.Unix(1700000000, 0)) {
-		t.Fatalf("Added = %v; want Transmission's addedDate", got)
-	}
-}
-
-// Stats, session or free space failing says nothing about torrents.
-func TestWatchIgnoresStatsFailure(t *testing.T) {
-	h, ft := newWatchHarness(t)
-	ft.Fail("session-stats", "stats unavailable")
-	ft.Fail("session-get", "session unavailable")
-	ft.Fail("free-space", "no space info")
-	dst := &countingSink{}
-	pollDownloads(context.Background(), h.s, dst)
-	if dst.setDls != 1 {
-		t.Fatalf("SetDownloads = %d; want 1", dst.setDls)
-	}
-	ft.Fail("torrent-get", "torrents unavailable")
-	pollDownloads(context.Background(), h.s, dst)
-	if dst.setDls != 1 {
-		t.Fatalf("SetDownloads after a failed torrent-get = %d; want 1", dst.setDls)
-	}
-}
-
-// While the Torrents page is live, the watcher reuses its fresh list and
-// only polls Transmission itself once that list is stale.
-func TestWatchReusesPageData(t *testing.T) {
-	h, ft := newWatchHarness(t)
-	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
-	h.s.now = func() time.Time { return now }
-	if _, err := h.s.payload(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	before := len(ft.Methods())
-	dst := &countingSink{}
-	now = now.Add(watchDownloadsEvery)
-	pollDownloads(context.Background(), h.s, dst)
-	if got := ft.Methods()[before:]; len(got) != 0 {
-		t.Fatalf("calls with fresh page data = %v; want none", got)
-	}
-	if dst.setDls != 1 || len(dst.lists[0]) != 1 || dst.lists[0][0].Name != "debian.iso" {
-		t.Fatalf("SetDownloads = %d, %+v", dst.setDls, dst.lists)
-	}
-	if got := dst.lists[0][0].Added; !got.Equal(time.Unix(1700000000, 0)) {
-		t.Fatalf("Added from page data = %v; want Transmission's addedDate", got)
-	}
-
-	now = now.Add(time.Second)
-	pollDownloads(context.Background(), h.s, dst)
-	if got := ft.Methods()[before:]; len(got) != 1 || got[0] != "torrent-get" {
-		t.Fatalf("calls with stale page data = %v; want one torrent-get", got)
-	}
-	if dst.setDls != 2 {
-		t.Fatalf("SetDownloads = %d; want 2", dst.setDls)
-	}
-}
-
-// Pointed at another Transmission, the next report is a baseline, so the
-// torrents that one already has are not announced.
-func TestWatchResetsOnClientChange(t *testing.T) {
-	ctx := context.Background()
-	src := &fakeWatchSource{trOK: true, dlNewSource: true}
-	dst := &fakeWatchSink{}
-	pollDownloads(ctx, src, dst)
-	if dst.resetDls != 1 || dst.setDls != 1 {
-		t.Fatalf("new source: resets %d, Set %d; want 1, 1", dst.resetDls, dst.setDls)
-	}
-
-	h, _ := newWatchHarness(t)
-	sink := &countingSink{}
-	pollDownloads(ctx, h.s, sink)
-	pollDownloads(ctx, h.s, sink)
-	if sink.resetDls != 0 || sink.setDls != 2 {
-		t.Fatalf("same Transmission: resets %d, Set %d; want 0, 2", sink.resetDls, sink.setDls)
-	}
-	other := transmissiontest.New("kushal", "s3cret")
-	t.Cleanup(other.Close)
-	h.s.mu.Lock()
-	h.s.tr.URL = other.RPCURL()
-	h.s.mu.Unlock()
-	pollDownloads(ctx, h.s, sink)
-	if sink.resetDls != 1 || sink.setDls != 3 {
-		t.Fatalf("another Transmission: resets %d, Set %d; want 1, 3", sink.resetDls, sink.setDls)
-	}
-	pollDownloads(ctx, h.s, sink)
-	if sink.resetDls != 1 {
-		t.Fatalf("resets after the change = %d; want 1", sink.resetDls)
-	}
 }

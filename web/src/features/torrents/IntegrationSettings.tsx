@@ -13,7 +13,14 @@ import { ConfirmDialog } from "@/components/ui/dialog";
 import { FormField, Input } from "@/components/ui/form";
 import { Badge, Notice, Skeleton, Spinner } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { errorMessage, type Candidate, type Discovery, type IntegrationsStatus, type TestResult } from "./api";
+import {
+  errorMessage,
+  type Candidate,
+  type Discovery,
+  type IntegrationsStatus,
+  type TestResult,
+} from "./api";
+import { RemoveFinishedSwitch } from "./RemoveFinished";
 
 const KEY = ["integrations"];
 
@@ -309,7 +316,7 @@ function ProwlarrCard({ status }: { status: IntegrationsStatus }) {
                 .
               </>
             ) : (
-              "Prowlarr has no enabled Transmission download client — queuing will use Wargo’s own Transmission connection below."
+              "Prowlarr has no enabled Transmission download client, so queuing will use Wargo’s own Transmission connection below."
             )}
           </p>
         )}
@@ -436,7 +443,7 @@ function TransmissionCard({ status }: { status: IntegrationsStatus }) {
             <span className="num">
               {prowlarrHint.host}:{prowlarrHint.port}
             </span>
-            {prowlarrHint.username && <> as {prowlarrHint.username}</>}. Use <b>Detect</b> to prefill these settings — you only need to enter the password.
+            {prowlarrHint.username && <> as {prowlarrHint.username}</>}. Use <b>Detect</b> to prefill these settings; you only need to enter the password.
           </Notice>
         )}
 
@@ -488,6 +495,7 @@ function TransmissionCard({ status }: { status: IntegrationsStatus }) {
           </div>
         </div>
       </form>
+      {t.configured && <RemoveFinishedSwitch available={t.available} />}
       <ConfirmDialog
         open={confirmClear}
         onOpenChange={setConfirmClear}

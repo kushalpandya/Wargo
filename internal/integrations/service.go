@@ -35,7 +35,10 @@ const (
 	keyProwlarr     = "integrations.prowlarr"
 	keyTransmission = "integrations.transmission"
 	keyPlex         = "integrations.plex"
-	healthTTL       = 30 * time.Second
+	// keyTransmissionPrefs holds what the owner chose for Transmission,
+	// apart from how to reach it.
+	keyTransmissionPrefs = "integrations.transmission.prefs"
+	healthTTL            = 30 * time.Second
 	// Topic carries the Transmission torrent list while subscribed.
 	Topic = "transmission"
 )
@@ -72,7 +75,9 @@ type Service struct {
 	mu sync.Mutex
 	pw prowlarrSettings
 	tr transmissionSettings
-	px plexSettings
+	// prefs is read by the poller and written by the settings handler.
+	prefs transmissionPrefs
+	px    plexSettings
 	// trc is reused across calls so the session id survives.
 	trc    *transmission.Client
 	trcKey string
@@ -89,14 +94,21 @@ type Service struct {
 	idxAt  time.Time
 	idxKey string
 
-	// notify receives downloads and streams (nil: not watched).
-	notify *notify.Center
-	// page is the torrent list from the last good payload, which the
-	// watcher reuses while it is fresh.
-	page pageTorrents
-	// watchTrc is the client of the watcher's last good fetch, to tell
-	// when it is pointed at another Transmission. Watcher goroutine only.
-	watchTrc *transmission.Client
+	// notify receives streams (nil: not watched). downloads is the same
+	// Center as far as the poller is concerned; nil means every download
+	// category is Off.
+	notify    *notify.Center
+	downloads watchSink
+	// snap holds the latest snapshot, flight the poll in progress (if any)
+	// that page loads share, and slow the session data refreshed at most
+	// once a minute.
+	snap   snapState
+	flight flightState
+	slow   slowState
+	// poller is the state of the one Transmission loop; wake asks it to
+	// poll now.
+	poller pollerState
+	wake   chan struct{}
 
 	// for tests
 	now func() time.Time
@@ -114,6 +126,7 @@ func New(cfg config.Config, st *store.Store, hub *events.Hub, al *audit.Log) *Se
 		// a few recent responses (results reference entries in cache)
 		searchCache: &responseCache{ttl: 5 * time.Minute, max: 16},
 		now:         time.Now,
+		wake:        make(chan struct{}, 1),
 	}
 	if hub != nil {
 		hub.Sticky(Topic)
@@ -137,6 +150,10 @@ func New(cfg config.Config, st *store.Store, hub *events.Hub, al *audit.Log) *Se
 			s.tr.PasswordSealed, _ = st.Seal(cfg.Integrations.Transmission.Password)
 			_ = st.Set(ctx, keyTransmission, s.tr)
 		}
+	}
+	if _, err := st.Get(ctx, keyTransmissionPrefs, &s.prefs); err != nil {
+		slog.Warn("integrations: load transmission preferences", "err", err)
+		s.prefs = transmissionPrefs{}
 	}
 	if ok, err := st.Get(ctx, keyPlex, &s.px); err != nil {
 		slog.Warn("integrations: load plex settings", "err", err)
@@ -412,7 +429,10 @@ func (f *ProwlarrFeature) Capabilities(ctx context.Context) (string, any) {
 
 func (f *TransmissionFeature) Capabilities(ctx context.Context) (string, any) {
 	st := f.transmissionStatus(ctx, false)
-	return "transmission", map[string]any{"available": st.Available, "configured": st.Configured, "version": st.Version, "error": st.Error}
+	return "transmission", map[string]any{
+		"available": st.Available, "configured": st.Configured, "version": st.Version, "error": st.Error,
+		"removeFinished": f.removeFinished(),
+	}
 }
 
 func (f *ProwlarrFeature) Register(mux *http.ServeMux) {
@@ -438,6 +458,8 @@ func (f *TransmissionFeature) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/transmission/torrents/{id}/start", httpx.Handler(s.handleStartStop(true)))
 	mux.HandleFunc("POST /api/transmission/torrents/{id}/stop", httpx.Handler(s.handleStartStop(false)))
 	mux.HandleFunc("DELETE /api/transmission/torrents/{id}", httpx.Handler(s.handleRemove))
+	mux.HandleFunc("GET /api/transmission/settings", httpx.Handler(s.handleGetTransmissionPrefs))
+	mux.HandleFunc("PUT /api/transmission/settings", httpx.Handler(s.handlePutTransmissionPrefs))
 }
 
 // --- settings handlers ---

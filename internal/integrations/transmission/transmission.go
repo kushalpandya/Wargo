@@ -246,7 +246,16 @@ func (c *Client) Stop(ctx context.Context, id ID) error {
 }
 
 func (c *Client) Remove(ctx context.Context, id ID, deleteData bool) error {
-	return c.Call(ctx, "torrent-remove", map[string]any{"ids": []any{id.value()}, "delete-local-data": deleteData}, nil)
+	return c.RemoveMany(ctx, []ID{id}, deleteData)
+}
+
+// RemoveMany removes several torrents in one call.
+func (c *Client) RemoveMany(ctx context.Context, ids []ID, deleteData bool) error {
+	list := make([]any, len(ids))
+	for i, id := range ids {
+		list[i] = id.value()
+	}
+	return c.Call(ctx, "torrent-remove", map[string]any{"ids": list, "delete-local-data": deleteData}, nil)
 }
 
 // Added describes a torrent created (or found duplicate) by torrent-add.
@@ -285,7 +294,8 @@ func (c *Client) Add(ctx context.Context, filename, metainfoB64 string) (*Added,
 	return out.Added, nil
 }
 
-// StatusName maps Transmission's numeric status.
+// StatusName maps Transmission's numeric status. A code outside 0..6 is
+// "unknown", so it is never taken for a stopped torrent.
 func StatusName(s int) string {
 	switch s {
 	case 0:
@@ -303,5 +313,5 @@ func StatusName(s int) string {
 	case 6:
 		return "seeding"
 	}
-	return "stopped"
+	return "unknown"
 }

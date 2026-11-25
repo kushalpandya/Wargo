@@ -6,31 +6,29 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
-	"github.com/kushalpandya/wargo/internal/integrations/transmission"
 	"github.com/kushalpandya/wargo/internal/notify"
 )
 
 const (
-	watchDownloadsEvery = 10 * time.Second
-	watchStreamsEvery   = 15 * time.Second
+	watchStreamsEvery = 15 * time.Second
 	// maxETA is the longest ETA reported; longer is as good as unknown.
 	maxETA = 30 * 24 * time.Hour
 )
 
-// SetNotify gives the watcher somewhere to report downloads and streams.
-// Call it before Run; without it nothing is watched.
-func (s *Service) SetNotify(c *notify.Center) { s.notify = c }
+// SetNotify gives the watcher and the poller somewhere to report streams
+// and downloads. Call it before Run; without it nothing is watched.
+func (s *Service) SetNotify(c *notify.Center) {
+	s.notify = c
+	if c != nil {
+		s.downloads = c
+	}
+}
 
 // watchSource is what the watcher polls (the Service, or a fake in tests).
 type watchSource interface {
-	transmissionConfigured() bool
 	plexConfigured() bool
-	// fetchDownloads also says whether list came from another
-	// Transmission than the last good fetch.
-	fetchDownloads(ctx context.Context) (list []notify.Download, newSource bool, err error)
 	fetchStreams(ctx context.Context) ([]notify.Stream, error)
 }
 
@@ -43,8 +41,9 @@ type watchSink interface {
 	ResetStreams()
 }
 
-// watch polls Transmission and Plex for notifications, with or without a
-// browser open. One goroutine, so the Set calls are serialized.
+// watch polls Plex for stream notifications, with or without a browser
+// open. Transmission is polled by runPoller. One goroutine, so the Set
+// calls are serialized.
 func (s *Service) watch(ctx context.Context) {
 	if s.notify == nil {
 		return
@@ -53,46 +52,23 @@ func (s *Service) watch(ctx context.Context) {
 }
 
 func runWatch(ctx context.Context, src watchSource, dst watchSink) {
-	dl := time.NewTicker(watchDownloadsEvery)
-	defer dl.Stop()
 	st := time.NewTicker(watchStreamsEvery)
 	defer st.Stop()
-	pollDownloads(ctx, src, dst)
 	pollStreams(ctx, src, dst)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-dl.C:
-			pollDownloads(ctx, src, dst)
 		case <-st.C:
 			pollStreams(ctx, src, dst)
 		}
 	}
 }
 
-// pollDownloads reports torrents when Transmission is set up and a
-// download category is on. A failed fetch reports nothing: an empty list
-// would end every download. While it does not poll, the next report is a
-// baseline, so what started meanwhile is not pushed when polling resumes.
-// So is the first report from another Transmission: the torrents it
-// already has are not news.
-func pollDownloads(ctx context.Context, src watchSource, dst watchSink) {
-	if !src.transmissionConfigured() || !anyOn(dst, notify.DownloadStarted, notify.DownloadFinished, notify.DownloadError) {
-		dst.ResetDownloads()
-		return
-	}
-	list, newSource, err := src.fetchDownloads(ctx)
-	if err != nil || ctx.Err() != nil {
-		return
-	}
-	if newSource {
-		dst.ResetDownloads()
-	}
-	dst.SetDownloads(ctx, list)
-}
-
-// pollStreams is pollDownloads for Plex sessions.
+// pollStreams reports Plex sessions when Plex is set up and the category
+// is on. A failed fetch reports nothing: an empty list would end every
+// stream. While it does not poll, the next report is a baseline, so what
+// started meanwhile is not pushed when polling resumes.
 func pollStreams(ctx context.Context, src watchSource, dst watchSink) {
 	if !src.plexConfigured() || !anyOn(dst, notify.StreamStarted) {
 		dst.ResetStreams()
@@ -114,78 +90,16 @@ func anyOn(dst watchSink, cats ...notify.Category) bool {
 	return false
 }
 
-func (s *Service) transmissionConfigured() bool { return s.transmissionSettings().URL != "" }
-
 func (s *Service) plexConfigured() bool {
 	p := s.plexSettings()
 	return p.URL != "" && p.TokenSealed != ""
 }
 
-// downloadFields are the torrent fields toDownloads reads.
+// downloadFields are the torrent fields toDownloads reads. They are also
+// what the light snapshots hold, and autoRemove's finished() reads
+// hashString, status, percentDone and error from those, so these must stay.
 var downloadFields = []string{
 	"hashString", "name", "status", "percentDone", "rateDownload", "eta", "error", "errorString", "addedDate",
-}
-
-// pageTorrents holds the torrent list of the last good payload (published
-// every 2 s while the Torrents page is open).
-type pageTorrents struct {
-	mu   sync.Mutex
-	c    *transmission.Client
-	list []TorrentView
-	at   time.Time
-}
-
-func (p *pageTorrents) set(c *transmission.Client, list []TorrentView, at time.Time) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.c, p.list, p.at = c, list, at
-}
-
-// get returns the list when it came from c at most maxAge before now.
-func (p *pageTorrents) get(c *transmission.Client, now time.Time, maxAge time.Duration) ([]TorrentView, bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.c == nil || p.c != c || now.Sub(p.at) > maxAge {
-		return nil, false
-	}
-	return p.list, true
-}
-
-// fetchDownloads reuses the Torrents page's list while it is fresh, and
-// otherwise asks Transmission for just the torrent fields it needs. Only
-// the watcher goroutine calls it.
-func (s *Service) fetchDownloads(ctx context.Context) ([]notify.Download, bool, error) {
-	c := s.transmissionClient()
-	if c == nil {
-		return nil, false, errTransmissionNotConfigured
-	}
-	if list, ok := s.page.get(c, s.now(), watchDownloadsEvery); ok {
-		return toDownloads(list), s.watchedFrom(c), nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	list, err := c.TorrentsWith(ctx, downloadFields)
-	if err != nil {
-		return nil, false, err
-	}
-	views := make([]TorrentView, 0, len(list))
-	for _, t := range list {
-		views = append(views, TorrentView{
-			Hash: t.HashString, Name: t.Name, Status: transmission.StatusName(t.Status),
-			PercentDone: t.PercentDone, RateDownload: t.RateDownload, ETA: t.ETA,
-			Error: t.Error, ErrorString: t.ErrorString, AddedDate: t.AddedDate,
-		})
-	}
-	return toDownloads(views), s.watchedFrom(c), nil
-}
-
-// watchedFrom records c as the client of the last good fetch and says
-// whether it differs from the one before (a new client means new settings,
-// and so possibly another Transmission).
-func (s *Service) watchedFrom(c *transmission.Client) bool {
-	changed := s.watchTrc != nil && s.watchTrc != c
-	s.watchTrc = c
-	return changed
 }
 
 func (s *Service) fetchStreams(ctx context.Context) ([]notify.Stream, error) {

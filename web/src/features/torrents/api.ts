@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 
 export interface Category {
@@ -42,7 +42,7 @@ export interface SearchResponse {
   errors: IndexerError[];
 }
 
-export type TorrentStatus = "stopped" | "check-wait" | "checking" | "download-wait" | "downloading" | "seed-wait" | "seeding";
+export type TorrentStatus = "stopped" | "check-wait" | "checking" | "download-wait" | "downloading" | "seed-wait" | "seeding" | "unknown";
 
 export interface Torrent {
   id: number;
@@ -78,16 +78,62 @@ export interface TransmissionPayload {
 
 export const torrentsKey = ["transmission", "torrents"] as const;
 
+/** The query function behind torrentsKey. */
+export const fetchTorrents = () => api.get<TransmissionPayload>("/api/transmission/torrents");
+
+/** How long a tab stays hidden before the torrent views stop listening for live updates. */
+export const HIDDEN_TAB_DELAY_MS = 30_000;
+
 /** GET /api/transmission/torrents. Not retried: Transmission being down is common and reported in the UI. */
 export function useTorrents({ enabled = true, refetchInterval }: { enabled?: boolean; refetchInterval?: number } = {}) {
   return useQuery({
     queryKey: torrentsKey,
-    queryFn: () => api.get<TransmissionPayload>("/api/transmission/torrents"),
+    queryFn: fetchTorrents,
     enabled,
     refetchInterval,
     retry: false,
     refetchOnWindowFocus: false,
   });
+}
+
+export interface TransmissionSettings {
+  removeFinished: boolean;
+}
+
+export const transmissionSettingsKey = ["transmission", "settings"] as const;
+
+/** GET /api/transmission/settings. */
+export function useTransmissionSettings(enabled = true) {
+  return useQuery({
+    queryKey: transmissionSettingsKey,
+    queryFn: () => api.get<TransmissionSettings>("/api/transmission/settings"),
+    enabled,
+  });
+}
+
+/** PUT /api/transmission/settings, then refresh the settings and the capabilities that echo them. */
+export function useSaveTransmissionSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: TransmissionSettings) => api.put<TransmissionSettings>("/api/transmission/settings", body),
+    onSuccess: (saved) => {
+      // Write the saved value first so the switch never shows the old one while the refetch runs.
+      qc.setQueryData(transmissionSettingsKey, saved);
+      return Promise.all([qc.invalidateQueries({ queryKey: transmissionSettingsKey }), qc.invalidateQueries({ queryKey: ["capabilities"] })]);
+    },
+  });
+}
+
+export interface Added {
+  id: number;
+  name: string;
+  hashString: string;
+  duplicate: boolean;
+}
+
+/** POST /api/transmission/torrents with exactly one of a magnet link or a base64 .torrent file. */
+export function addTorrent(body: { magnet: string } | { torrentBase64: string }): Promise<Added> {
+  return api.post<Added>("/api/transmission/torrents", body);
 }
 
 export interface TransmissionClientHint {

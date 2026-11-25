@@ -70,3 +70,24 @@ export function useFillViewport(el: HTMLElement | null, { min = 320, reserve = 0
   }, [el, min, reserve]);
   return height;
 }
+
+/** True once the tab has been hidden for ms; false again as soon as it is visible. */
+export function useHiddenFor(ms: number): boolean {
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const sync = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      if (document.visibilityState === "hidden") timer = setTimeout(() => setHidden(true), ms);
+      else setHidden(false);
+    };
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [ms]);
+  return hidden;
+}

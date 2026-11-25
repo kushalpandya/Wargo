@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { ArrowDown, ArrowUp, Download, HardDrive, Pause, Play, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useTopic } from "@/lib/ws";
+import { useHiddenFor } from "@/lib/hooks";
 import { bytes, duration, rate } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { useCapabilities } from "@/app/session";
@@ -13,11 +14,12 @@ import { Button, IconButton } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { SearchInput } from "@/components/ui/form";
 import { FilterMenu, radioGroup } from "@/components/ui/filter-menu";
+import { splitTorrentFiles } from "./add";
 import { StatusBar, StatusItem, toolbarClass, torrentCardClass } from "./parts";
 import { Badge, EmptyState, ErrorNote, Meter, PageHeader, Skeleton, Spinner, type Tone } from "@/components/ui/misc";
 import { SortTh, Table, Td, Th, THead, Tr, useSort } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
-import { errorMessage, torrentsKey, useTorrents, type Torrent, type TorrentStatus, type TransmissionPayload } from "./api";
+import { errorMessage, HIDDEN_TAB_DELAY_MS, torrentsKey, useTorrents, type Torrent, type TorrentStatus, type TransmissionPayload } from "./api";
 
 type Filter = "all" | "downloading" | "seeding" | "paused" | "errors";
 type SortKey = "name" | "status" | "progress" | "down" | "up" | "eta" | "size" | "ratio" | "added";
@@ -50,6 +52,8 @@ const statusLabel: Record<TorrentStatus, string> = {
   downloading: "Downloading",
   "seed-wait": "Queued seed",
   seeding: "Seeding",
+  // A status code Wargo does not know; statusTone gives it the neutral tone.
+  unknown: "Unknown",
 };
 
 function statusTone(t: Torrent): Tone {
@@ -101,18 +105,30 @@ const rateWidth = "shrink-0 sm:min-w-[calc(9ch+1rem)]";
 
 const meterTone = (t: Torrent) => (t.error ? "crit" : t.percentDone >= 1 ? "ok" : t.status === "stopped" ? "accent" : "frost");
 
-export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
+/** `onAddFiles` receives .torrent files dropped on the card; the page that shows Downloads owns the Add dialog. */
+export default function Downloads({ embedded, onAddFiles }: { embedded?: boolean; onAddFiles?: (files: File[]) => void } = {}) {
   const qc = useQueryClient();
   const caps = useCapabilities().data;
   const initial = useTorrents({ enabled: caps?.transmission?.configured !== false });
   const [live, setLive] = useState<TransmissionPayload | null>(null);
-  useTopic<TransmissionPayload>("transmission", setLive);
+  // A tab hidden for a while stops listening, and catches up with one fetch when it is back.
+  const hidden = useHiddenFor(HIDDEN_TAB_DELAY_MS);
+  useTopic<TransmissionPayload>(hidden ? null : "transmission", setLive);
+  const wasHidden = useRef(false);
+  useEffect(() => {
+    if (hidden) wasHidden.current = true;
+    else if (wasHidden.current) {
+      wasHidden.current = false;
+      qc.invalidateQueries({ queryKey: torrentsKey });
+    }
+  }, [hidden, qc]);
   const data = live && (!initial.data || live.at >= initial.data.at) ? live : initial.data;
 
   const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
   const [pending, setPending] = useState<Record<number, string | undefined>>({});
   const [removing, setRemoving] = useState<Torrent | null>(null);
+  const canAdd = !!caps?.transmission?.available && !!onAddFiles;
 
   const torrents = data?.torrents;
   const counts = useMemo(() => {
@@ -199,7 +215,20 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
 
           {data?.error && <ErrorNote error={`Transmission: ${data.error}`} className="mb-4" />}
 
-          <Card className={cn(embedded && torrentCardClass)}>
+          <Card
+            className={cn(embedded && torrentCardClass)}
+            onDragOver={(e) => {
+              if (canAdd && e.dataTransfer.types.includes("Files")) e.preventDefault();
+            }}
+            onDrop={(e) => {
+              if (!canAdd || !e.dataTransfer.files.length) return;
+              e.preventDefault();
+              const { accepted, rejected } = splitTorrentFiles(Array.from(e.dataTransfer.files));
+              for (const r of rejected) toast.error("Could not add", `${r.file.name}: ${r.reason}`);
+              if (!accepted.length) return;
+              onAddFiles?.(accepted);
+            }}
+          >
             {/* Same shape as the Search card: input and controls, then chips. */}
             <div className={toolbarClass}>
               <SearchInput value={q} onChange={setQ} placeholder="Filter by name…" label="Filter torrents by name" className="min-w-0 flex-1 basis-48" />
@@ -229,7 +258,11 @@ export default function Downloads({ embedded }: { embedded?: boolean } = {}) {
               </div>
             ) : sorted.length === 0 ? (
               <EmptyState className="flex-1" icon={<Download />} title={torrents?.length ? "Nothing matches" : "No torrents"}>
-                {torrents?.length ? "Try another filter." : "Queue something from Torrent search and it will appear here."}
+                {torrents?.length
+                  ? "Try another filter."
+                  : caps?.prowlarr?.available
+                    ? "Queue something from Torrent search and it will appear here."
+                    : "Add a magnet link or .torrent file and it will appear here."}
               </EmptyState>
             ) : (
               <>

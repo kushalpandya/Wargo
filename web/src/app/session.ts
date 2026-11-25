@@ -68,7 +68,7 @@ export interface Capabilities {
     selfUpdate?: boolean;
   };
   prowlarr?: { available: boolean; configured: boolean; hasTransmissionClient: boolean; version?: string; error?: string };
-  transmission?: { available: boolean; configured: boolean; version?: string; error?: string };
+  transmission?: { available: boolean; configured: boolean; version?: string; error?: string; removeFinished?: boolean };
   plex?: { available: boolean; configured: boolean; version?: string; error?: string };
   /** supported: false where OS updates don't exist (macOS). */
   pkg?: { backend?: string; available: boolean; distro?: string; supported?: boolean };

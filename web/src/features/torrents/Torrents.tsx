@@ -2,27 +2,40 @@
 import { readPref, setPref } from "@/lib/prefs";
 import { useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
-import { Columns2, Download, Search as SearchIcon, Square } from "lucide-react";
+import { Columns2, Download, Plus, Search as SearchIcon, Square } from "lucide-react";
 import { useCapabilities } from "@/app/session";
 import { useTopicValue } from "@/lib/ws";
-import { useMedia } from "@/lib/hooks";
+import { useHiddenFor, useMedia } from "@/lib/hooks";
 import { PageHeader } from "@/components/ui/misc";
 import { Segmented } from "@/components/ui/form";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 import SearchPage from "./Search";
 import Downloads from "./Downloads";
+import { AddDialog } from "./AddDialog";
+import { RemoveFinishedSwitch } from "./RemoveFinished";
+import { HIDDEN_TAB_DELAY_MS } from "./api";
 
 type Tab = "search" | "downloads";
 type Layout = "tabs" | "split";
 
 const LAYOUT_KEY = "wargo.torrents.layout";
 
-/** Same-height heading for both split-view columns so they line up. */
-function ColumnHeading({ id, icon, children }: { id: string; icon: ReactNode; children: ReactNode }) {
+/**
+ * Heading above a column's card, with that column's actions on the right.
+ * Both split-view columns have the same minimum height so their cards line up
+ * (the split view's Downloads column is wide enough that its actions don't wrap).
+ */
+function ColumnHeading({ id, icon, children, actions }: { id: string; icon: ReactNode; children: ReactNode; actions?: ReactNode }) {
   return (
-    <h2 id={id} className="mb-2 flex h-4 items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle [&_svg]:size-3.5">
-      <span aria-hidden="true">{icon}</span>
-      {children}
-    </h2>
+    <div className="mb-2 flex min-h-8 flex-wrap items-center justify-between gap-2">
+      <h2 id={id} className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle [&_svg]:size-3.5">
+        <span aria-hidden="true">{icon}</span>
+        {children}
+      </h2>
+      {/* ml-auto keeps them on the right when a narrow screen wraps them below the title. */}
+      {actions && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
+    </div>
   );
 }
 
@@ -46,8 +59,35 @@ export default function Torrents() {
   const tab: Tab = !hasSearch ? "downloads" : !hasDownloads ? "search" : requested;
   const split = wide && layout === "split" && hasSearch && hasDownloads;
 
-  const live = useTopicValue<{ stats?: { activeTorrentCount?: number } }>(hasDownloads ? "transmission" : null);
+  const hidden = useHiddenFor(HIDDEN_TAB_DELAY_MS);
+  const live = useTopicValue<{ stats?: { activeTorrentCount?: number } }>(hasDownloads && !hidden ? "transmission" : null);
   const active = live?.stats?.activeTorrentCount;
+
+  // One Add dialog for the header button and for .torrent files dropped on Downloads.
+  const [adding, setAdding] = useState(false);
+  const [dropped, setDropped] = useState<File[]>([]);
+  const openAdd = (files: File[]) => {
+    setDropped(files);
+    setAdding(true);
+  };
+
+  // Downloads' own actions, on its heading row above the card.
+  const downloadActions = caps?.transmission?.configured ? (
+    <>
+      <RemoveFinishedSwitch available={hasDownloads} compact />
+      <Button size="sm" variant="primary" icon={<Plus />} disabled={!hasDownloads} onClick={() => openAdd([])}>
+        Add
+      </Button>
+    </>
+  ) : undefined;
+  const downloads = (
+    <section aria-labelledby="torrents-downloads" className={cn(split && "sticky top-16")}>
+      <ColumnHeading id="torrents-downloads" icon={<Download />} actions={downloadActions}>
+        Downloads
+      </ColumnHeading>
+      <Downloads embedded onAddFiles={openAdd} />
+    </section>
+  );
 
   const setTab = (t: Tab) => {
     const next = new URLSearchParams(params);
@@ -65,7 +105,7 @@ export default function Torrents() {
             ? "Search every Prowlarr indexer and manage Transmission downloads."
             : hasSearch
               ? "Search every Prowlarr indexer."
-              : "Manage Transmission downloads."
+              : "Add and manage Transmission downloads."
         }
         actions={
           <>
@@ -111,18 +151,14 @@ export default function Torrents() {
             </ColumnHeading>
             <SearchPage embedded />
           </section>
-          <section aria-labelledby="torrents-downloads" className="sticky top-16">
-            <ColumnHeading id="torrents-downloads" icon={<Download />}>
-              Downloads
-            </ColumnHeading>
-            <Downloads embedded />
-          </section>
+          {downloads}
         </div>
       ) : tab === "search" && hasSearch ? (
         <SearchPage embedded />
       ) : (
-        <Downloads embedded />
+        downloads
       )}
+      <AddDialog open={adding} onOpenChange={setAdding} initialFiles={dropped} />
     </div>
   );
 }

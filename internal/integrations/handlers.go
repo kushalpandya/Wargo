@@ -405,47 +405,8 @@ type Payload struct {
 	At       time.Time     `json:"at"`
 }
 
-func (s *Service) payload(ctx context.Context) (*Payload, error) {
-	c := s.transmissionClient()
-	if c == nil {
-		return nil, errTransmissionNotConfigured
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	list, err := c.Torrents(ctx)
-	if err != nil {
-		return nil, err
-	}
-	st, err := c.Stats(ctx)
-	if err != nil {
-		return nil, err
-	}
-	p := &Payload{Torrents: make([]TorrentView, 0, len(list)), At: s.now()}
-	p.Stats = StatsView{DownloadSpeed: st.DownloadSpeed, UploadSpeed: st.UploadSpeed, ActiveTorrentCount: st.ActiveTorrentCount, PausedTorrentCount: st.PausedTorrentCount}
-	dir := ""
-	for _, t := range list {
-		p.Torrents = append(p.Torrents, TorrentView{
-			ID: t.ID, Hash: t.HashString, Name: t.Name, Status: transmission.StatusName(t.Status),
-			PercentDone: t.PercentDone, RateDownload: t.RateDownload, RateUpload: t.RateUpload, ETA: t.ETA,
-			SizeWhenDone: t.SizeWhenDone, LeftUntilDone: t.LeftUntilDone, UploadRatio: t.UploadRatio,
-			Error: t.Error, ErrorString: t.ErrorString, AddedDate: t.AddedDate, PeersConnected: t.PeersConnected,
-			DownloadDir: t.DownloadDir,
-		})
-	}
-	if sess, err := c.Session(ctx); err == nil && sess.DownloadDir != "" {
-		dir = sess.DownloadDir
-	}
-	if dir != "" {
-		if n, err := c.FreeSpace(ctx, dir); err == nil && n >= 0 {
-			p.Stats.FreeSpace = &n
-		}
-	}
-	s.page.set(c, p.Torrents, p.At)
-	return p, nil
-}
-
 func (s *Service) handleTorrents(w http.ResponseWriter, r *http.Request) error {
-	p, err := s.payload(r.Context())
+	p, err := s.pagePayload(r.Context())
 	if err != nil {
 		return upstream(err)
 	}
@@ -453,32 +414,11 @@ func (s *Service) handleTorrents(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// Run polls Transmission while the live topic has subscribers, and watches
-// Transmission and Plex for notifications.
+// Run polls Transmission for as long as someone needs it, and watches Plex
+// for notifications.
 func (f *TransmissionFeature) Run(ctx context.Context) {
-	s := f.Service
-	go s.watch(ctx)
-	t := time.NewTicker(2 * time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-		if s.hub == nil || s.hub.Subscribers(Topic) == 0 || s.transmissionSettings().URL == "" {
-			continue
-		}
-		s.publish(ctx)
-	}
-}
-
-func (s *Service) publish(ctx context.Context) {
-	p, err := s.payload(ctx)
-	if err != nil {
-		p = &Payload{Torrents: []TorrentView{}, Error: errString(err), At: s.now()}
-	}
-	s.hub.Publish(Topic, p)
+	go f.Service.watch(ctx)
+	f.Service.runPoller(ctx)
 }
 
 var hashRe = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
@@ -495,9 +435,7 @@ func parseID(raw string) (transmission.ID, error) {
 }
 
 func (s *Service) afterMutation(ctx context.Context) {
-	if s.hub != nil && s.hub.Subscribers(Topic) > 0 {
-		go s.publish(context.WithoutCancel(ctx))
-	}
+	s.wakePoller()
 }
 
 func (s *Service) handleAdd(w http.ResponseWriter, r *http.Request) error {

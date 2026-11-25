@@ -21,6 +21,9 @@ type Torrent struct {
 	Status       int     `json:"status"`
 	PercentDone  float64 `json:"percentDone"`
 	SizeWhenDone int64   `json:"sizeWhenDone"`
+	Error        int     `json:"error"`
+	ErrorString  string  `json:"errorString"`
+	AddedDate    int64   `json:"addedDate"` // 0 serves 1700000000
 	Removed      bool    `json:"-"`
 	DataDeleted  bool    `json:"-"`
 	Source       string  `json:"-"` // magnet or "metainfo"
@@ -43,6 +46,17 @@ type Fake struct {
 	fail map[string]string
 	// fields is what the last torrent-get asked for.
 	fields []string
+	// ignoreRemoves answers torrent-remove with success but keeps the
+	// torrents, like a Transmission that does not do what it says.
+	ignoreRemoves bool
+}
+
+// IgnoreRemoves makes torrent-remove succeed without removing anything
+// (on) or work again (off).
+func (f *Fake) IgnoreRemoves(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ignoreRemoves = on
 }
 
 // New starts a fake with basic auth user/pass ("" disables auth).
@@ -96,6 +110,22 @@ func (f *Fake) Fail(method, result string) {
 		f.fail = map[string]string{}
 	}
 	f.fail[method] = result
+}
+
+// ClearFail stops method from failing.
+func (f *Fake) ClearFail(method string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.fail, method)
+}
+
+// Update changes torrent id's state under the fake's lock.
+func (f *Fake) Update(id int64, fn func(*Torrent)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if t, ok := f.torrents[id]; ok {
+		fn(t)
+	}
 }
 
 // LastFields returns the fields the last torrent-get asked for.
@@ -182,11 +212,15 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			if !ok || t.Removed {
 				continue
 			}
+			added := t.AddedDate
+			if added == 0 {
+				added = 1700000000
+			}
 			list = append(list, map[string]any{
 				"id": t.ID, "hashString": t.HashString, "name": t.Name, "status": t.Status,
 				"percentDone": t.PercentDone, "rateDownload": 0, "rateUpload": 0, "eta": -1,
 				"sizeWhenDone": t.SizeWhenDone, "leftUntilDone": int64(float64(t.SizeWhenDone) * (1 - t.PercentDone)),
-				"uploadRatio": 0.5, "error": 0, "errorString": "", "addedDate": 1700000000,
+				"uploadRatio": 0.5, "error": t.Error, "errorString": t.ErrorString, "addedDate": added,
 				"peersConnected": 3, "downloadDir": "/downloads",
 			})
 		}
@@ -205,6 +239,9 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case "torrent-remove":
 		del, _ := req.Arguments["delete-local-data"].(bool)
+		if f.ignoreRemoves {
+			break
+		}
 		for _, t := range ids {
 			t.Removed = true
 			t.DataDeleted = del
