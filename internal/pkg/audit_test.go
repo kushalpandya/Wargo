@@ -96,3 +96,31 @@ func TestFinishedUpgradeKeepsTheLogTail(t *testing.T) {
 		t.Errorf("output: %s", output)
 	}
 }
+
+func TestFailedUpgradeIsDiagnosed(t *testing.T) {
+	s, st, _ := auditEnv(t)
+	s.be = &pamacBackend{}
+	b, err := os.ReadFile("testdata/pacman-conflict.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "20261124-183339"
+	now := time.Now()
+	one := 1
+	rec := &RunRecord{ID: id, Unit: "wargo-upgrade-" + id, Log: upgradeLogPath(s.dataDir, id), Backend: "pamac",
+		StartedAt: now.Add(-10 * time.Second), FinishedAt: &now, ExitStatus: &one}
+	os.WriteFile(rec.Log, b, 0o600)
+	runErr := rec.Explain(rec.Log, 1, errors.New("plain"), s.diagnoser(rec))
+	if d := rec.Diagnosis; d == nil || d.Code != CodeConflict || !strings.HasSuffix(runErr.Error(), "(exit status 1)") {
+		t.Fatalf("diagnosis %+v, error %v", d, runErr)
+	}
+	s.auditFinished(rec, runErr)
+	var code, result, details, output string
+	st.DB.QueryRow(`SELECT code, result, details, output FROM audit_log WHERE action = 'pkg.upgrade.finished'`).Scan(&code, &result, &details, &output)
+	if code != CodeConflict || !strings.Contains(result, "plasma-x11-session 6.7.5-1, which has to be removed first") {
+		t.Fatalf("code %q result %q", code, result)
+	}
+	if !strings.Contains(details, `"remove":"plasma-x11-session"`) || strings.Contains(output, "Synchronizing") {
+		t.Fatalf("details %s output %s", details, output)
+	}
+}

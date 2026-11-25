@@ -36,6 +36,7 @@ func (archCommon) UpgradeArgv() []string {
 }
 func (archCommon) Env() []string                                { return nil }
 func (archCommon) ParseProgress(line string, st *ProgressState) { parsePacman(line, st) }
+func (archCommon) Diagnose(lines []string) *Diagnosis           { return diagnosePacman(lines) }
 func (archCommon) LockFiles() []string                          { return []string{"/var/lib/pacman/db.lck"} }
 func (archCommon) ConfigSuffixes() []string                     { return []string{".pacnew", ".pacsave"} }
 func (archCommon) RebootRequired(ctx context.Context, run Runner) (bool, string) {
@@ -202,6 +203,7 @@ func (*aptBackend) Env() []string {
 	return []string{"DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l"}
 }
 func (*aptBackend) ParseProgress(line string, st *ProgressState) { parseApt(line, st) }
+func (*aptBackend) Diagnose(lines []string) *Diagnosis           { return diagnoseApt(lines) }
 func (*aptBackend) LockFiles() []string {
 	return []string{"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock", "/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock"}
 }
@@ -263,6 +265,7 @@ func (*dnfBackend) Check(ctx context.Context, run Runner) ([]Update, []Update, e
 func (*dnfBackend) UpgradeArgv() []string                        { return []string{"dnf", "-y", "--color=never", "upgrade"} }
 func (*dnfBackend) Env() []string                                { return nil }
 func (*dnfBackend) ParseProgress(line string, st *ProgressState) { parseDnf(line, st) }
+func (*dnfBackend) Diagnose(lines []string) *Diagnosis           { return diagnoseDnf(lines) }
 func (*dnfBackend) LockFiles() []string                          { return []string{"/var/run/dnf.pid", "/run/dnf.pid"} }
 func (*dnfBackend) ConfigSuffixes() []string                     { return []string{".rpmnew", ".rpmsave"} }
 func (*dnfBackend) RebootRequired(ctx context.Context, run Runner) (bool, string) {
@@ -323,6 +326,7 @@ func (z *zypperBackend) UpgradeArgv() []string {
 }
 func (*zypperBackend) Env() []string                                { return nil }
 func (*zypperBackend) ParseProgress(line string, st *ProgressState) { parseZypper(line, st) }
+func (*zypperBackend) Diagnose(lines []string) *Diagnosis           { return diagnoseZypper(lines) }
 func (*zypperBackend) LockFiles() []string                          { return []string{"/run/zypp.pid", "/var/run/zypp.pid"} }
 func (*zypperBackend) ConfigSuffixes() []string                     { return []string{".rpmnew", ".rpmsave"} }
 func (*zypperBackend) RebootRequired(ctx context.Context, run Runner) (bool, string) {
@@ -355,6 +359,7 @@ func (*apkBackend) Check(ctx context.Context, run Runner) ([]Update, []Update, e
 func (*apkBackend) UpgradeArgv() []string                        { return []string{"apk", "upgrade", "--no-progress"} }
 func (*apkBackend) Env() []string                                { return nil }
 func (*apkBackend) ParseProgress(line string, st *ProgressState) { parseApk(line, st) }
+func (*apkBackend) Diagnose(lines []string) *Diagnosis           { return diagnoseApk(lines) }
 func (*apkBackend) LockFiles() []string                          { return []string{"/lib/apk/db/lock"} }
 func (*apkBackend) ConfigSuffixes() []string                     { return []string{".apk-new"} }
 func (*apkBackend) RebootRequired(ctx context.Context, run Runner) (bool, string) {

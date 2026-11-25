@@ -54,6 +54,25 @@ export interface RunRecord {
   rebootRequired: boolean;
   rebootReason?: string;
   configFiles?: ConfigFile[];
+  /** Why a failed run failed, read from its log. */
+  diagnosis?: Diagnosis;
+}
+
+export interface PackageConflict {
+  package: string;
+  version?: string;
+  remove: string;
+  removeVersion?: string;
+}
+
+export interface Diagnosis {
+  /** A stable code such as "pkg.conflict" or "brew.link". */
+  code: string;
+  title: string;
+  summary: string;
+  /** The log lines it is based on. */
+  lines?: string[];
+  conflicts?: PackageConflict[];
 }
 
 export interface JobSnapshot {

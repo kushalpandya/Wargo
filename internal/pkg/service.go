@@ -79,6 +79,10 @@ type RunRecord struct {
 	RebootRequired bool         `json:"rebootRequired"`
 	RebootReason   string       `json:"rebootReason,omitempty"`
 	ConfigFiles    []ConfigFile `json:"configFiles,omitempty"`
+	// Diagnosis explains why a failed run failed.
+	Diagnosis *Diagnosis `json:"diagnosis,omitempty"`
+	// tail is the end of a failed run's log, read once by Explain.
+	tail []string
 	// Audit links the finished entry to the approved request that started
 	// the run, also when Wargo restarted in between.
 	Audit *audit.Span `json:"audit,omitempty"`
@@ -730,9 +734,35 @@ func (s *Service) follow(ctx context.Context, rec *RunRecord, j *jobs.Job) {
 	case exit == nil:
 		runErr = errors.New("the upgrade ended without reporting an exit status; check the log")
 	case *exit != 0:
-		runErr = fmt.Errorf("the package manager exited with status %d", *exit)
+		runErr = rec.Explain(host.Path(rec.Log), *exit, fmt.Errorf("the package manager exited with status %d", *exit), s.diagnoser(rec))
 	}
 	s.finish(rec, j, exit, runErr, st)
+}
+
+// diagnoser is the diagnosis for rec's package manager.
+func (s *Service) diagnoser(rec *RunRecord) func([]string) *Diagnosis {
+	if s.be != nil && rec.Backend == s.be.Name() {
+		return s.be.Diagnose
+	}
+	return diagnosePacman
+}
+
+// Explain diagnoses a failed run from the end of its log, which it reads
+// once and keeps for the audit entry. It returns the error to record: the
+// diagnosis with the exit status and its code, or plain if nothing in the
+// log explains the failure.
+func (rec *RunRecord) Explain(logPath string, exit int, plain error, diagnose func([]string) *Diagnosis) error {
+	lines, err := TailLines(logPath, 512<<10)
+	if err != nil {
+		return plain
+	}
+	rec.tail = lines
+	d := diagnose(lines)
+	if d == nil {
+		return plain
+	}
+	rec.Diagnosis = d
+	return audit.WithCode(fmt.Errorf("%s (exit status %d)", d.Summary, exit), d.Code)
 }
 
 func (s *Service) parse(rec *RunRecord, line string, st *ProgressState) {
@@ -849,6 +879,9 @@ func (s *Service) auditFinished(rec *RunRecord, runErr error) {
 	if rec.RebootRequired {
 		details["rebootRequired"] = true
 	}
+	if rec.Diagnosis != nil && len(rec.Diagnosis.Conflicts) > 0 {
+		details["conflicts"] = rec.Diagnosis.Conflicts
+	}
 	AuditRunFinished(s.d.Audit, "pkg.upgrade", rec, rec.Unit, host.Path(rec.Log), runErr, details)
 }
 
@@ -857,18 +890,24 @@ const auditTailLines = 40
 
 // AuditRunFinished records the end of an upgrade run (OS packages or
 // Homebrew) as "<action>.finished", linked to the request that started it
-// (rec.Audit) and with the end of the log when it failed. logPath is where
-// Wargo reads the log (rec.Log is where the run wrote it).
+// (rec.Audit). A failed run keeps the lines its diagnosis is based on, or
+// else the end of its log. logPath is where Wargo reads the log (rec.Log
+// is where the run wrote it).
 func AuditRunFinished(al *audit.Log, action string, rec *RunRecord, target, logPath string, runErr error, details map[string]any) {
 	span := audit.Span{Action: action, Started: rec.StartedAt}
 	if rec.Audit != nil {
 		span = *rec.Audit
 	}
 	out := &audit.Output{Log: rec.Log}
-	if runErr != nil {
-		if lines, err := TailLines(logPath, 256<<10); err == nil {
-			out.Lines, out.Truncated = lastN(lines, auditTailLines)
+	switch {
+	case rec.Diagnosis != nil && len(rec.Diagnosis.Lines) > 0:
+		out.Lines = rec.Diagnosis.Lines
+	case runErr != nil:
+		lines := rec.tail
+		if lines == nil {
+			lines, _ = TailLines(logPath, 256<<10)
 		}
+		out.Lines, out.Truncated = lastN(lines, auditTailLines)
 	}
 	var took time.Duration
 	if rec.FinishedAt != nil {

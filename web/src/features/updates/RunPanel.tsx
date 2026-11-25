@@ -9,9 +9,9 @@ import { cn } from "@/lib/cn";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
-import { Badge, Meter, Notice, Spinner } from "@/components/ui/misc";
+import { Badge, Meter, Notice, OutputBlock, Spinner } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import type { JobSnapshot, RunRecord } from "./api";
+import type { Diagnosis, JobSnapshot, RunRecord } from "./api";
 
 /** Stepper stages of an OS package upgrade (the backend's stage names). */
 export const PKG_STAGES = ["Preparing", "Downloading", "Installing", "Post-install hooks", "Done"] as const;
@@ -251,7 +251,7 @@ export function RunPanel({ source, onDismiss }: { source: RunSource; onDismiss?:
               ) : ok ? (
                 `Finished ${datetime(finishedAt)}`
               ) : (
-                run?.error ?? job?.error ?? "The update did not finish"
+                run?.diagnosis?.title ?? run?.error ?? job?.error ?? "The update did not finish"
               )}
             </span>
           </div>
@@ -271,6 +271,7 @@ function ResultDetails({ run, elapsed, system }: { run: RunRecord; elapsed: numb
   const [showOlder, setShowOlder] = useState(false);
   return (
     <div className="flex flex-col gap-3">
+      {run.diagnosis && <DiagnosisNote d={run.diagnosis} />}
       <dl className={cn("grid gap-3", system ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3")}>
         <Fact label="Duration" value={duration(elapsed)} />
         <Fact label="Packages" value={run.upgraded > 0 ? String(run.upgraded) : String(run.packages || "—")} />
@@ -341,6 +342,21 @@ function ResultDetails({ run, elapsed, system }: { run: RunRecord; elapsed: numb
         </div>
       )}
     </div>
+  );
+}
+
+/** Why a run failed: the explanation and the log lines it comes from. */
+function DiagnosisNote({ d }: { d: Diagnosis }) {
+  return (
+    <Notice tone="crit" icon={<CircleAlert />}>
+      <p className="font-medium">{d.title}</p>
+      <p className="mt-0.5 text-muted">{d.summary}</p>
+      {d.lines && d.lines.length > 0 && (
+        <OutputBlock className="mt-2 max-h-48 bg-surface" label="Package manager output">
+          {d.lines.join("\n")}
+        </OutputBlock>
+      )}
+    </Notice>
   );
 }
 

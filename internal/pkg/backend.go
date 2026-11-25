@@ -85,6 +85,8 @@ type Backend interface {
 	Env() []string
 	// ParseProgress folds one output line into st.
 	ParseProgress(line string, st *ProgressState)
+	// Diagnose explains a failed upgrade from its log (nil if it can't).
+	Diagnose(lines []string) *Diagnosis
 	// LockFiles are checked before upgrading.
 	LockFiles() []string
 	// ConfigSuffixes are new-config-file suffixes to look for under /etc.

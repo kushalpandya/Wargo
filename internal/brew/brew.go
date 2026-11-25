@@ -826,7 +826,7 @@ func (s *Service) follow(rec *pkg.RunRecord, j *jobs.Job, cmd *exec.Cmd, pr io.R
 	case st.sudoFail && waitErr != nil:
 		runErr = errors.New("a cask needed an administrator password that wasn't accepted; update again and approve with your password")
 	case waitErr != nil && exit != nil && *exit > 0:
-		runErr = fmt.Errorf("brew exited with status %d", *exit)
+		runErr = rec.Explain(rec.Log, *exit, fmt.Errorf("brew exited with status %d", *exit), diagnose)
 	case waitErr != nil:
 		runErr = waitErr
 	}
