@@ -56,6 +56,12 @@ export interface RunRecord {
   configFiles?: ConfigFile[];
   /** Why a failed run failed, read from its log. */
   diagnosis?: Diagnosis;
+  /** A retry allowed to remove conflicting packages (those in approvedRemovals). */
+  resolveConflicts?: boolean;
+  approvedRemovals?: string[];
+  /** Packages the run removed, and those among them nobody approved. */
+  removed?: string[];
+  unexpectedRemovals?: string[];
 }
 
 export interface PackageConflict {
@@ -104,6 +110,8 @@ export interface PkgStatus {
   lastRun?: RunRecord;
   reboot: { required: boolean; reason?: string };
   fake?: boolean;
+  /** The package manager can be told to remove conflicting packages. */
+  canResolveConflicts?: boolean;
 }
 
 /** Homebrew status (GET /api/brew/status, sticky "brew" topic). */

@@ -121,7 +121,11 @@ func parsePacman(line string, st *ProgressState) {
 				st.phase = "install"
 				st.total = total
 				st.done = n
-				st.Upgraded = max(st.Upgraded, n)
+				// Removals (of conflicting packages) aren't upgrades.
+				if op[1] == "removing" {
+					st.noteRemoved(op[2])
+				}
+				st.Upgraded = max(st.Upgraded, n-len(st.removed))
 				st.set(StageInstalling, 0.5+0.4*ratio(n-1, total), op[2])
 			}
 		}
@@ -130,7 +134,11 @@ func parsePacman(line string, st *ProgressState) {
 	if op := rePacOp.FindStringSubmatch(t); op != nil && (st.phase == "install" || st.phase == "prehooks" || st.phase == "") {
 		st.phase = "install"
 		st.done++
-		st.Upgraded++
+		if op[1] == "removing" {
+			st.noteRemoved(op[2])
+		} else {
+			st.Upgraded++
+		}
 		st.set(StageInstalling, 0.5+0.4*ratio(st.done-1, st.total), op[2])
 		return
 	}

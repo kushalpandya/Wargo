@@ -89,7 +89,7 @@ export default function ElevationDialog({ pending, onDone }: { pending: Pending 
           }}
         >
           {req.target && (
-            <div className="num truncate rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-muted" title={req.target}>
+            <div className="num break-words rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-muted [overflow-wrap:anywhere]">
               {req.target}
             </div>
           )}

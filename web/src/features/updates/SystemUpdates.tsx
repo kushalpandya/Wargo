@@ -162,7 +162,7 @@ export function SystemUpdates() {
   const [dismissed, dismiss] = useDismissedRun("wargo.pkg.dismissedRun");
 
   const upgrade = useMutation({
-    mutationFn: () => api.post<JobSnapshot>("/api/pkg/upgrade"),
+    mutationFn: (opts?: { resolveConflicts: boolean }) => api.post<JobSnapshot>("/api/pkg/upgrade", opts),
     onSuccess: (job) => {
       setConfirm(false);
       qc.setQueryData<PkgStatus>(statusKey, (s) => (s ? { ...s, running: job } : s));
@@ -226,6 +226,10 @@ export function SystemUpdates() {
             logPath: "/api/pkg/log",
             stages: PKG_STAGES,
             system: true,
+            resolveConflicts:
+              st.canResolveConflicts && !running && !checking
+                ? { start: () => upgrade.mutate({ resolveConflicts: true }), pending: upgrade.isPending }
+                : undefined,
             liveNotice:
               "Don't reboot or power off the server until this finishes. The upgrade runs as a system service, so closing this page or restarting Wargo is safe.",
           }}

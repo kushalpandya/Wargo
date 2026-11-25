@@ -54,7 +54,24 @@ type ProgressState struct {
 	dlDone  int
 	// Upgraded counts "upgrading/installing/…" events.
 	Upgraded int `json:"upgraded"`
+	removed  map[string]bool
+	order    []string
 }
+
+// noteRemoved records a package the transaction removes.
+func (st *ProgressState) noteRemoved(name string) {
+	if st.removed[name] {
+		return
+	}
+	if st.removed == nil {
+		st.removed = map[string]bool{}
+	}
+	st.removed[name] = true
+	st.order = append(st.order, name)
+}
+
+// Removed lists the packages the run removed, in the order it said so.
+func (st *ProgressState) Removed() []string { return st.order }
 
 // Stage names shown in the UI stepper.
 const (
@@ -87,6 +104,10 @@ type Backend interface {
 	ParseProgress(line string, st *ProgressState)
 	// Diagnose explains a failed upgrade from its log (nil if it can't).
 	Diagnose(lines []string) *Diagnosis
+	// ResolveConflictsArgs are added to UpgradeArgv when the owner allows
+	// removing the packages an upgrade conflicts with (nil: the package
+	// manager can't be told to, or resolves conflicts on its own).
+	ResolveConflictsArgs() []string
 	// LockFiles are checked before upgrading.
 	LockFiles() []string
 	// ConfigSuffixes are new-config-file suffixes to look for under /etc.

@@ -4,12 +4,19 @@ import { Slot } from "radix-ui";
 import { cn } from "@/lib/cn";
 import { Spinner } from "./misc";
 
-type Variant = "primary" | "secondary" | "ghost" | "danger" | "outline-danger";
+type Variant = "primary" | "secondary" | "raised" | "ghost" | "danger" | "outline-danger";
+
+// The primary button's drop shadow, shared by "raised" so a pair of them
+// draws at the same size.
+const raisedShadow = "shadow-[0_1px_2px_oklch(0.3_0.1_280/0.2)]";
 type Size = "xs" | "sm" | "md";
 
 const variants: Record<Variant, string> = {
-  primary: "bg-accent text-accent-fg hover:bg-accent-strong border-transparent font-semibold shadow-[0_1px_2px_oklch(0.3_0.1_280/0.2)]",
+  primary: `bg-accent text-accent-fg hover:bg-accent-strong border-transparent font-semibold ${raisedShadow}`,
   secondary: "bg-surface text-fg border-border font-medium hover:bg-surface-3 hover:border-border-strong",
+  // A secondary button next to a primary one on a tinted background: its
+  // edge stays visible and it has the primary's shadow.
+  raised: `bg-surface text-fg border-border-strong font-medium hover:bg-surface-3 ${raisedShadow}`,
   ghost: "bg-transparent text-muted border-transparent font-medium hover:bg-surface-3 hover:text-fg",
   danger: "bg-crit text-surface border-transparent hover:brightness-110 font-semibold",
   "outline-danger": "bg-transparent text-crit border-border hover:bg-crit-soft hover:border-crit/40",

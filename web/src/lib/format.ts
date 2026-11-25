@@ -56,6 +56,13 @@ export function durationMs(ms: number | undefined): string | undefined {
   return ms < 1000 ? `${ms} ms` : duration(ms / 1000);
 }
 
+const lf = new Intl.ListFormat(undefined, { type: "conjunction" });
+
+/** ["a", "b", "c"] -> "a, b, and c" (in the browser's language). */
+export function listAnd(items: string[]): string {
+  return lf.format(items);
+}
+
 const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto", style: "short" });
 
 /** Date -> "5 min. ago". */

@@ -37,8 +37,14 @@ func (archCommon) UpgradeArgv() []string {
 func (archCommon) Env() []string                                { return nil }
 func (archCommon) ParseProgress(line string, st *ProgressState) { parsePacman(line, st) }
 func (archCommon) Diagnose(lines []string) *Diagnosis           { return diagnosePacman(lines) }
-func (archCommon) LockFiles() []string                          { return []string{"/var/lib/pacman/db.lck"} }
-func (archCommon) ConfigSuffixes() []string                     { return []string{".pacnew", ".pacsave"} }
+
+// ResolveConflictsArgs answers pacman's "X and Y are in conflict. Remove
+// Y?" with yes: --ask is a bit mask that inverts the default answer of the
+// questions it names, and 4 (ALPM_QUESTION_CONFLICT_PKG) is only that one.
+// Every other question keeps its --noconfirm default.
+func (archCommon) ResolveConflictsArgs() []string { return []string{"--ask=4"} }
+func (archCommon) LockFiles() []string            { return []string{"/var/lib/pacman/db.lck"} }
+func (archCommon) ConfigSuffixes() []string       { return []string{".pacnew", ".pacsave"} }
 func (archCommon) RebootRequired(ctx context.Context, run Runner) (bool, string) {
 	return kernelModulesMissing()
 }
@@ -204,6 +210,10 @@ func (*aptBackend) Env() []string {
 }
 func (*aptBackend) ParseProgress(line string, st *ProgressState) { parseApt(line, st) }
 func (*aptBackend) Diagnose(lines []string) *Diagnosis           { return diagnoseApt(lines) }
+
+// ResolveConflictsArgs is nil: full-upgrade removes conflicting packages
+// on its own.
+func (*aptBackend) ResolveConflictsArgs() []string { return nil }
 func (*aptBackend) LockFiles() []string {
 	return []string{"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock", "/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock"}
 }
@@ -266,8 +276,12 @@ func (*dnfBackend) UpgradeArgv() []string                        { return []stri
 func (*dnfBackend) Env() []string                                { return nil }
 func (*dnfBackend) ParseProgress(line string, st *ProgressState) { parseDnf(line, st) }
 func (*dnfBackend) Diagnose(lines []string) *Diagnosis           { return diagnoseDnf(lines) }
-func (*dnfBackend) LockFiles() []string                          { return []string{"/var/run/dnf.pid", "/run/dnf.pid"} }
-func (*dnfBackend) ConfigSuffixes() []string                     { return []string{".rpmnew", ".rpmsave"} }
+
+// ResolveConflictsArgs lets dnf remove installed packages that conflict
+// with the updates.
+func (*dnfBackend) ResolveConflictsArgs() []string { return []string{"--allowerasing"} }
+func (*dnfBackend) LockFiles() []string            { return []string{"/var/run/dnf.pid", "/run/dnf.pid"} }
+func (*dnfBackend) ConfigSuffixes() []string       { return []string{".rpmnew", ".rpmsave"} }
 func (*dnfBackend) RebootRequired(ctx context.Context, run Runner) (bool, string) {
 	for _, argv := range [][]string{{"needs-restarting", "-r"}, {"dnf", "needs-restarting", "-r"}} {
 		if !hasBin(argv[0]) {
@@ -327,8 +341,12 @@ func (z *zypperBackend) UpgradeArgv() []string {
 func (*zypperBackend) Env() []string                                { return nil }
 func (*zypperBackend) ParseProgress(line string, st *ProgressState) { parseZypper(line, st) }
 func (*zypperBackend) Diagnose(lines []string) *Diagnosis           { return diagnoseZypper(lines) }
-func (*zypperBackend) LockFiles() []string                          { return []string{"/run/zypp.pid", "/var/run/zypp.pid"} }
-func (*zypperBackend) ConfigSuffixes() []string                     { return []string{".rpmnew", ".rpmsave"} }
+
+// ResolveConflictsArgs lets zypper's solver pick a solution that removes
+// conflicting packages instead of stopping.
+func (*zypperBackend) ResolveConflictsArgs() []string { return []string{"--force-resolution"} }
+func (*zypperBackend) LockFiles() []string            { return []string{"/run/zypp.pid", "/var/run/zypp.pid"} }
+func (*zypperBackend) ConfigSuffixes() []string       { return []string{".rpmnew", ".rpmsave"} }
 func (*zypperBackend) RebootRequired(ctx context.Context, run Runner) (bool, string) {
 	for _, p := range []string{"/run/reboot-needed", "/var/run/reboot-needed"} {
 		if _, err := host.Stat(p); err == nil {
@@ -360,8 +378,11 @@ func (*apkBackend) UpgradeArgv() []string                        { return []stri
 func (*apkBackend) Env() []string                                { return nil }
 func (*apkBackend) ParseProgress(line string, st *ProgressState) { parseApk(line, st) }
 func (*apkBackend) Diagnose(lines []string) *Diagnosis           { return diagnoseApk(lines) }
-func (*apkBackend) LockFiles() []string                          { return []string{"/lib/apk/db/lock"} }
-func (*apkBackend) ConfigSuffixes() []string                     { return []string{".apk-new"} }
+
+// ResolveConflictsArgs is nil: apk has no such option.
+func (*apkBackend) ResolveConflictsArgs() []string { return nil }
+func (*apkBackend) LockFiles() []string            { return []string{"/lib/apk/db/lock"} }
+func (*apkBackend) ConfigSuffixes() []string       { return []string{".apk-new"} }
 func (*apkBackend) RebootRequired(ctx context.Context, run Runner) (bool, string) {
 	return kernelModulesMissing()
 }

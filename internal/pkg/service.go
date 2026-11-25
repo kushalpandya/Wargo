@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,6 +84,15 @@ type RunRecord struct {
 	Diagnosis *Diagnosis `json:"diagnosis,omitempty"`
 	// tail is the end of a failed run's log, read once by Explain.
 	tail []string
+	// ResolveConflicts: the owner allowed removing conflicting packages,
+	// those in ApprovedRemovals (from the failed run before). Removed is
+	// what the run's log says was removed.
+	ResolveConflicts bool     `json:"resolveConflicts,omitempty"`
+	ApprovedRemovals []string `json:"approvedRemovals,omitempty"`
+	Removed          []string `json:"removed,omitempty"`
+	// UnexpectedRemovals were removed without being approved (a conflict
+	// that appeared after the failed run).
+	UnexpectedRemovals []string `json:"unexpectedRemovals,omitempty"`
 	// Audit links the finished entry to the approved request that started
 	// the run, also when Wargo restarted in between.
 	Audit *audit.Span `json:"audit,omitempty"`
@@ -109,6 +119,9 @@ type Status struct {
 	LastRun          *RunRecord     `json:"lastRun,omitempty"`
 	Reboot           Reboot         `json:"reboot"`
 	Fake             bool           `json:"fake,omitempty"`
+	// CanResolveConflicts: the package manager can be told to remove
+	// conflicting packages (see Backend.ResolveConflictsArgs).
+	CanResolveConflicts bool `json:"canResolveConflicts,omitempty"`
 }
 
 type Service struct {
@@ -239,6 +252,7 @@ func (s *Service) status(ctx context.Context) Status {
 		st.Available = hasBin(s.be.Binary())
 		st.NeedsRootToCheck = s.be.CheckNeedsRoot()
 		st.UpgradeCommand = strings.Join(s.be.UpgradeArgv(), " ")
+		st.CanResolveConflicts = s.be.ResolveConflictsArgs() != nil
 	}
 	s.mu.Lock()
 	st.Checking = s.checking
@@ -469,15 +483,34 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireBackend(); err != nil {
 		return err
 	}
+	var body struct {
+		// ResolveConflicts retries after a run that failed on package
+		// conflicts, allowing the package manager to remove the packages
+		// that run reported.
+		ResolveConflicts bool `json:"resolveConflicts"`
+	}
+	if r.ContentLength != 0 {
+		if err := httpx.Decode(r, &body); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	busy := s.job != nil || s.checking
 	pending := 0
 	if s.last != nil {
 		pending = len(s.last.Updates)
 	}
+	lastRun := s.lastRun
 	s.mu.Unlock()
 	if busy {
 		return httpx.Errorf(http.StatusConflict, "upgrade_running", "An upgrade or check is already in progress")
+	}
+	var removals []string
+	if body.ResolveConflicts {
+		var err error
+		if removals, err = s.approvableRemovals(lastRun); err != nil {
+			return err
+		}
 	}
 	pc := s.precheck()
 	if pc.Lock.Locked {
@@ -487,6 +520,15 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 		return httpx.Errorf(http.StatusConflict, "low_space", pc.Blocked).With(pc)
 	}
 	target := fmt.Sprintf("Install %d updates with %s", pending, s.be.Name())
+	if body.ResolveConflicts {
+		// The flags let the package manager remove whatever conflicts
+		// now, which can be more than the last run reported.
+		if len(removals) > 0 {
+			target += ", removing " + joinAnd(removals) + " and anything else that conflicts"
+		} else {
+			target += ", removing conflicting packages"
+		}
+	}
 	if !s.fake && !elevate.Has(r) {
 		// Ask for approval before creating any files.
 		return s.d.Elevate.ErrRequired("pkg.upgrade", target)
@@ -505,6 +547,7 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 	rec := &RunRecord{
 		ID: id, Unit: "wargo-upgrade-" + id, Log: s.logPath(id),
 		Backend: s.be.Name(), Packages: pending, StartedAt: now, Fake: s.fake, Audit: &span,
+		ResolveConflicts: body.ResolveConflicts, ApprovedRemovals: removals,
 	}
 	// O_EXCL never follows a symlink at the final component.
 	lf, err := os.OpenFile(host.Path(rec.Log), os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND|syscall.O_NOFOLLOW, 0o640)
@@ -514,7 +557,9 @@ func (s *Service) handleUpgrade(w http.ResponseWriter, r *http.Request) error {
 
 	if s.fake {
 		slog.Warn("!!! WARGO_PKG_FAKE: running SIMULATED upgrade (no root, no package manager) !!!", "script", s.fakeScript)
-		cmd := exec.Command("/bin/sh", "-c", wrapperScript, "wargo-upgrade", "/bin/sh", s.fakeScript)
+		// The script gets the arguments the package manager would, so it
+		// can tell a retry that resolves conflicts from a plain upgrade.
+		cmd := exec.Command("/bin/sh", append([]string{"-c", wrapperScript, "wargo-upgrade", "/bin/sh", s.fakeScript}, s.upgradeArgv(rec)[1:]...)...)
 		cmd.Stdout, cmd.Stderr = lf, lf
 		cmd.Env = append(os.Environ(), "LC_ALL=C")
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -583,7 +628,7 @@ func (s *Service) systemdRunArgv(rec *RunRecord) ([]string, error) {
 		// The host has no wargo binary: the unit runs the (validated,
 		// absolute) package manager through the host's /bin/sh with the
 		// constant wrapper script that prints the exit marker.
-		up := s.be.UpgradeArgv()
+		up := s.upgradeArgv(rec)
 		bin, err := helper.ResolvePackageManager(up[0])
 		if err != nil {
 			return nil, err
@@ -593,7 +638,57 @@ func (s *Service) systemdRunArgv(rec *RunRecord) ([]string, error) {
 		return append(argv, up...), nil
 	}
 	argv = append(argv, s.helperArgv("pkg-run", "--")...)
-	return append(argv, s.be.UpgradeArgv()...), nil
+	return append(argv, s.upgradeArgv(rec)...), nil
+}
+
+// upgradeArgv is the package manager command for rec.
+func (s *Service) upgradeArgv(rec *RunRecord) []string {
+	argv := s.be.UpgradeArgv()
+	if rec.ResolveConflicts {
+		argv = append(argv, s.be.ResolveConflictsArgs()...)
+	}
+	return argv
+}
+
+// approvableRemovals checks that a retry may resolve conflicts: the last
+// run failed on package conflicts and the package manager can be told to
+// remove them. It returns the packages that run said must go (empty when
+// the package manager didn't name them).
+func (s *Service) approvableRemovals(last *RunRecord) ([]string, error) {
+	if s.be.ResolveConflictsArgs() == nil {
+		return nil, httpx.Errorf(http.StatusBadRequest, "conflicts_unsupported", s.be.Name()+" can't be told to remove conflicting packages")
+	}
+	if last == nil || last.OK || last.Diagnosis == nil || last.Diagnosis.Code != CodeConflict || last.Backend != s.be.Name() {
+		return nil, httpx.Errorf(http.StatusConflict, "no_conflict", "The last upgrade didn't fail on package conflicts; install the updates normally")
+	}
+	var out []string
+	for _, c := range last.Diagnosis.Conflicts {
+		if c.Remove != "" && !slices.Contains(out, c.Remove) {
+			out = append(out, c.Remove)
+		}
+	}
+	return out, nil
+}
+
+// unexpectedRemovals are removed packages the owner didn't approve, by
+// exact package name (approving python doesn't cover python-requests).
+// When the failed run named nothing, the owner approved removing whatever
+// conflicts, so nothing is unexpected.
+func unexpectedRemovals(backend string, removed, approved []string) []string {
+	if len(approved) == 0 {
+		return nil
+	}
+	ok := map[string]bool{}
+	for _, a := range approved {
+		ok[packageName(backend, a)] = true
+	}
+	var out []string
+	for _, r := range removed {
+		if !ok[packageName(backend, r)] {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // containerLogDir holds upgrade logs on the host in container mode.
@@ -693,6 +788,13 @@ func (s *Service) follow(ctx context.Context, rec *RunRecord, j *jobs.Job) {
 						line = line[:maxLineLen]
 					}
 					s.parse(rec, line, &st)
+					// Removals are read as they stream, so a long log can't
+					// push them out of a tail read at the end.
+					if rec.ResolveConflicts {
+						if name := removedName(rec.Backend, line); name != "" {
+							st.noteRemoved(name)
+						}
+					}
 					batch = append(batch, line)
 				}
 				if len(batch) > 0 {
@@ -735,6 +837,10 @@ func (s *Service) follow(ctx context.Context, rec *RunRecord, j *jobs.Job) {
 		runErr = errors.New("the upgrade ended without reporting an exit status; check the log")
 	case *exit != 0:
 		runErr = rec.Explain(host.Path(rec.Log), *exit, fmt.Errorf("the package manager exited with status %d", *exit), s.diagnoser(rec))
+	}
+	if rec.ResolveConflicts {
+		rec.Removed = st.Removed()
+		rec.UnexpectedRemovals = unexpectedRemovals(rec.Backend, rec.Removed, rec.ApprovedRemovals)
 	}
 	s.finish(rec, j, exit, runErr, st)
 }
@@ -878,6 +984,14 @@ func (s *Service) auditFinished(rec *RunRecord, runErr error) {
 	}
 	if rec.RebootRequired {
 		details["rebootRequired"] = true
+	}
+	if rec.ResolveConflicts {
+		details["resolveConflicts"] = true
+		details["approvedRemovals"] = rec.ApprovedRemovals
+		details["removed"] = rec.Removed
+		if len(rec.UnexpectedRemovals) > 0 {
+			details["unexpectedRemovals"] = rec.UnexpectedRemovals
+		}
 	}
 	if rec.Diagnosis != nil && len(rec.Diagnosis.Conflicts) > 0 {
 		details["conflicts"] = rec.Diagnosis.Conflicts

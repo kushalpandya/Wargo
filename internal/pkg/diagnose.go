@@ -428,3 +428,58 @@ func joinAnd(s []string) string {
 	}
 	return strings.Join(s[:len(s)-1], ", ") + " and " + s[len(s)-1]
 }
+
+// Lines that report a package being removed, per package manager (dnf
+// both as dnf4 "Erasing : x" and dnf5 "[1/3] Removing x").
+var removedRe = map[string]*regexp.Regexp{
+	"pacman": regexp.MustCompile(`^(?:\(\s*\d+/\d+\)\s+)?removing (\S+?)(?:\.\.\.)?(?:\s+\[.*)?$`),
+	"apt":    regexp.MustCompile(`^Removing (\S+?)(?::\S+)? \(`),
+	"dnf":    regexp.MustCompile(`^\s*(?:\[\s*\d+/\d+\]\s*)?(?:Erasing|Removing)\s*:?\s+(\S+)`),
+	"zypper": regexp.MustCompile(`Removing:? ([^\s"<]+)`),
+	"apk":    regexp.MustCompile(`^\(\d+/\d+\) Purging (\S+)`),
+}
+
+// outputFamily is the package manager whose output a backend prints.
+func outputFamily(backend string) string {
+	if backend == "pamac" {
+		return "pacman"
+	}
+	return backend
+}
+
+// removedName is the package a log line says is being removed, or "".
+func removedName(backend, line string) string {
+	backend = outputFamily(backend)
+	re := removedRe[backend]
+	if re == nil {
+		return ""
+	}
+	l := strings.TrimSpace(CleanLine(line))
+	if backend == "zypper" {
+		// The name is in a progress element's attribute.
+		if !strings.Contains(l, "Removing") {
+			return ""
+		}
+		l = xmlUnescape(l)
+	}
+	if m := re.FindStringSubmatch(l); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// packageName is the bare name in a package manager's "name-version"
+// (rpm's name-[epoch:]version-release.arch for dnf and zypper).
+func packageName(backend, s string) string {
+	switch outputFamily(backend) {
+	case "dnf", "zypper":
+		if parts := strings.Split(s, "-"); len(parts) >= 3 {
+			return strings.Join(parts[:len(parts)-2], "-")
+		}
+		return s
+	case "pacman":
+		name, _ := splitNameVersion(s)
+		return name
+	}
+	return s
+}

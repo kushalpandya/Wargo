@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronRight, CircleAlert, CircleCheck, FileWarning, Power, RotateCw, ScrollText, X } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, CircleCheck, CircleHelp, FileWarning, Power, RotateCw, ScrollText, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useTopic } from "@/lib/ws";
-import { datetime, duration } from "@/lib/format";
+import { datetime, duration, listAnd } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
@@ -52,7 +52,9 @@ export function RebootButton({ size = "sm", variant = "secondary" }: { size?: "x
   );
 }
 
-function Stepper({ stages, stage, state }: { stages: readonly string[]; stage?: string; state: "running" | "ok" | "failed" }) {
+type RunState = "running" | "ok" | "failed" | "waiting";
+
+function Stepper({ stages, stage, state }: { stages: readonly string[]; stage?: string; state: RunState }) {
   const idx = state === "ok" ? stages.length - 1 : Math.max(0, stages.indexOf(stage ?? stages[0]));
   return (
     <ol className="grid grid-cols-5 gap-1.5" aria-label="Update stages">
@@ -60,18 +62,19 @@ function Stepper({ stages, stage, state }: { stages: readonly string[]; stage?: 
         const done = i < idx || (state === "ok" && i === idx);
         const cur = i === idx && state !== "ok";
         const fail = cur && state === "failed";
+        const wait = cur && state === "waiting";
         return (
           <li key={s} className="min-w-0" aria-current={cur ? "step" : undefined}>
             <div
               className={cn(
                 "h-1 rounded-full",
-                done ? "bg-ok" : fail ? "bg-crit" : cur ? "bg-accent" : "bg-surface-3",
+                done ? "bg-ok" : fail ? "bg-crit" : wait ? "bg-warn" : cur ? "bg-accent" : "bg-surface-3",
               )}
             />
             <div
               className={cn(
                 "mt-1.5 flex min-w-0 items-center gap-1 text-2xs font-medium uppercase tracking-wide sm:text-xs sm:normal-case sm:tracking-normal",
-                done ? "text-fg" : fail ? "text-crit" : cur ? "text-accent" : "text-subtle",
+                done ? "text-fg" : fail ? "text-crit" : wait ? "text-warn" : cur ? "text-accent" : "text-subtle",
                 !cur && "max-sm:sr-only",
               )}
             >
@@ -79,6 +82,8 @@ function Stepper({ stages, stage, state }: { stages: readonly string[]; stage?: 
                 <Check className="size-3.5 shrink-0 text-ok" aria-hidden />
               ) : fail ? (
                 <X className="size-3.5 shrink-0" aria-hidden />
+              ) : wait ? (
+                <CircleHelp className="size-3.5 shrink-0" aria-hidden />
               ) : cur ? (
                 <Spinner className="size-3.5 shrink-0" />
               ) : (
@@ -161,6 +166,8 @@ export interface RunSource {
   liveNotice: ReactNode;
   /** OS upgrades report reboots and config files. */
   system?: boolean;
+  /** Retry a run that failed on package conflicts, removing them (OS upgrades whose package manager allows it). */
+  resolveConflicts?: { start: () => void; pending: boolean };
 }
 
 /**
@@ -211,14 +218,27 @@ export function RunPanel({ source, onDismiss }: { source: RunSource; onDismiss?:
 
   const frac = live ? Math.max(0, job?.progress ?? 0) : run?.ok ? 1 : Math.max(0, job?.progress ?? 0);
   const ok = run ? run.ok : job?.state === "succeeded";
-  const state: "running" | "ok" | "failed" = live ? "running" : ok ? "ok" : "failed";
+  // A run that stopped on conflicts Wargo can resolve waits for the owner's
+  // decision: nothing failed and nothing changed.
+  const waiting = !live && !!run && !run.ok && run.diagnosis?.code === "pkg.conflict" && !!source.resolveConflicts;
+  const state: RunState = live ? "running" : ok ? "ok" : waiting ? "waiting" : "failed";
   const stage = live ? job?.stage : state === "ok" ? "Done" : (run?.stage ?? job?.stage);
 
   return (
     <Card className="mb-4 overflow-hidden" aria-label={live ? "Update progress" : "Update result"}>
       <CardHeader
-        title={live ? "Installing updates" : ok ? "Updates installed" : "Update failed"}
-        icon={live ? <Spinner className="text-accent" /> : ok ? <CircleCheck className="text-ok" /> : <CircleAlert className="text-crit" />}
+        title={live ? "Installing updates" : ok ? "Updates installed" : waiting ? "Updates need your approval" : "Update failed"}
+        icon={
+          live ? (
+            <Spinner className="text-accent" />
+          ) : ok ? (
+            <CircleCheck className="text-ok" />
+          ) : waiting ? (
+            <CircleHelp className="text-warn" />
+          ) : (
+            <CircleAlert className="text-crit" />
+          )
+        }
         meta={`${duration(elapsed)}${run?.backend || source.backend ? ` · ${run?.backend ?? source.backend}` : ""}`}
         actions={
           <>
@@ -250,14 +270,25 @@ export function RunPanel({ source, onDismiss }: { source: RunSource; onDismiss?:
                 </>
               ) : ok ? (
                 `Finished ${datetime(finishedAt)}`
+              ) : waiting ? (
+                "Stopped before installing"
               ) : (
                 run?.diagnosis?.title ?? run?.error ?? job?.error ?? "The update did not finish"
               )}
             </span>
           </div>
-          <Meter value={frac * 100} tone={state === "failed" ? "crit" : state === "ok" ? "ok" : "accent"} label="Overall progress" className="h-2" />
+          <Meter
+            value={frac * 100}
+            tone={state === "failed" ? "crit" : state === "waiting" ? "warn" : state === "ok" ? "ok" : "accent"}
+            label="Overall progress"
+            className="h-2"
+          />
         </div>
-        {!live && run && <ResultDetails run={run} elapsed={elapsed} system={!!source.system} />}
+        {waiting && run ? (
+          <ConflictDecision run={run} resolve={source.resolveConflicts!} onDismiss={onDismiss} />
+        ) : (
+          !live && run && <ResultDetails run={run} elapsed={elapsed} system={!!source.system} />
+        )}
       </div>
       <LogView id={`${source.id}-log`} lines={lines} open={logOpen} onToggle={() => setLogOpen((o) => !o)} live={live} />
     </Card>
@@ -272,6 +303,7 @@ function ResultDetails({ run, elapsed, system }: { run: RunRecord; elapsed: numb
   return (
     <div className="flex flex-col gap-3">
       {run.diagnosis && <DiagnosisNote d={run.diagnosis} />}
+      {run.removed && run.removed.length > 0 && <RemovedNote run={run} />}
       <dl className={cn("grid gap-3", system ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3")}>
         <Fact label="Duration" value={duration(elapsed)} />
         <Fact label="Packages" value={run.upgraded > 0 ? String(run.upgraded) : String(run.packages || "—")} />
@@ -345,6 +377,8 @@ function ResultDetails({ run, elapsed, system }: { run: RunRecord; elapsed: numb
   );
 }
 
+const withVersion = (name: string, version?: string) => (version ? `${name} ${version}` : name);
+
 /** Why a run failed: the explanation and the log lines it comes from. */
 function DiagnosisNote({ d }: { d: Diagnosis }) {
   return (
@@ -355,6 +389,123 @@ function DiagnosisNote({ d }: { d: Diagnosis }) {
         <OutputBlock className="mt-2 max-h-48 bg-surface" label="Package manager output">
           {d.lines.join("\n")}
         </OutputBlock>
+      )}
+    </Notice>
+  );
+}
+
+/**
+ * The package manager stopped before installing because installed packages
+ * conflict with the updates, and it won't remove them unasked. Laid out like
+ * Synaptic's and Pamac's summaries: a "To remove" list with the reason for
+ * each, then buttons that say what happens (the approval prompt that
+ * follows names the removal again).
+ */
+function ConflictDecision({ run, resolve, onDismiss }: { run: RunRecord; resolve: NonNullable<RunSource["resolveConflicts"]>; onDismiss?: () => void }) {
+  const d = run.diagnosis!;
+  const [details, setDetails] = useState(false);
+  // One row per package to remove, with what it conflicts with.
+  const rows = new Map<string, { version?: string; with: string[] }>();
+  for (const c of d.conflicts ?? []) {
+    if (!c.remove) continue;
+    const r = rows.get(c.remove) ?? { version: c.removeVersion, with: [] };
+    r.with.push(withVersion(c.package, c.version));
+    rows.set(c.remove, r);
+  }
+  const n = rows.size;
+  const cancel = () => {
+    onDismiss?.();
+    toast.info("Updates not installed", "Nothing was installed or removed. The updates are still listed.");
+  };
+  return (
+    <div className="rounded-md border border-warn/30 bg-warn-soft px-3 py-3">
+      <p className="text-sm">
+        {n > 0 ? (
+          <>
+            To install these updates, <span className="num">{run.backend}</span> has to remove {n === 1 ? "a package" : `${n} packages`} that
+            conflict{n === 1 ? "s" : ""} with them.
+          </>
+        ) : (
+          <>
+            To install these updates, <span className="num">{run.backend}</span> has to remove the installed packages that conflict with them. It
+            didn't name them; the details show the conflict.
+          </>
+        )}
+      </p>
+      {n > 0 && (
+        <div className="mt-2.5">
+          <h4 className="text-2xs font-semibold uppercase tracking-wider text-subtle">To remove</h4>
+          <ul className="scroll-area mt-1 max-h-52 overflow-auto rounded-md border border-border bg-surface">
+            {[...rows].map(([name, r]) => (
+              <li key={name} className="flex items-start gap-2.5 border-b border-border px-3 py-2 last:border-0">
+                <Trash2 className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="num break-all text-sm text-fg">
+                    {name}
+                    {r.version && <span className="ml-1.5 text-muted">{r.version}</span>}
+                  </div>
+                  <div className="text-xs text-muted [overflow-wrap:anywhere]">
+                    Conflicts with <span className="num">{listAnd(r.with)}</span>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p className="mt-2.5 text-xs text-muted">
+        Nothing has changed yet. The newer packages usually take over what {n === 1 ? "it" : "they"} provided. If the package lists changed since,{" "}
+        <span className="num">{run.backend}</span> may also remove other conflicting packages; the result shows everything it removed.
+      </p>
+      <button
+        type="button"
+        onClick={() => setDetails((o) => !o)}
+        aria-expanded={details}
+        className="-ml-1.5 mt-1 inline-flex min-h-8 items-center gap-1 rounded px-1.5 text-xs text-muted hover:text-fg"
+      >
+        <ChevronRight className={cn("size-3.5 transition-transform", details && "rotate-90")} aria-hidden />
+        {details ? "Hide details" : "Show details"}
+      </button>
+      {details && (
+        <div className="mt-1">
+          {d.lines?.length ? (
+            <OutputBlock className="max-h-48 bg-surface" label="Package manager output">
+              {d.lines.join("\n")}
+            </OutputBlock>
+          ) : null}
+        </div>
+      )}
+      {/* Cancel first, then the action (GNOME HIG, and Wargo's own dialogs).
+          Equal columns keep the two choices the same size: as wide as the
+          longer label, or half the row each on phones. */}
+      <div className="mt-3 flex justify-end">
+        <div className={cn("grid w-full gap-2 sm:w-auto", onDismiss ? "grid-cols-2" : "grid-cols-1")}>
+          {onDismiss && (
+            <Button size="sm" variant="raised" onClick={cancel}>
+              Cancel
+            </Button>
+          )}
+          <Button size="sm" variant="primary" loading={resolve.pending} onClick={resolve.start}>
+            Continue
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** What a conflict retry removed, and a warning for anything nobody approved. */
+function RemovedNote({ run }: { run: RunRecord }) {
+  const extra = run.unexpectedRemovals ?? [];
+  return (
+    <Notice tone={extra.length ? "warn" : "frost"} icon={<Trash2 />}>
+      Removed <span className="num">{listAnd(run.removed!)}</span>.
+      {extra.length > 0 && (
+        <>
+          {" "}
+          <span className="font-medium">Not approved: {listAnd(extra)}</span> (a new conflict appeared after the failed run). Reinstall{" "}
+          {extra.length === 1 ? "it" : "them"} if you need {extra.length === 1 ? "it" : "them"}.
+        </>
       )}
     </Notice>
   );
