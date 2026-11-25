@@ -195,6 +195,13 @@ Read only:
 
 - `system_overview`: host, uptime, load, CPU, memory, temperatures, disk
   usage, network rates, and pending update counts, in one call.
+- `host_info`: what the About page shows about the host: hostname, model
+  and board, CPU, memory, GPUs, architecture, virtualization, OS and
+  kernel, init, packages, shell, timezone, locale, local IP, boot time, the
+  desktop (name, version, Wayland or X11, compositor, session owner), and
+  Wargo's version and mode. Kept apart from `system_overview` because it
+  rarely changes. The public IP is left out (it comes from an outside
+  service). *Claude's call.*
 - `storage`: drives and filesystems.
 - `list_processes`: top processes by CPU or memory, with a limit.
 - `list_containers`: containers with state, health, image, update available.
