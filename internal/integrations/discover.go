@@ -83,6 +83,8 @@ func listContainers(ctx context.Context, socket string) ([]dockerContainer, erro
 
 // Candidate is a detected service container.
 type Candidate struct {
+	// Source is "container" or "native" (installed on the host itself).
+	Source    string `json:"source"`
 	Container string `json:"container"`
 	Image     string `json:"image"`
 	State     string `json:"state"`
@@ -100,10 +102,13 @@ type Candidate struct {
 }
 
 // setConfig points c at rel below the bind source root.
-func (c *Candidate) setConfig(root, rel string) {
+func (c *Candidate) setConfig(root, rel string) { c.setConfigKnown(root, rel, readable(root, rel)) }
+
+// setConfigKnown is setConfig when readability is already known.
+func (c *Candidate) setConfigKnown(root, rel string, readable bool) {
 	c.configRoot, c.configRel = root, rel
 	c.ConfigPath = filepath.Join(root, rel)
-	c.ConfigReadable = readable(root, rel)
+	c.ConfigReadable = readable
 }
 
 // Discovery is the result of GET /api/integrations/discover.
@@ -182,7 +187,7 @@ func discover(cs []dockerContainer) (prowlarr, transmission, plex []Candidate) {
 }
 
 func candidate(c dockerContainer, all []dockerContainer, port int, path string) Candidate {
-	cand := Candidate{Container: c.name(), Image: c.Image, State: c.State}
+	cand := Candidate{Source: "container", Container: c.name(), Image: c.Image, State: c.State}
 	netc := c
 	if target, ok := strings.CutPrefix(c.HostConfig.NetworkMode, "container:"); ok {
 		found := false
@@ -243,16 +248,24 @@ func isSymlink(p string) bool {
 	return err == nil && st.Mode()&os.ModeSymlink != 0
 }
 
-// readConfigSecret reads a secret from the config file rel below the bind
-// source root, as the admin user.
-func readConfigSecret(root, rel string, parse func(io.Reader) (string, error)) (secret string, err error) {
-	err = host.AsUser(func() error {
+// readConfig opens the config file rel below root as the admin user and
+// passes it to fn.
+func readConfig(root, rel string, fn func(io.Reader) error) error {
+	return host.AsUser(func() error {
 		f, err := openConfigFile(root, rel)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		secret, err = parse(io.LimitReader(f, 256<<10))
+		return fn(io.LimitReader(f, 256<<10))
+	})
+}
+
+// readConfigSecret reads a secret from the config file rel below root, as
+// the admin user.
+func readConfigSecret(root, rel string, parse func(io.Reader) (string, error)) (secret string, err error) {
+	err = readConfig(root, rel, func(r io.Reader) (err error) {
+		secret, err = parse(r)
 		return err
 	})
 	return secret, err

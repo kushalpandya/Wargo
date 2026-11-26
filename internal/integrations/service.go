@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -77,6 +78,9 @@ type Service struct {
 	hub    *events.Hub
 	audit  *audit.Log
 	socket string
+	// native returns the native config locations to look at and the
+	// default ports to probe (tests replace it).
+	native func() ([]nativeLoc, map[string]int)
 
 	mu sync.Mutex
 	pw prowlarrSettings
@@ -133,6 +137,7 @@ func New(cfg config.Config, st *store.Store, hub *events.Hub, al *audit.Log) *Se
 		searchCache: &responseCache{ttl: 5 * time.Minute, max: 16},
 		now:         time.Now,
 		wake:        make(chan struct{}, 1),
+		native:      hostNative,
 	}
 	if hub != nil {
 		hub.Sticky(Topic)
@@ -784,6 +789,10 @@ func (s *Service) discover(ctx context.Context) *Discovery {
 		d.Docker.Available = true
 		d.Prowlarr, d.Transmission, d.Plex = discover(cs)
 	}
+	locs, defaults := s.native()
+	have := slices.Concat(d.Prowlarr, d.Transmission, d.Plex)
+	p, t, x := nativeCandidates(ctx, locs, "127.0.0.1", defaults, have)
+	d.Prowlarr, d.Transmission, d.Plex = append(d.Prowlarr, p...), append(d.Transmission, t...), append(d.Plex, x...)
 	return d
 }
 
@@ -822,8 +831,10 @@ type secretImport struct {
 	what        string // "the API key"
 	notDetected string
 	candidates  func(*Discovery) []Candidate
-	parse       func(io.Reader) (string, error)
-	savedURL    func() string
+	// parse reads the secret; rel is the file's name below its folder, which
+	// tells apart formats such as Preferences.xml and a macOS plist.
+	parse    func(rel string, r io.Reader) (string, error)
+	savedURL func() string
 	// apply seals and saves secret with URL u.
 	apply func(ctx context.Context, u, secret string) error
 }
@@ -853,7 +864,7 @@ func (s *Service) importSecret(r *http.Request, im secretImport) (err error) {
 		return httpx.Errorf(http.StatusForbidden, "not_detected", im.notDetected)
 	}
 	details = map[string]any{"container": match.Container}
-	secret, err := readConfigSecret(match.configRoot, match.configRel, im.parse)
+	secret, err := readConfigSecret(match.configRoot, match.configRel, func(r io.Reader) (string, error) { return im.parse(match.configRel, r) })
 	if err != nil {
 		return httpx.Errorf(http.StatusUnprocessableEntity, "unreadable", "Could not read "+im.what+": "+err.Error())
 	}
@@ -870,9 +881,9 @@ func (s *Service) importSecret(r *http.Request, im secretImport) (err error) {
 func (s *Service) handleImportKey(w http.ResponseWriter, r *http.Request) error {
 	err := s.importSecret(r, secretImport{
 		action: "integrations.prowlarr.import_key", name: "Prowlarr", what: "the API key",
-		notDetected: "That path is not the /config mount of a detected Prowlarr container",
+		notDetected: "That path is not the config file of a detected Prowlarr install",
 		candidates:  func(d *Discovery) []Candidate { return d.Prowlarr },
-		parse:       parseAPIKey,
+		parse:       func(_ string, r io.Reader) (string, error) { return parseAPIKey(r) },
 		savedURL:    func() string { return s.savedProwlarr().URL },
 		apply: func(ctx context.Context, u, key string) error {
 			sealed, err := s.st.Seal(key)

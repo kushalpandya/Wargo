@@ -8,11 +8,13 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/kushalpandya/wargo/internal/plist"
 )
 
 func loadPlist(t *testing.T, name string) any {
 	t.Helper()
-	v, err := decodePlist(bytes.NewReader(readFixture(t, name)))
+	v, err := plist.Decode(bytes.NewReader(readFixture(t, name)))
 	if err != nil {
 		t.Fatal(name, err)
 	}
@@ -67,11 +69,11 @@ const usbInfo = `<plist><dict><key>BusProtocol</key><string>USB</string><key>Med
 // A drive with a filesystem directly on it has no partitions: the list is
 // empty, never null, because the System page maps over it.
 func TestParseDiskutilNoPartitions(t *testing.T) {
-	phys, err := decodePlist(strings.NewReader(usbPhysical))
+	phys, err := plist.Decode(strings.NewReader(usbPhysical))
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := decodePlist(strings.NewReader(usbInfo))
+	info, err := plist.Decode(strings.NewReader(usbInfo))
 	if err != nil {
 		t.Fatal(err)
 	}

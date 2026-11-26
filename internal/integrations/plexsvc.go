@@ -232,6 +232,20 @@ func (s *Service) testPlex(ctx context.Context, w http.ResponseWriter, r *http.R
 
 var plexTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
 
+// parsePlexSecret reads the token from Preferences.xml or, for the macOS
+// app, its preferences plist.
+func parsePlexSecret(rel string, r io.Reader) (string, error) {
+	if !strings.HasSuffix(rel, ".plist") {
+		return parsePlexToken(r)
+	}
+	m, err := decodePrefs(r)
+	if err != nil {
+		return "", errors.New("The Plex preferences file could not be read")
+	}
+	t, _ := m["PlexOnlineToken"].(string)
+	return checkPlexToken(t, "The Plex preferences file")
+}
+
 // parsePlexToken extracts PlexOnlineToken from a Preferences.xml.
 func parsePlexToken(r io.Reader) (string, error) {
 	var prefs struct {
@@ -241,12 +255,16 @@ func parsePlexToken(r io.Reader) (string, error) {
 	if err := xml.NewDecoder(r).Decode(&prefs); err != nil {
 		return "", errors.New("Preferences.xml could not be parsed")
 	}
-	t := strings.TrimSpace(prefs.Token)
-	if t == "" {
-		return "", errors.New("Preferences.xml has no token (sign the server in to Plex first)")
-	}
-	if !plexTokenRe.MatchString(t) {
-		return "", errors.New("Preferences.xml has no valid token")
+	return checkPlexToken(prefs.Token, "Preferences.xml")
+}
+
+// checkPlexToken validates a token read from file (named in errors).
+func checkPlexToken(t, file string) (string, error) {
+	switch t = strings.TrimSpace(t); {
+	case t == "":
+		return "", errors.New(file + " has no token (sign the server in to Plex first)")
+	case !plexTokenRe.MatchString(t):
+		return "", errors.New(file + " has no valid token")
 	}
 	return t, nil
 }
@@ -254,9 +272,9 @@ func parsePlexToken(r io.Reader) (string, error) {
 func (s *Service) handleImportPlexToken(w http.ResponseWriter, r *http.Request) error {
 	err := s.importSecret(r, secretImport{
 		action: "integrations.plex.import_token", name: "Plex", what: "the token",
-		notDetected: "That path is not the Preferences.xml of a detected Plex container",
+		notDetected: "That path is not the preferences file of a detected Plex install",
 		candidates:  func(d *Discovery) []Candidate { return d.Plex },
-		parse:       parsePlexToken,
+		parse:       parsePlexSecret,
 		savedURL:    func() string { return s.savedPlex().URL },
 		apply: func(ctx context.Context, u, tok string) error {
 			sealed, err := s.st.Seal(tok)

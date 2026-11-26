@@ -9,6 +9,8 @@ import (
 	"os"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/kushalpandya/wargo/internal/plist"
 )
 
 const systemVersionPlist = "/System/Library/CoreServices/SystemVersion.plist"
@@ -20,7 +22,7 @@ func platformOSRelease() (pretty, id string, ok bool) {
 		return "", "", false
 	}
 	defer f.Close()
-	v, err := decodePlist(io.LimitReader(f, 1<<20))
+	v, err := plist.Decode(io.LimitReader(f, 1<<20))
 	if err != nil {
 		return "", "", false
 	}

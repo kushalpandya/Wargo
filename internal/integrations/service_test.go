@@ -99,6 +99,8 @@ func newHarness(t *testing.T, cfg config.Config) *harness {
 	}
 	t.Cleanup(func() { st.Close() })
 	s := New(cfg, st, events.NewHub(), audit.New(st, httpx.NewProxyTrust(nil)))
+	// Tests never look at this machine's real native installs.
+	s.native = func() ([]nativeLoc, map[string]int) { return nil, nil }
 	mux := http.NewServeMux()
 	s.Prowlarr().Register(mux)
 	s.Transmission().Register(mux)
@@ -459,6 +461,30 @@ func TestDiscoverAndImportKey(t *testing.T) {
 	hint := out["transmissionFromProwlarr"].(map[string]any)
 	if hint["url"] != "http://10.0.0.100:9091/transmission/rpc" || hint["username"] != "kushal" {
 		t.Fatalf("hint: %v", hint)
+	}
+}
+
+func TestImportKeyFromNativeInstall(t *testing.T) {
+	fp := newFakeProwlarr(t, true)
+	u, port := prowlarrServer(t)
+	loc := prowlarrConf(t, port)
+	missing := nativeLoc{App: "prowlarr", Root: t.TempDir(), Rel: "config.xml", Format: "prowlarr-xml"}
+	h := newHarness(t, config.Config{})
+	h.s.native = func() ([]nativeLoc, map[string]int) { return []nativeLoc{loc, missing}, nil }
+
+	_, out := h.do(t, "GET", "/api/integrations/discover", nil)
+	ps := out["prowlarr"].([]any)
+	if len(ps) != 1 || ps[0].(map[string]any)["url"] != u || ps[0].(map[string]any)["source"] != "native" {
+		t.Fatalf("prowlarr candidates: %v", ps)
+	}
+	// A known location Detect did not report (no file there) is refused.
+	w, out := h.do(t, "POST", "/api/integrations/prowlarr/import-key", map[string]any{"configPath": filepath.Join(missing.Root, "config.xml")})
+	if w.Code != 403 || out["code"] != "not_detected" {
+		t.Fatalf("unreported path: %d %v", w.Code, out)
+	}
+	w, out = h.do(t, "POST", "/api/integrations/prowlarr/import-key", map[string]any{"configPath": filepath.Join(loc.Root, "config.xml"), "url": fp.URL})
+	if w.Code != 200 || out["hasApiKey"] != true {
+		t.Fatalf("import: %d %s", w.Code, w.Body)
 	}
 }
 

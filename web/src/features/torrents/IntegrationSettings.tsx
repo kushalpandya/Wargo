@@ -180,7 +180,7 @@ function CandidateRow({ c, onUse, children }: { c: Candidate; onUse?: () => void
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">
             {c.container}
-            <span className="num ml-2 text-xs font-normal text-subtle">{c.image}</span>
+            {c.image && <span className="num ml-2 text-xs font-normal text-subtle">{c.image}</span>}
           </div>
           <div className="num truncate text-xs text-muted">
             {c.url ?? c.note}
@@ -222,17 +222,22 @@ function DetectPanel({ discover, children, empty }: { discover: DiscoverMutation
   return (
     <div className="rounded-md border border-border bg-surface-2">
       <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-2xs font-semibold uppercase tracking-wider text-subtle">
-        Detected containers
+        Detected on this host
         {discover.isPending && <Spinner className="size-3" />}
       </div>
       {discover.error ? (
         <p className="px-3 py-2.5 text-xs text-crit">{errorMessage(discover.error)}</p>
-      ) : discover.data && !discover.data.docker.available ? (
-        <p className="px-3 py-2.5 text-xs text-muted">Docker is not reachable: {discover.data.docker.error}</p>
-      ) : discover.data && empty ? (
-        <p className="px-3 py-2.5 text-xs text-muted">No matching running container found.</p>
       ) : (
-        <ul className="divide-y divide-border">{children}</ul>
+        <>
+          {discover.data && empty ? (
+            <p className="px-3 py-2.5 text-xs text-muted">Nothing found on this host.</p>
+          ) : (
+            <ul className="divide-y divide-border">{children}</ul>
+          )}
+          {discover.data && !discover.data.docker.available && (
+            <p className="border-t border-border px-3 py-1.5 text-2xs text-subtle">Docker is not reachable, so containers were not checked: {discover.data.docker.error}</p>
+          )}
+        </>
       )}
     </div>
   );

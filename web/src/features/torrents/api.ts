@@ -188,6 +188,9 @@ export interface IntegrationsStatus {
 }
 
 export interface Candidate {
+  /** "native" for an install on the host itself, not in a container. */
+  source: "container" | "native";
+  /** The container's name, or "Native install". */
   container: string;
   image: string;
   state: string;

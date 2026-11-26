@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/host"
+	"github.com/kushalpandya/wargo/internal/plist"
 )
 
 // filesystems lists the system volume and the volumes under /Volumes.
@@ -173,7 +174,7 @@ func diskutilPlist(ctx context.Context, args ...string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return decodePlist(bytes.NewReader(out))
+	return plist.Decode(bytes.NewReader(out))
 }
 
 // addHealth is a no-op on macOS: health and TRIM come from diskutil and

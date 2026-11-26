@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-package metrics
+// Package plist decodes Apple XML property lists.
+package plist
 
 import (
 	"encoding/base64"
@@ -18,10 +19,10 @@ const (
 
 var errPlistTooLarge = errors.New("plist: document too large")
 
-// decodePlist parses an Apple XML property list. It returns map[string]any,
+// Decode parses an Apple XML property list. It returns map[string]any,
 // []any, string, int64, float64, bool or []byte. Dates become strings.
 // Nesting deeper than 32 levels or a document over 8 MiB is an error.
-func decodePlist(r io.Reader) (any, error) {
+func Decode(r io.Reader) (any, error) {
 	d := xml.NewDecoder(&plistLimit{r: r, n: plistMaxBytes})
 	d.Strict = true
 	for {
