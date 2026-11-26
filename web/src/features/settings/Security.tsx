@@ -7,13 +7,13 @@ import { ago, datetime } from "@/lib/format";
 import { createCredential, webauthnSupported } from "@/lib/webauthn";
 import { useMe } from "@/app/session";
 import { Button, IconButton } from "@/components/ui/button";
-import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { Card, CardBody, CardHeader, IconChip } from "@/components/ui/card";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { FormField, Input } from "@/components/ui/form";
 import { Badge, EmptyState, ErrorNote, Notice, Skeleton } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
 import { RecoveryCodes, TotpEnroll } from "@/features/auth/TotpSetup";
-import { PasswordDialog, SettingRow } from "./shared";
+import { BoxList, PasswordDialog, SettingRow, SettingsList } from "./shared";
 import { AdminApprovals } from "./AdminApprovals";
 import { usePasskeys, type Passkey } from "./hooks";
 
@@ -83,47 +83,35 @@ function TwoFactorCard() {
       <CardHeader
         title="Two-factor authentication"
         icon={<ShieldCheck />}
-        actions={me ? <Badge tone={enabled ? "ok" : "warn"}>{enabled ? "On" : "Off"}</Badge> : undefined}
+        tint="mint"
+        meta={me && !enabled ? "A code from an app after your password" : undefined}
+        toggle={{
+          checked: enabled,
+          onChange: (on) => (on ? setEnroll(true) : setDisable(true)),
+          label: "Two-factor authentication",
+          loading: !me,
+        }}
       />
-      <CardBody className="divide-y divide-border">
-        <SettingRow
-          title="Authenticator app"
-          description={
-            enabled
-              ? "A 6-digit code from your authenticator app is required after your password."
-              : "Add a time-based code (TOTP) from an app like Aegis, 2FAS or 1Password."
-          }
-        >
-          {enabled ? (
-            <Button variant="outline-danger" size="sm" onClick={() => setDisable(true)}>
-              Turn off
-            </Button>
-          ) : (
-            <Button variant="primary" size="sm" onClick={() => setEnroll(true)}>
-              Set up
-            </Button>
-          )}
-        </SettingRow>
-        <SettingRow
-          title="Recovery codes"
-          description={
-            enabled ? (
-              <>
-                <span className={left <= 2 ? "font-medium text-warn" : undefined}>
-                  {left} of 10 unused
-                </span>
-                {" · "}Single-use codes for when you lose your authenticator.
-              </>
-            ) : (
-              "Created when you turn on two-factor authentication."
-            )
-          }
-        >
-          <Button size="sm" icon={<LifeBuoy />} disabled={!enabled} onClick={() => setRegen(true)}>
-            Regenerate
-          </Button>
-        </SettingRow>
-      </CardBody>
+      {enabled && (
+        <CardBody>
+          <SettingsList>
+            <SettingRow title="Authenticator app" description="A 6-digit code from your authenticator app is required after your password." />
+            <SettingRow
+              title="Recovery codes"
+              description={
+                <>
+                  <span className={left <= 2 ? "font-medium text-warn" : undefined}>{left} of 10 unused</span>
+                  {" · "}Single-use codes for when you lose your authenticator.
+                </>
+              }
+            >
+              <Button size="sm" icon={<LifeBuoy />} onClick={() => setRegen(true)}>
+                Regenerate
+              </Button>
+            </SettingRow>
+          </SettingsList>
+        </CardBody>
+      )}
 
       <Dialog
         open={enroll}
@@ -253,6 +241,7 @@ function PasskeysCard() {
       <CardHeader
         title="Passkeys"
         icon={<Fingerprint />}
+        tint="iris"
         meta={data ? `${data.length}` : undefined}
         actions={
           <Button size="sm" icon={<Plus />} disabled={!supported} onClick={() => setAdding(true)}>
@@ -262,7 +251,7 @@ function PasskeysCard() {
       />
       <CardBody className="flex flex-col gap-3">
         <p className="text-sm text-muted">
-          Sign in with your fingerprint, face or a security key — no password or code needed. Passkeys can also approve admin actions (see below).
+          Sign in with your fingerprint, face or a security key, no password or code needed. Passkeys can also approve admin actions (see below).
         </p>
         {!secure ? (
           <Notice tone="warn" icon={<Lock />}>
@@ -281,12 +270,12 @@ function PasskeysCard() {
             <EmptyState icon={<KeyRound />} title="No passkeys yet" className="py-6" />
           </div>
         ) : (
-          <ul className="divide-y divide-border rounded-md border border-border">
+          <BoxList>
             {data.map((p) => (
               <li key={p.id} className="flex items-center gap-3 px-3 py-2.5">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-surface-3 text-muted">
-                  <KeyRound className="size-4" />
-                </span>
+                <IconChip tint="neutral">
+                  <KeyRound />
+                </IconChip>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <span className="truncate text-sm font-medium">{p.name}</span>
@@ -299,19 +288,19 @@ function PasskeysCard() {
                     {" · "}
                     {p.lastUsed ? (
                       <>
-                        last used <time dateTime={p.lastUsed} title={datetime(p.lastUsed)}>{ago(p.lastUsed)}</time>
+                        Used <time dateTime={p.lastUsed} title={datetime(p.lastUsed)}>{ago(p.lastUsed)}</time>
                       </>
                     ) : (
-                      "never used"
+                      "Never used"
                     )}
                   </div>
                 </div>
-                <IconButton label={`Delete passkey ${p.name}`} size="sm" className="hover:text-crit" onClick={() => setDeleting(p)}>
+                <IconButton label={`Delete passkey ${p.name}`} size="sm" variant="danger" onClick={() => setDeleting(p)}>
                   <Trash2 />
                 </IconButton>
               </li>
             ))}
-          </ul>
+          </BoxList>
         )}
       </CardBody>
       <AddPasskeyDialog open={adding} onOpenChange={setAdding} />
@@ -360,6 +349,7 @@ function SessionsCard() {
       <CardHeader
         title="Active sessions"
         icon={<MonitorSmartphone />}
+        tint="sky"
         meta={data ? `${data.length}` : undefined}
         actions={
           <Button size="sm" variant="outline-danger" disabled={!others} onClick={() => setConfirm(true)}>
@@ -377,40 +367,42 @@ function SessionsCard() {
         </CardBody>
       ) : !data?.length ? (
         <CardBody>
-          <p className="text-sm text-muted">No stored sessions{" "}(dev bypass sessions are not stored).</p>
+          <p className="text-sm text-muted">No stored sessions (dev bypass sessions are not stored).</p>
         </CardBody>
       ) : (
-        <ul className="divide-y divide-border">
-          {data.map((s) => (
-            <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium" title={s.ua}>
-                    {describeUA(s.ua)}
-                  </span>
-                  {s.current && <Badge tone="ok">This device</Badge>}
-                  <Badge>{methodLabels[s.method] ?? s.method}</Badge>
-                  {s.remember && <Badge title="Keep me signed in was ticked">Remembered</Badge>}
+        <CardBody>
+          <BoxList>
+            {data.map((s) => (
+              <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium" title={s.ua}>
+                      {describeUA(s.ua)}
+                    </span>
+                    {s.current && <Badge tone="ok">This device</Badge>}
+                    <Badge>{methodLabels[s.method] ?? s.method}</Badge>
+                    {s.remember && <Badge title="Keep me signed in was ticked">Remembered</Badge>}
+                  </div>
+                  <div className="text-xs text-muted">
+                    <span className="num">{s.ip || "Unknown IP"}</span> · Signed in <span title={datetime(s.createdAt)}>{ago(s.createdAt)}</span> · Active{" "}
+                    <span title={datetime(s.lastSeen)}>{ago(s.lastSeen)}</span>
+                  </div>
                 </div>
-                <div className="text-xs text-muted">
-                  <span className="num">{s.ip || "unknown IP"}</span> · signed in <span title={datetime(s.createdAt)}>{ago(s.createdAt)}</span> · active{" "}
-                  <span title={datetime(s.lastSeen)}>{ago(s.lastSeen)}</span>
-                </div>
-              </div>
-              {!s.current && (
-                <IconButton
-                  label={`Sign out ${describeUA(s.ua)}`}
-                  size="sm"
-                  variant="ghost"
-                  disabled={revokeOne.isPending && revokeOne.variables === s.id}
-                  onClick={() => revokeOne.mutate(s.id)}
-                >
-                  <LogOut />
-                </IconButton>
-              )}
-            </li>
-          ))}
-        </ul>
+                {!s.current && (
+                  <IconButton
+                    label={`Sign out ${describeUA(s.ua)}`}
+                    size="sm"
+                    variant="ghost"
+                    disabled={revokeOne.isPending && revokeOne.variables === s.id}
+                    onClick={() => revokeOne.mutate(s.id)}
+                  >
+                    <LogOut />
+                  </IconButton>
+                )}
+              </li>
+            ))}
+          </BoxList>
+        </CardBody>
       )}
       <ConfirmDialog
         open={confirm}

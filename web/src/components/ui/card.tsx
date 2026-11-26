@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { Switch, switchSize } from "@/components/ui/form";
+import { Skeleton } from "@/components/ui/misc";
 
 /** Pastel tints for card accents (icon chips, tiles). */
 export type Tint = "iris" | "mint" | "sky" | "peach" | "rose" | "butter";
@@ -39,12 +41,22 @@ export function IconChip({ children, tint = "iris", className }: { children: Rea
   );
 }
 
+/**
+ * A card header's on/off switch. While `loading`, a placeholder of the same
+ * size stands in for it, so `checked` and `onChange` may be left out.
+ */
+export type HeaderToggle = { label: string; disabled?: boolean } & (
+  { loading: true; checked?: boolean; onChange?: (on: boolean) => void } | { loading?: boolean; checked: boolean; onChange: (on: boolean) => void }
+);
+
 export function CardHeader({
   title,
   icon,
   tint,
   meta,
+  badge,
   actions,
+  toggle,
   className,
 }: {
   title: ReactNode;
@@ -52,17 +64,37 @@ export function CardHeader({
   /** Pastel colour of the icon chip (default: neutral). */
   tint?: Tint;
   meta?: ReactNode;
+  /** A status pill beside the title; it wraps under the title when the header is narrow. */
+  badge?: ReactNode;
   actions?: ReactNode;
+  /**
+   * On/off switch at the far right, after any `actions`. `loading` shows a
+   * placeholder in its place while the setting loads.
+   */
+  toggle?: HeaderToggle;
   className?: string;
 }) {
   return (
-    <header className={cn("flex min-h-14 items-center gap-3 border-b border-border/70 px-4 py-2.5", className)}>
+    // last:border-b-0 so a card whose body is hidden has no double border.
+    <header className={cn("flex min-h-14 items-center gap-3 border-b border-border/70 px-4 py-2.5 last:border-b-0", className)}>
       {icon && <IconChip tint={tint ?? "neutral"}>{icon}</IconChip>}
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
         <h2 className="text-md font-semibold tracking-tight">{title}</h2>
+        {badge && <span className="flex self-center">{badge}</span>}
         {meta && <span className="num truncate text-xs text-subtle">{meta}</span>}
       </div>
-      {actions && <div className="ml-auto flex items-center gap-1">{actions}</div>}
+      {(actions || toggle) && (
+        <div className="ml-auto flex items-center gap-3">
+          {actions && <div className="flex items-center gap-1">{actions}</div>}
+          {toggle &&
+            (toggle.loading ? (
+              // The Switch's size, so the header doesn't shift once it loads.
+              <Skeleton className={cn("shrink-0", switchSize)} />
+            ) : (
+              <Switch aria-label={toggle.label} checked={toggle.checked} onCheckedChange={toggle.onChange} disabled={toggle.disabled} />
+            ))}
+        </div>
+      )}
     </header>
   );
 }

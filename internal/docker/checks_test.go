@@ -5,6 +5,7 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kushalpandya/wargo/internal/events"
+	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/jobs"
 	"github.com/kushalpandya/wargo/internal/schedule"
 	"github.com/kushalpandya/wargo/internal/store"
@@ -223,7 +225,8 @@ func TestUpdatesPersisted(t *testing.T) {
 	if _, ok := got.Results["c2"]; ok {
 		t.Fatal("unexpected result for c2")
 	}
-	if got.IntervalMs != 0 || got.NextCheckAt != 0 {
+	// The shared update-check setting defaults to daily; no loop runs here.
+	if got.IntervalMs != (24*time.Hour).Milliseconds() || got.NextCheckAt != 0 {
 		t.Fatalf("interval: %+v", got)
 	}
 }
@@ -291,40 +294,129 @@ func TestAutoCheckRuns(t *testing.T) {
 	t.Fatal("background check did not run")
 }
 
+// settingsStore opens a store, optionally with raw values saved first.
+func settingsStore(t *testing.T, saved map[string]string) *store.Store {
+	t.Helper()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	for k, v := range saved {
+		if err := st.Set(context.Background(), k, json.RawMessage(v)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return st
+}
+
+// call serves one request on mux and returns the code and trimmed body.
+func call(mux *http.ServeMux, method, path, body string) (int, string) {
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))
+	return w.Code, strings.TrimSpace(w.Body.String())
+}
+
 func TestUpdateCheckSettings(t *testing.T) {
 	s := startFake(t, &fakeDocker{})
-	s.checkInterval = 6 * time.Hour
+	s.Configure(Options{Store: settingsStore(t, nil), UpdateInterval: 6 * time.Hour})
+	if s.checkInterval != 24*time.Hour {
+		t.Fatalf("default %v, want the shared daily", s.checkInterval)
+	}
 	mux := http.NewServeMux()
 	s.Register(mux)
-	put := func(body string) int {
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest("PUT", "/api/containers/settings", strings.NewReader(body)))
-		return w.Code
-	}
-	if c := put(`{"checkHours":5}`); c != 400 {
+	const path = "/api/containers/settings"
+	if c, _ := call(mux, "PUT", path, `{"checkHours":3}`); c != 400 {
 		t.Fatalf("odd interval: %d", c)
 	}
-	if c := put(`{"checkHours":0}`); c != 200 || s.checkInterval != 0 {
-		t.Fatalf("off: %d %v", c, s.checkInterval)
+	if c, body := call(mux, "PUT", path, `{"enabled":false}`); c != 200 || s.checkInterval != 0 || body != `{"enabled":false,"checkHours":24}` {
+		t.Fatalf("off: %d %v %s", c, s.checkInterval, body)
 	}
 	select {
 	case <-s.sched.Wake():
 	default:
 		t.Fatal("background loop was not woken")
 	}
-	if c := put(`{"checkHours":24}`); c != 200 || s.checkInterval != 24*time.Hour {
-		t.Fatalf("daily: %d %v", c, s.checkInterval)
+	// Off keeping the frequency is tested in internal/schedule.
+	if c, body := call(mux, "PUT", path, `{"enabled":true,"checkHours":12}`); c != 200 || s.checkInterval != 12*time.Hour || body != `{"enabled":true,"checkHours":12}` {
+		t.Fatalf("on: %d %v %s", c, s.checkInterval, body)
 	}
-	// A configured interval that isn't selectable reads as the next one up.
-	for d, want := range map[time.Duration]string{30 * time.Minute: "1", 2 * time.Hour: "3", 400 * time.Hour: "168", 0: "0"} {
-		s.mu.Lock()
-		s.checkInterval = d
-		s.mu.Unlock()
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/containers/settings", nil))
-		if got := strings.TrimSpace(w.Body.String()); got != `{"checkHours":`+want+`}` {
-			t.Errorf("%v reads as %s", d, got)
+}
+
+// A change through any of the three routes is seen by all of them, and
+// reaches the containers' background loop.
+func TestSharedUpdateSettings(t *testing.T) {
+	st := settingsStore(t, nil)
+	s := startFake(t, &fakeDocker{})
+	s.Configure(Options{Store: st})
+	pkgs, brew := schedule.Updates("pkg.settings"), schedule.Updates("brew.settings")
+	pkgs.Store, brew.Store = st, st
+	mux := http.NewServeMux()
+	s.Register(mux)
+	mux.HandleFunc("GET /api/pkg/settings", httpx.Handler(pkgs.HandleGet))
+	mux.HandleFunc("PUT /api/pkg/settings", httpx.Handler(pkgs.HandlePut))
+	mux.HandleFunc("GET /api/brew/settings", httpx.Handler(brew.HandleGet))
+	mux.HandleFunc("PUT /api/brew/settings", httpx.Handler(brew.HandlePut))
+	routes := []string{"/api/pkg/settings", "/api/brew/settings", "/api/containers/settings"}
+	for i, put := range []struct {
+		body, want string
+		interval   time.Duration
+	}{
+		{`{"checkHours":6}`, `{"enabled":true,"checkHours":6}`, 6 * time.Hour},
+		{`{"enabled":false}`, `{"enabled":false,"checkHours":6}`, 0},
+		{`{"enabled":true,"checkHours":168}`, `{"enabled":true,"checkHours":168}`, 168 * time.Hour},
+	} {
+		if c, _ := call(mux, "PUT", routes[i], put.body); c != 200 {
+			t.Fatalf("PUT %s %s: %d", routes[i], put.body, c)
 		}
+		for _, r := range routes {
+			if _, got := call(mux, "GET", r, ""); got != put.want {
+				t.Errorf("after PUT %s %s: GET %s = %s, want %s", routes[i], put.body, r, got, put.want)
+			}
+		}
+		if s.checkInterval != put.interval {
+			t.Errorf("after PUT %s %s: containers every %v, want %v", routes[i], put.body, s.checkInterval, put.interval)
+		}
+		for _, h := range []*schedule.Hours{pkgs, brew, s.sched} {
+			select {
+			case <-h.Wake():
+			default:
+				t.Errorf("after PUT %s: %s not woken", routes[i], h.Action)
+			}
+		}
+	}
+}
+
+// Configure moves the containers' old setting into the shared one (the
+// full matrix is in internal/schedule TestAdopt) and applies the result.
+func TestMigrateContainerSettings(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name  string
+		saved map[string]string
+		want  schedule.Settings
+	}{
+		{"docker only", map[string]string{"docker.settings": `{"checkHours":12}`}, schedule.Settings{Enabled: true, CheckHours: 12}},
+		// Container checks off must not switch off OS and Homebrew checks.
+		{"docker only, off", map[string]string{"docker.settings": `{"checkHours":0}`}, schedule.Settings{Enabled: true, CheckHours: 24}},
+		{"both", map[string]string{"docker.settings": `{"checkHours":12}`, "pkg.settings": `{"checkHours":72}`}, schedule.Settings{Enabled: true, CheckHours: 72}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			st := settingsStore(t, c.saved)
+			s := startFake(t, &fakeDocker{})
+			s.Configure(Options{Store: st, UpdateInterval: time.Hour})
+			got, err := s.sched.Get(ctx)
+			if err != nil || got != c.want {
+				t.Fatalf("shared %+v (err %v), want %+v", got, err, c.want)
+			}
+			if want := time.Duration(c.want.CheckHours) * time.Hour; s.checkInterval != want {
+				t.Fatalf("containers every %v, want %v", s.checkInterval, want)
+			}
+			var raw json.RawMessage
+			if ok, err := st.Get(ctx, "docker.settings", &raw); err != nil || ok {
+				t.Fatalf("docker.settings kept (ok %v, err %v)", ok, err)
+			}
+		})
 	}
 }
 

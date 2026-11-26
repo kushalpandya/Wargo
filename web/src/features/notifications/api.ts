@@ -2,6 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useTopic } from "@/lib/ws";
+import { useSettingsSave } from "@/features/settings/save";
 import { disablePush, enablePush, pushPath, type PushState } from "./push";
 
 export type Category =
@@ -78,12 +79,17 @@ export function useClearAll() {
 
 export type Settings = Record<Category, Mode>;
 
-/** Saves every category's mode (the whole map) and keeps the panel's copy in step. */
+/**
+ * Saves every category's mode (the whole map), shown at once in the
+ * snapshot's copy so the panel stays in step (see useSettingsSave).
+ */
 export function useSaveNotificationSettings() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (s: Settings) => api.put<Settings>("/api/notifications/settings", s),
-    onSuccess: (settings) => qc.setQueryData<Snapshot>(key, (s) => (s ? { ...s, settings } : s)),
+  return useSettingsSave<Settings, Snapshot>({
+    queryKey: key,
+    scope: "notification-settings",
+    put: (s) => api.put<Settings>("/api/notifications/settings", s),
+    get: (s) => s.settings,
+    set: (s, settings) => ({ ...s, settings }),
   });
 }
 

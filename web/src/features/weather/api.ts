@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
+import { useSettingsSave } from "@/features/settings/save";
 
 export interface Place {
   name: string;
@@ -41,18 +42,20 @@ export function useWeather(enabled = true) {
   });
 }
 
+const settingsKey = ["weather", "settings"] as const;
+
 export function useWeatherSettings() {
-  return useQuery({ queryKey: ["weather", "settings"], queryFn: () => api.get<WeatherSettings>("/api/weather/settings") });
+  return useQuery({ queryKey: settingsKey, queryFn: () => api.get<WeatherSettings>("/api/weather/settings") });
 }
 
+/** Saves changes to the weather settings, shown at once (see useSettingsSave). */
 export function useSaveWeatherSettings() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: WeatherSettings) => api.put<WeatherSettings>("/api/weather/settings", v),
-    onSuccess: (v) => {
-      qc.setQueryData(["weather", "settings"], v);
-      qc.invalidateQueries({ queryKey: weatherKey, exact: true });
-    },
+  return useSettingsSave<WeatherSettings>({
+    queryKey: settingsKey,
+    scope: "weather-settings",
+    put: (v) => api.put<WeatherSettings>("/api/weather/settings", v),
+    onSaved: () => qc.invalidateQueries({ queryKey: weatherKey, exact: true }),
   });
 }
 

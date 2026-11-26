@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { UseMutationResult } from "@tanstack/react-query";
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { FormField, Input } from "@/components/ui/form";
 import { ErrorNote } from "@/components/ui/misc";
-import { toast } from "@/components/ui/toast";
 import { useMe } from "@/app/session";
 import { copyText } from "@/lib/clipboard";
 
@@ -19,17 +18,9 @@ export function SettingsList({ children }: { children: ReactNode }) {
   return <div className="divide-y divide-border/70">{children}</div>;
 }
 
-/**
- * A settings object saved whole on every change. Returns what to show (the
- * save in flight, else the server's copy) and an updater that builds on it,
- * so quick successive changes don't undo each other.
- */
-export function usePatchSave<T extends object>(data: T | undefined, save: UseMutationResult<T, Error, T>) {
-  const value = save.isPending && save.variables ? save.variables : data;
-  const update = (patch: Partial<T>) => {
-    if (value) save.mutate({ ...value, ...patch }, { onError: (e) => toast.error("Could not save", e) });
-  };
-  return [value, update] as const;
+/** A list of things (agents, passkeys, sessions) in a bordered box; give each item `px-3 py-2.5`. */
+export function BoxList({ className, ...rest }: ComponentProps<"ul">) {
+  return <ul className={cn("divide-y divide-border rounded-md border border-border", className)} {...rest} />;
 }
 
 /** Label/description on the left, control on the right (stacks on phones). */
@@ -41,6 +32,25 @@ export function SettingRow({ title, description, children, className }: { title:
         {description && <div className="mt-0.5 text-xs text-muted">{description}</div>}
       </div>
       {children && <div className="flex shrink-0 flex-wrap items-center gap-2">{children}</div>}
+    </div>
+  );
+}
+
+/**
+ * A SettingRow with its control below the label, for controls too wide to
+ * sit beside it. `action` (a small button) sits right of the title.
+ */
+export function StackedRow({ title, description, action, children }: { title: ReactNode; description?: ReactNode; action?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2.5 py-3 first:pt-0 last:pb-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{title}</div>
+          {description && <div className="mt-0.5 text-xs text-muted">{description}</div>}
+        </div>
+        {action}
+      </div>
+      {children}
     </div>
   );
 }

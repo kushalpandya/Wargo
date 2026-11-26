@@ -121,9 +121,17 @@ function Summary({ st, checking, stale, current, errors, total }: { st?: Updates
       checkedSub={st?.intervalMs ? (st.nextCheckAt ? `next check ${until(st.nextCheckAt)}` : `every ${every(st.intervalMs)}`) : "automatic checks off"}
       note={
         <>
-          {st?.intervalMs
-            ? `Wargo compares image digests with the registry every ${every(st.intervalMs)} without pulling anything.`
-            : "Background checks are disabled (docker.update_check_interval = 0)."}{" "}
+          {st?.intervalMs ? (
+            `Wargo compares image digests with the registry every ${every(st.intervalMs)} without pulling anything.`
+          ) : (
+            <>
+              Automatic checks are off (
+              <Link to="/settings/general" className="underline-offset-2 hover:underline">
+                Settings &gt; General &gt; Updates
+              </Link>
+              ).
+            </>
+          )}{" "}
           Containers are only updated when you click Update.
         </>
       }

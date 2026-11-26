@@ -63,10 +63,11 @@ path = "/home/alice"
 # then /var/run/docker.sock. Container shells and compose runs are pinned
 # to this socket.
 # socket = "/var/run/docker.sock"
-# Check container images for newer versions in the background (read-only
-# registry lookups; nothing is pulled). "0" disables. A value chosen in
-# Settings → General takes precedence.
-update_check_interval = "6h"
+# Container images are checked for newer versions in the background
+# (read-only registry lookups; nothing is pulled) on the update-check
+# schedule set in Settings → General > Updates, shared with OS packages
+# and Homebrew (daily by default). update_check_interval is deprecated and
+# has no effect.
 
 [metrics]
 interval = "1s"

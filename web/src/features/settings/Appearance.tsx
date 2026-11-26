@@ -11,7 +11,7 @@ import { useLauncherSettings, useSaveLauncherSettings } from "@/features/launche
 import type { TileSize } from "@/features/launcher/layout";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { WeatherSettings } from "@/features/weather/WeatherSettings";
-import { SettingRow, SettingsList, SettingsStack } from "./shared";
+import { SettingRow, SettingsList, SettingsStack, StackedRow } from "./shared";
 
 /** A tiny dashboard in the given palette (scoped with the `dark` class). */
 function Preview({ dark }: { dark: boolean }) {
@@ -58,16 +58,6 @@ const modes: { value: ThemeMode; label: string; title: string; icon: ReactNode }
   { value: "auto", label: "Auto", title: "Match system", icon: <Contrast /> },
   { value: "dark", label: "Dark", title: "Dark", icon: <Moon /> },
 ];
-
-/** A setting with its label above the control (the choices are too wide to sit beside it). */
-function StackedRow({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2.5 py-3 first:pt-0 last:pb-0">
-      <div className="text-sm font-medium">{title}</div>
-      {children}
-    </div>
-  );
-}
 
 function ColourMode() {
   const mode = useThemeMode();
@@ -123,6 +113,7 @@ function HomeCard() {
             <SettingRow title="App tiles" description="Large squares, or small tiles with the icon beside the name so more fit on a line.">
               <Segmented<TileSize>
                 label="App tile size"
+                size="sm"
                 value={size ?? "large"}
                 onChange={(tileSize) => save.mutate({ tileSize }, { onError: (e) => toast.error("Could not save tile size", e) })}
                 options={[

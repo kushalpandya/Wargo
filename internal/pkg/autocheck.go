@@ -16,17 +16,7 @@ import (
 // contact mirrors: checkupdates syncs a private copy of the pacman database,
 // and dnf and pamac refresh expired metadata. "Check for updates" on the
 // Updates page refreshes the real databases first (with approval if needed).
-
-// SettingsKey stores the background check interval. Homebrew shares it, so
-// one setting covers every package source on the host.
-const SettingsKey = "pkg.settings"
-
-// NewSchedule returns the shared check interval setting.
-func NewSchedule(action string) *schedule.Hours {
-	return schedule.New(SettingsKey, action, 24, 0, 6, 12, 24, 72, 168)
-}
-
-func newSchedule() *schedule.Hours { return NewSchedule("pkg.settings") }
+// The setting is schedule.Updates, shared with Homebrew and container images.
 
 // autoCheck lists updates every CheckHours (see schedule.Hours.Every).
 func (s *Service) autoCheck(ctx context.Context) {

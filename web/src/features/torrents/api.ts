@@ -147,6 +147,8 @@ export interface TransmissionClientHint {
 
 export interface ProwlarrStatus {
   url: string;
+  /** Switched on. Off keeps the saved settings but nothing connects. */
+  enabled: boolean;
   hasApiKey: boolean;
   configured: boolean;
   available: boolean;
@@ -158,6 +160,8 @@ export interface ProwlarrStatus {
 
 export interface TransmissionStatus {
   url: string;
+  /** Switched on. Off keeps the saved settings but nothing connects. */
+  enabled: boolean;
   username: string;
   hasPassword: boolean;
   configured: boolean;
@@ -168,6 +172,8 @@ export interface TransmissionStatus {
 
 export interface PlexStatus {
   url: string;
+  /** Switched on. Off keeps the saved settings but nothing connects. */
+  enabled: boolean;
   hasToken: boolean;
   configured: boolean;
   available: boolean;

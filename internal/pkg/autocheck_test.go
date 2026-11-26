@@ -15,6 +15,7 @@ import (
 	"github.com/kushalpandya/wargo/internal/events"
 	"github.com/kushalpandya/wargo/internal/httpx"
 	"github.com/kushalpandya/wargo/internal/notify"
+	"github.com/kushalpandya/wargo/internal/schedule"
 	"github.com/kushalpandya/wargo/internal/server"
 	"github.com/kushalpandya/wargo/internal/store"
 )
@@ -25,7 +26,7 @@ func testService(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	s := &Service{d: &server.Deps{Store: st, Audit: audit.New(st, httpx.NewProxyTrust(nil))}, sched: newSchedule()}
+	s := &Service{d: &server.Deps{Store: st, Audit: audit.New(st, httpx.NewProxyTrust(nil))}, sched: schedule.Updates("pkg.settings")}
 	s.sched.Store, s.sched.Audit = st, s.d.Audit
 	return s
 }
@@ -50,6 +51,10 @@ func TestCheckSettings(t *testing.T) {
 	case <-s.sched.Wake():
 	default:
 		t.Fatal("background check was not woken")
+	}
+	// Off keeping the frequency is tested in internal/schedule.
+	if s.sched.Key != schedule.UpdatesKey {
+		t.Fatal("packages don't use the shared update-check setting")
 	}
 }
 

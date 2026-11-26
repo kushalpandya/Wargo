@@ -78,6 +78,11 @@ func pollStreams(ctx context.Context, src watchSource, dst watchSink) {
 	if err != nil || ctx.Err() != nil {
 		return
 	}
+	// Switched off during the fetch: its result is not reported.
+	if !src.plexConfigured() {
+		dst.ResetStreams()
+		return
+	}
 	dst.SetStreams(ctx, list)
 }
 

@@ -45,7 +45,7 @@ func TestHours(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	httpx.Handler(h.HandleGet)(w, httptest.NewRequest(http.MethodGet, "/", nil))
-	if strings.TrimSpace(w.Body.String()) != `{"checkHours":6}` {
+	if strings.TrimSpace(w.Body.String()) != `{"enabled":true,"checkHours":6}` {
 		t.Fatalf("get %s", w.Body)
 	}
 	for d, want := range map[time.Duration]int{0: 0, 30 * time.Minute: 6, 6 * time.Hour: 6, 7 * time.Hour: 24, 1000 * time.Hour: 168} {

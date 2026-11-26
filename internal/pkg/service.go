@@ -161,7 +161,7 @@ func New(d *server.Deps) *Service {
 	s := &Service{
 		d: d, osr: readOSRelease(), run: ExecRunner(5 * time.Minute),
 		dataDir: d.Cfg.DataDir, legacyLogDir: filepath.Join(d.Cfg.DataDir, "pkg"), ctx: context.Background(),
-		sched: newSchedule(),
+		sched: schedule.Updates("pkg.settings"),
 	}
 	s.sched.Store, s.sched.Audit = d.Store, d.Audit
 	if host.Container() {

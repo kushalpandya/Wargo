@@ -386,14 +386,15 @@ func (s *Service) dueLocked() time.Time {
 	return schedule.Due(time.Now(), last, s.retryAt, s.checkInterval)
 }
 
-// newSchedule builds the interval setting edited in Settings → General.
+// oldSettingsKey held the containers' own interval before they joined the
+// shared update-check setting (see Configure).
+const oldSettingsKey = "docker.settings"
+
+// newSchedule builds the update-check setting edited in Settings → General,
+// shared with OS packages and Homebrew. A change saved through any of them
+// sets checkInterval (0 while switched off).
 func (s *Service) newSchedule() *schedule.Hours {
-	h := schedule.New("docker.settings", "containers.settings", 0, 0, 1, 3, 6, 12, 24, 72, 168)
-	h.Current = func() int {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		return h.Ceil(s.checkInterval)
-	}
+	h := schedule.Updates("containers.settings")
 	h.Apply = func(hours int) {
 		s.mu.Lock()
 		s.checkInterval = time.Duration(hours) * time.Hour

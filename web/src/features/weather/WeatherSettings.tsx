@@ -3,16 +3,18 @@ import { useEffect, useState } from "react";
 import { CloudSun, MapPin } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { SearchInput, Segmented, Switch } from "@/components/ui/form";
-import { ErrorNote, Skeleton, Spinner } from "@/components/ui/misc";
-import { SettingRow, SettingsList, usePatchSave } from "@/features/settings/shared";
-import { placeLabel, usePlaceSearch, useSaveWeatherSettings, useWeather, useWeatherSettings, type WeatherSettings as WS } from "./api";
+import { SearchInput, Segmented } from "@/components/ui/form";
+import { ErrorNote, Spinner } from "@/components/ui/misc";
+import { enabledToggle } from "@/features/settings/save";
+import { SettingRow, SettingsList } from "@/features/settings/shared";
+import { placeLabel, usePlaceSearch, useSaveWeatherSettings, useWeather, useWeatherSettings } from "./api";
 
 /** Settings → Appearance: weather on Home (Open-Meteo), units and location. */
 export function WeatherSettings() {
-  const { data, isLoading, error } = useWeatherSettings();
-  const report = useWeather(!!data?.enabled);
-  const save = useSaveWeatherSettings();
+  // Shows a change as soon as it is made (see useSettingsSave).
+  const { data: v, error } = useWeatherSettings();
+  const report = useWeather(!!v?.enabled);
+  const update = useSaveWeatherSettings();
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
   useEffect(() => {
@@ -20,26 +22,29 @@ export function WeatherSettings() {
     return () => clearTimeout(t);
   }, [q]);
   const results = usePlaceSearch(term);
-  const [v, update] = usePatchSave<WS>(data, save);
   const where = report.data?.location;
 
   return (
     <Card>
-      <CardHeader title="Weather" icon={<CloudSun />} tint="sky" />
-      <CardBody>
-        {isLoading ? (
-          <Skeleton className="h-24" />
-        ) : error ? (
+      <CardHeader
+        title="Weather"
+        icon={<CloudSun />}
+        tint="sky"
+        meta={v && !v.enabled ? "Forecast on Home, from open-meteo.com" : undefined}
+        toggle={enabledToggle("Show the weather on Home", v, update, error)}
+      />
+      {error && !v ? (
+        <CardBody>
           <ErrorNote error={error} />
-        ) : v ? (
-          <SettingsList>
-            <SettingRow title="Show the weather on Home" description="Looked up from open-meteo.com while Home is open, at most every 15 minutes. No account or key.">
-              <Switch checked={v.enabled} onCheckedChange={(enabled) => update({ enabled })} aria-label="Show the weather on Home" />
-            </SettingRow>
-            {v.enabled && (
+        </CardBody>
+      ) : (
+        v?.enabled && (
+          <CardBody>
+            <SettingsList>
               <SettingRow title="Units">
                 <Segmented
                   label="Units"
+                  size="sm"
                   value={v.units}
                   onChange={(units) => update({ units })}
                   options={[
@@ -48,8 +53,6 @@ export function WeatherSettings() {
                   ]}
                 />
               </SettingRow>
-            )}
-            {v.enabled && (
               <div className="flex flex-col gap-2 pt-3">
                 <SettingRow
                   className="pb-0"
@@ -103,10 +106,10 @@ export function WeatherSettings() {
                   </div>
                 )}
               </div>
-            )}
-          </SettingsList>
-        ) : null}
-      </CardBody>
+            </SettingsList>
+          </CardBody>
+        )
+      )}
     </Card>
   );
 }

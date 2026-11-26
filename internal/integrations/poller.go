@@ -90,6 +90,11 @@ func (s *Service) pollerStep(ctx context.Context, now time.Time, woken bool) {
 	if ctx.Err() != nil {
 		return
 	}
+	// Switched off or pointed at another server during the poll: nothing
+	// is published, reported or removed from its result.
+	if c := s.transmissionClient(); c == nil || (snap != nil && snap.c != c) {
+		return
+	}
 	if err != nil {
 		p.failures++
 		backoff := backoffStart << (p.failures - 1)

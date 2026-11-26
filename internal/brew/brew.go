@@ -116,7 +116,7 @@ func candidates(home string) []string {
 // read canned check output from dir and simulate upgrades with dir/upgrade.sh.
 func New(d *server.Deps) *Service {
 	s := &Service{d: d, supported: true, onHost: host.Container(), logDir: d.Cfg.DataDir,
-		sched: pkg.NewSchedule("brew.settings")}
+		sched: schedule.Updates("brew.settings")}
 	s.sched.Store, s.sched.Audit = d.Store, d.Audit
 	d.Audit.AllowLogs(s.openAuditLog)
 	s.exe, _ = os.Executable()

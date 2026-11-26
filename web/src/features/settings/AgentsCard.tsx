@@ -10,7 +10,7 @@ import { useNow } from "@/lib/hooks";
 import { Button, IconButton } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
-import { FormField, Input, Segmented, Select, Switch, useRadioGroup } from "@/components/ui/form";
+import { FormField, Input, Segmented, Select, useRadioGroup } from "@/components/ui/form";
 import { Badge, ErrorNote, Notice, Skeleton } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
 import {
@@ -30,7 +30,8 @@ import {
 } from "@/features/mcp/api";
 import { isNever, timeLeft } from "@/features/mcp/approval";
 import { claudeCode, genericJSON, mcpURL, standingInstruction } from "@/features/mcp/snippets";
-import { CodeBlock, SettingRow, SettingsList, usePatchSave } from "./shared";
+import { enabledToggle } from "./save";
+import { BoxList, CodeBlock, SettingRow, SettingsList, StackedRow } from "./shared";
 
 const networks: { value: MCPSettings["network"]; label: string }[] = [
   { value: "local", label: "Local network only" },
@@ -72,9 +73,9 @@ function ApprovalMinutes({ value, onSave }: { value: number; onSave: (n: number)
  * it is on. Switching off keeps the settings and agents for next time.
  */
 export function AgentsCard() {
-  const { data, error } = useMCPSettings();
-  const save = useSaveMCPSettings();
-  const [v, update] = usePatchSave<MCPSettings>(data, save);
+  // Shows a change as soon as it is made (see useSettingsSave).
+  const { data: v, error } = useMCPSettings();
+  const update = useSaveMCPSettings();
   const on = !!v?.enabled;
   // The dialog lives here, outside the part that hides, so a refetch that
   // fails or finds MCP switched off elsewhere can't drop a token on screen.
@@ -85,8 +86,8 @@ export function AgentsCard() {
         title="Agents (MCP)"
         icon={<BotMessageSquare />}
         tint="sky"
-        className="last:border-b-0"
-        actions={v ? <Switch aria-label="Allow agents (MCP)" checked={v.enabled} onCheckedChange={(enabled) => update({ enabled })} /> : !error && <Skeleton className="h-5 w-9" />}
+        meta={v && !v.enabled ? "AI agents using Wargo's tools" : undefined}
+        toggle={enabledToggle("Allow agents (MCP)", v, update, error)}
       />
       {error && !v ? (
         <CardBody>
@@ -97,11 +98,9 @@ export function AgentsCard() {
         v && (
           <CardBody>
             <SettingsList>
-              <div className="flex flex-col gap-2 py-3 first:pt-0">
-                <div className="text-sm font-medium">URL</div>
+              <StackedRow title="URL" description="Agents connect here over HTTP, sending their token as a bearer header.">
                 <CodeBlock label="MCP URL">{mcpURL(location.origin)}</CodeBlock>
-                <div className="text-xs text-muted">Agents connect here over HTTP, sending their token as a bearer header.</div>
-              </div>
+              </StackedRow>
               <SettingRow
                 title="Access"
                 description="Local network only: this machine and devices on your network. Anywhere: also agents reaching Wargo from outside, such as through a tunnel."
@@ -131,10 +130,10 @@ export function PendingCard() {
   return (
     <Card>
       <CardHeader title="Waiting for approval" icon={<Clock />} tint="butter" meta={pending.length} />
-      <CardBody className="py-1">
-        <ul className="divide-y divide-border/70">
+      <CardBody>
+        <BoxList>
           {pending.map((p) => (
-            <li key={p.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:gap-4">
+            <li key={p.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-4">
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
                   <span className="truncate text-sm font-medium">{p.agent.name}</span>
@@ -150,7 +149,7 @@ export function PendingCard() {
               </div>
             </li>
           ))}
-        </ul>
+        </BoxList>
       </CardBody>
     </Card>
   );
@@ -302,75 +301,75 @@ function AuthorizedAgents({ onConnect }: { onConnect: () => void }) {
   // Re-render each minute so the "ago" times stay current.
   useNow(60_000, !!data?.length);
   return (
-    <div className="flex flex-col gap-1 pt-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium">Authorized agents</span>
+    <StackedRow
+      title="Authorized agents"
+      action={
         <Button size="sm" variant="primary" icon={<Plus />} onClick={onConnect}>
           Connect an agent
         </Button>
-      </div>
-      {/* Indented under the heading: the agents belong to it. */}
-      <div className="pl-4">
-        {isLoading ? (
-          <Skeleton className="mt-2 h-16" />
-        ) : error ? (
-          <ErrorNote error={error} />
-        ) : !data?.length ? (
-          <p className="text-xs text-muted">None yet. Connect an agent to give it a token for Wargo's tools.</p>
-        ) : (
-          <ul className="divide-y divide-border/70">
-            {data.map((a) => (
-              <li key={a.id} className="flex flex-col gap-2 py-3 last:pb-0 sm:flex-row sm:items-center sm:gap-4">
-                {/* The revoke button runs the height of the agent's two lines. */}
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <IconButton label={`Revoke ${a.name}`} tall variant="danger" onClick={() => setRevoking(a)}>
-                    <Trash2 />
-                  </IconButton>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                      <span className="mr-0.5 truncate text-xs font-medium">{a.name}</span>
-                      {a.lastIp && (
-                        <Badge className="num" title="Address of its last request">
-                          {a.lastIp}
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="mt-1 text-2xs text-muted">
-                      Added <span title={datetime(a.createdAt)}>{ago(a.createdAt)}</span>
-                      {" · "}
-                      {isNever(a.lastUsedAt) ? "Never used" : <span title={datetime(a.lastUsedAt)}>Used {ago(a.lastUsedAt)}</span>}
-                    </div>
-                  </div>
+      }
+    >
+      {isLoading ? (
+        <Skeleton className="h-16" />
+      ) : error ? (
+        <ErrorNote error={error} />
+      ) : !data?.length ? (
+        <p className="text-xs text-muted">None yet. Connect an agent to give it a token for Wargo's tools.</p>
+      ) : (
+        <BoxList>
+          {data.map((a) => (
+            // Phones: name and revoke on the first line, access below. sm and up: one line.
+            <li key={a.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-3 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span className="truncate text-sm font-medium">{a.name}</span>
+                  {a.lastIp && (
+                    <Badge className="num" title="Address of its last request">
+                      {a.lastIp}
+                    </Badge>
+                  )}
                 </div>
-                <div className="flex shrink-0 pl-14 sm:pl-0">
-                  <Select
-                    aria-label={`Access for ${a.name}`}
-                    small
-                    className="w-auto"
-                    value={update.isPending && update.variables?.id === a.id ? update.variables.level : a.level}
-                    onChange={(e) => {
-                      const level = e.target.value as Level;
-                      update.mutate(
-                        { id: a.id, level },
-                        {
-                          onSuccess: () => toast.ok(`${a.name}: ${levelLabel(level)}`),
-                          onError: (err) => toast.error("Could not change access", err),
-                        },
-                      );
-                    }}
-                  >
-                    {levels.map((l) => (
-                      <option key={l.value} value={l.value}>
-                        {l.label}
-                      </option>
-                    ))}
-                  </Select>
+                <div className="text-xs text-muted">
+                  Added <span title={datetime(a.createdAt)}>{ago(a.createdAt)}</span>
+                  {" · "}
+                  {isNever(a.lastUsedAt) ? "Never used" : <span title={datetime(a.lastUsedAt)}>Used {ago(a.lastUsedAt)}</span>}
                 </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+              </div>
+              <Select
+                aria-label={`Access for ${a.name}`}
+                small
+                className="col-span-2 row-start-2 w-auto justify-self-start sm:col-span-1 sm:col-start-2 sm:row-start-1"
+                value={update.isPending && update.variables?.id === a.id ? update.variables.level : a.level}
+                onChange={(e) => {
+                  const level = e.target.value as Level;
+                  update.mutate(
+                    { id: a.id, level },
+                    {
+                      onSuccess: () => toast.ok(`${a.name}: ${levelLabel(level)}`),
+                      onError: (err) => toast.error("Could not change access", err),
+                    },
+                  );
+                }}
+              >
+                {levels.map((l) => (
+                  <option key={l.value} value={l.value}>
+                    {l.label}
+                  </option>
+                ))}
+              </Select>
+              <IconButton
+                label={`Revoke ${a.name}`}
+                size="xs"
+                variant="danger"
+                className="col-start-2 row-start-1 self-start sm:col-start-3 sm:self-center"
+                onClick={() => setRevoking(a)}
+              >
+                <Trash2 />
+              </IconButton>
+            </li>
+          ))}
+        </BoxList>
+      )}
       <ConfirmDialog
         open={!!revoking}
         onOpenChange={(o) => !o && setRevoking(null)}
@@ -390,6 +389,6 @@ function AuthorizedAgents({ onConnect }: { onConnect: () => void }) {
           })
         }
       />
-    </div>
+    </StackedRow>
   );
 }

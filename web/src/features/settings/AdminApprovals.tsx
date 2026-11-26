@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, Fingerprint, KeyRound, ShieldAlert, Terminal } from "lucide-react";
+import { BadgeCheck, KeyRound, ShieldAlert } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -9,7 +9,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/form";
 import { Badge, ErrorNote, Notice, Skeleton, type Tone } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { CodeBlock, SettingRow } from "./shared";
+import { BoxList, CodeBlock, SettingRow, SettingsList } from "./shared";
 import { usePasskeys } from "./hooks";
 
 interface Methods {
@@ -36,28 +36,17 @@ interface PrivdStatus {
 /** Container mode: no sudo or wargo-privd; approvals use the account password or a passkey. */
 function ContainerApprovals({ passkey }: { passkey: boolean }) {
   return (
-    <div className="divide-y divide-border">
+    <SettingsList>
       <SettingRow
-        title={
-          <span className="flex items-center gap-2">
-            <KeyRound className="size-4 text-muted" aria-hidden="true" /> Account password
-          </span>
-        }
+        title="Account password"
         description="Wargo runs in a container, so sudo isn't used. Approve each action with your host account's password; it's checked once and never stored."
       >
         <Badge tone="ok">Available</Badge>
       </SettingRow>
-      <SettingRow
-        title={
-          <span className="flex items-center gap-2">
-            <Fingerprint className="size-4 text-muted" aria-hidden="true" /> Passkey
-          </span>
-        }
-        description={passkey ? "Your registered passkeys can approve admin actions." : "Add a passkey above to approve admin actions with it."}
-      >
+      <SettingRow title="Passkey" description={passkey ? "Your registered passkeys can approve admin actions." : "Add a passkey above to approve admin actions with it."}>
         <Badge tone={passkey ? "ok" : "neutral"}>{passkey ? "Available" : "No passkeys"}</Badge>
       </SettingRow>
-    </div>
+    </SettingsList>
   );
 }
 
@@ -97,7 +86,7 @@ function TrustDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
       {!passkeys?.length ? (
         <Notice tone="warn">Add a passkey first (Passkeys section above).</Notice>
       ) : (
-        <ul className="divide-y divide-border rounded-md border border-border">
+        <BoxList>
           {passkeys.map((p) => (
             <li key={p.id} className="flex items-center gap-3 px-3 py-2.5">
               <Checkbox
@@ -117,7 +106,7 @@ function TrustDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
               <span className="num text-xs text-muted">{p.rpId}</span>
             </li>
           ))}
-        </ul>
+        </BoxList>
       )}
       {trust.error && !canceled && <ErrorNote error={trust.error} className="mt-3" />}
     </Dialog>
@@ -198,7 +187,7 @@ export function AdminApprovals() {
 
   return (
     <Card>
-      <CardHeader title="Admin approvals" icon={<ShieldAlert />} />
+      <CardHeader title="Admin approvals" icon={<ShieldAlert />} tint="peach" />
       <CardBody className="flex flex-col gap-3">
         <p className="text-sm text-muted">
           Wargo never keeps root. Privileged actions{" "}
@@ -212,13 +201,9 @@ export function AdminApprovals() {
         ) : methods?.mode === "container" ? (
           <ContainerApprovals passkey={!!methods.passkey} />
         ) : (
-          <div className="divide-y divide-border">
+          <SettingsList>
             <SettingRow
-              title={
-                <span className="flex items-center gap-2">
-                  <Terminal className="size-4 text-muted" aria-hidden="true" /> sudo password
-                </span>
-              }
+              title="sudo password"
               description={
                 methods?.sudo
                   ? "Your password is passed to sudo for one command and never stored."
@@ -230,14 +215,7 @@ export function AdminApprovals() {
               <Badge tone={methods?.sudo ? "ok" : "crit"}>{methods?.sudo ? "Available" : "Unavailable"}</Badge>
             </SettingRow>
             {privdOn && (
-              <SettingRow
-                title={
-                  <span className="flex items-center gap-2">
-                    <Fingerprint className="size-4 text-muted" aria-hidden="true" /> Passkey via wargo-privd
-                  </span>
-                }
-                description={privdDesc}
-              >
+              <SettingRow title="Passkey via wargo-privd" description={privdDesc}>
                 <Badge tone={privdTone}>{privdLabel}</Badge>
                 {st?.reachable && (
                   <Button size="sm" icon={<BadgeCheck />} disabled={!passkeys?.length} onClick={() => setTrusting(true)}>
@@ -246,7 +224,7 @@ export function AdminApprovals() {
                 )}
               </SettingRow>
             )}
-          </div>
+          </SettingsList>
         )}
         {privdOn && st && !st.container && !(st.reachable && st.credentials > 0) && (
           <details className="group rounded-md border border-border bg-surface-2/50 open:bg-transparent" open={!st.reachable}>

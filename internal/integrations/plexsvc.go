@@ -39,9 +39,21 @@ var (
 type plexSettings struct {
 	URL         string `json:"url"`
 	TokenSealed string `json:"tokenSealed,omitempty"`
+	Disabled    bool   `json:"disabled,omitempty"`
 }
 
+// plexSettings are the settings in effect: none while switched off.
 func (s *Service) plexSettings() plexSettings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.px.Disabled {
+		return plexSettings{}
+	}
+	return s.px
+}
+
+// savedPlex are the saved settings, switched off or not.
+func (s *Service) savedPlex() plexSettings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.px
@@ -100,15 +112,16 @@ type PlexStatus struct {
 	URL        string `json:"url"`
 	HasToken   bool   `json:"hasToken"`
 	Configured bool   `json:"configured"`
+	Enabled    bool   `json:"enabled"`
 	Available  bool   `json:"available"`
 	Version    string `json:"version,omitempty"`
 	Error      string `json:"error,omitempty"`
 }
 
 func (s *Service) plexStatus(ctx context.Context, force bool) PlexStatus {
-	p := s.plexSettings()
-	out := PlexStatus{URL: p.URL, HasToken: p.TokenSealed != "", Configured: p.URL != "" && p.TokenSealed != ""}
-	if !out.Configured {
+	p := s.savedPlex()
+	out := PlexStatus{URL: p.URL, HasToken: p.TokenSealed != "", Configured: p.URL != "" && p.TokenSealed != "", Enabled: !p.Disabled}
+	if !out.Configured || !out.Enabled {
 		return out
 	}
 	h := s.plexHealth(ctx, force)
@@ -125,7 +138,7 @@ func (s *Service) Plex() *PlexFeature { return &PlexFeature{s} }
 
 func (f *PlexFeature) Capabilities(ctx context.Context) (string, any) {
 	st := f.plexStatus(ctx, false)
-	return "plex", map[string]any{"available": st.Available, "configured": st.Configured, "version": st.Version, "error": st.Error}
+	return "plex", map[string]any{"available": st.Available, "configured": st.Configured && st.Enabled, "version": st.Version, "error": st.Error}
 }
 
 func (f *PlexFeature) Register(mux *http.ServeMux) {
@@ -158,7 +171,7 @@ func (s *Service) handlePutPlex(w http.ResponseWriter, r *http.Request) error {
 		return httpx.BadRequest("That does not look like a Plex token")
 	}
 	s.mu.Lock()
-	next := plexSettings{URL: u, TokenSealed: keepSecret(s.px.URL, u, s.px.TokenSealed)}
+	next := plexSettings{URL: u, TokenSealed: keepSecret(s.px.URL, u, s.px.TokenSealed), Disabled: keepDisabled(s.px.Disabled, u)}
 	if tok != "" {
 		if next.TokenSealed, err = s.st.Seal(tok); err != nil {
 			s.mu.Unlock()
@@ -185,7 +198,7 @@ func (s *Service) testPlex(ctx context.Context, w http.ResponseWriter, r *http.R
 			return err
 		}
 	}
-	saved := s.plexSettings()
+	saved := s.savedPlex()
 	u := saved.URL
 	if in.URL != "" {
 		var err error
@@ -244,15 +257,15 @@ func (s *Service) handleImportPlexToken(w http.ResponseWriter, r *http.Request) 
 		notDetected: "That path is not the Preferences.xml of a detected Plex container",
 		candidates:  func(d *Discovery) []Candidate { return d.Plex },
 		parse:       parsePlexToken,
-		savedURL:    func() string { return s.plexSettings().URL },
+		savedURL:    func() string { return s.savedPlex().URL },
 		apply: func(ctx context.Context, u, tok string) error {
 			sealed, err := s.st.Seal(tok)
 			if err != nil {
 				return err
 			}
-			next := plexSettings{URL: u, TokenSealed: sealed}
 			s.mu.Lock()
 			defer s.mu.Unlock()
+			next := plexSettings{URL: u, TokenSealed: sealed, Disabled: keepDisabled(s.px.Disabled, u)}
 			if err := s.save(ctx, keyPlex, u, next); err != nil {
 				return err
 			}

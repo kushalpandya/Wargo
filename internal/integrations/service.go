@@ -43,15 +43,21 @@ const (
 	Topic = "transmission"
 )
 
+// Each integration's settings carry Disabled: switched off, the address and
+// secret stay saved but Wargo acts as if the integration were not set up.
+// Settings saved before the switch existed have none, so they stay on.
+
 type prowlarrSettings struct {
 	URL          string `json:"url"`
 	APIKeySealed string `json:"apiKeySealed,omitempty"`
+	Disabled     bool   `json:"disabled,omitempty"`
 }
 
 type transmissionSettings struct {
 	URL            string `json:"url"`
 	Username       string `json:"username,omitempty"`
 	PasswordSealed string `json:"passwordSealed,omitempty"`
+	Disabled       bool   `json:"disabled,omitempty"`
 }
 
 type health struct {
@@ -222,6 +228,11 @@ func sameServer(a, b string) bool {
 	return ua.Scheme == ub.Scheme && strings.EqualFold(ua.Hostname(), ub.Hostname()) && port(ua) == port(ub)
 }
 
+// keepDisabled is Disabled after saving settings with URL u: a save keeps
+// the integration switched off, and emptying the URL (forgetting the
+// settings) clears it, so the next setup starts on.
+func keepDisabled(prev bool, u string) bool { return prev && u != "" }
+
 // keepSecret returns the sealed secret to keep when the URL changes from
 // old to u without a new secret: the saved one for the same server, none
 // for another.
@@ -245,13 +256,37 @@ func (s *Service) savedSecret(saved, u, sealed string) (secret string, ok bool) 
 	return secret, true
 }
 
+// prowlarrSettings are the settings in effect: none while switched off.
+// Everything that uses Prowlarr reads these.
 func (s *Service) prowlarrSettings() prowlarrSettings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pw.Disabled {
+		return prowlarrSettings{}
+	}
+	return s.pw
+}
+
+// savedProwlarr are the saved settings, switched off or not, for the
+// settings page: status, test and secret import.
+func (s *Service) savedProwlarr() prowlarrSettings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.pw
 }
 
+// transmissionSettings are the settings in effect: none while switched off.
 func (s *Service) transmissionSettings() transmissionSettings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tr.Disabled {
+		return transmissionSettings{}
+	}
+	return s.tr
+}
+
+// savedTransmission are the saved settings, switched off or not.
+func (s *Service) savedTransmission() transmissionSettings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.tr
@@ -274,7 +309,7 @@ func (s *Service) transmissionClient() *transmission.Client {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.tr
-	if t.URL == "" {
+	if t.URL == "" || t.Disabled {
 		return nil
 	}
 	k := t.URL + "\x00" + t.Username + "\x00" + t.PasswordSealed
@@ -361,9 +396,12 @@ func (s *Service) transmissionHealth(ctx context.Context, force bool) *health {
 
 // ProwlarrStatus is the browser-safe view of the Prowlarr integration.
 type ProwlarrStatus struct {
-	URL                   string                       `json:"url"`
-	HasAPIKey             bool                         `json:"hasApiKey"`
+	URL       string `json:"url"`
+	HasAPIKey bool   `json:"hasApiKey"`
+	// Configured says settings are saved; Enabled whether they are in
+	// use. Available is false while switched off.
 	Configured            bool                         `json:"configured"`
+	Enabled               bool                         `json:"enabled"`
 	Available             bool                         `json:"available"`
 	HasTransmissionClient bool                         `json:"hasTransmissionClient"`
 	TransmissionClient    *prowlarr.TransmissionClient `json:"transmissionClient,omitempty"`
@@ -377,15 +415,16 @@ type TransmissionStatus struct {
 	Username    string `json:"username"`
 	HasPassword bool   `json:"hasPassword"`
 	Configured  bool   `json:"configured"`
+	Enabled     bool   `json:"enabled"`
 	Available   bool   `json:"available"`
 	Version     string `json:"version,omitempty"`
 	Error       string `json:"error,omitempty"`
 }
 
 func (s *Service) prowlarrStatus(ctx context.Context, force bool) ProwlarrStatus {
-	p := s.prowlarrSettings()
-	out := ProwlarrStatus{URL: p.URL, HasAPIKey: p.APIKeySealed != "", Configured: p.URL != "" && p.APIKeySealed != ""}
-	if !out.Configured {
+	p := s.savedProwlarr()
+	out := ProwlarrStatus{URL: p.URL, HasAPIKey: p.APIKeySealed != "", Configured: p.URL != "" && p.APIKeySealed != "", Enabled: !p.Disabled}
+	if !out.Configured || !out.Enabled {
 		return out
 	}
 	h := s.prowlarrHealth(ctx, force)
@@ -396,9 +435,9 @@ func (s *Service) prowlarrStatus(ctx context.Context, force bool) ProwlarrStatus
 }
 
 func (s *Service) transmissionStatus(ctx context.Context, force bool) TransmissionStatus {
-	t := s.transmissionSettings()
-	out := TransmissionStatus{URL: t.URL, Username: t.Username, HasPassword: t.PasswordSealed != "", Configured: t.URL != ""}
-	if !out.Configured {
+	t := s.savedTransmission()
+	out := TransmissionStatus{URL: t.URL, Username: t.Username, HasPassword: t.PasswordSealed != "", Configured: t.URL != "", Enabled: !t.Disabled}
+	if !out.Configured || !out.Enabled {
 		return out
 	}
 	h := s.transmissionHealth(ctx, force)
@@ -419,10 +458,12 @@ type TransmissionFeature struct{ *Service }
 func (s *Service) Prowlarr() *ProwlarrFeature         { return &ProwlarrFeature{s} }
 func (s *Service) Transmission() *TransmissionFeature { return &TransmissionFeature{s} }
 
+// Capabilities report a switched-off integration as not configured and
+// not available, so pages and MCP tools hide.
 func (f *ProwlarrFeature) Capabilities(ctx context.Context) (string, any) {
 	st := f.prowlarrStatus(ctx, false)
 	return "prowlarr", map[string]any{
-		"available": st.Available, "configured": st.Configured, "hasTransmissionClient": st.Available && st.HasTransmissionClient,
+		"available": st.Available, "configured": st.Configured && st.Enabled, "hasTransmissionClient": st.Available && st.HasTransmissionClient,
 		"version": st.Version, "error": st.Error,
 	}
 }
@@ -430,7 +471,7 @@ func (f *ProwlarrFeature) Capabilities(ctx context.Context) (string, any) {
 func (f *TransmissionFeature) Capabilities(ctx context.Context) (string, any) {
 	st := f.transmissionStatus(ctx, false)
 	return "transmission", map[string]any{
-		"available": st.Available, "configured": st.Configured, "version": st.Version, "error": st.Error,
+		"available": st.Available, "configured": st.Configured && st.Enabled, "version": st.Version, "error": st.Error,
 		"removeFinished": f.removeFinished(),
 	}
 }
@@ -441,6 +482,7 @@ func (f *ProwlarrFeature) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/integrations/prowlarr", httpx.Handler(s.handlePutProwlarr))
 	mux.HandleFunc("PUT /api/integrations/transmission", httpx.Handler(s.handlePutTransmission))
 	mux.HandleFunc("POST /api/integrations/{name}/test", httpx.Handler(s.handleTest))
+	mux.HandleFunc("PUT /api/integrations/{name}/enabled", httpx.Handler(s.handlePutEnabled))
 	mux.HandleFunc("GET /api/integrations/discover", httpx.Handler(s.handleDiscover))
 	mux.HandleFunc("POST /api/integrations/prowlarr/import-key", httpx.Handler(s.handleImportKey))
 
@@ -499,7 +541,7 @@ func (s *Service) handlePutProwlarr(w http.ResponseWriter, r *http.Request) erro
 		key = strings.TrimSpace(*in.APIKey)
 	}
 	s.mu.Lock()
-	next := prowlarrSettings{URL: u, APIKeySealed: keepSecret(s.pw.URL, u, s.pw.APIKeySealed)}
+	next := prowlarrSettings{URL: u, APIKeySealed: keepSecret(s.pw.URL, u, s.pw.APIKeySealed), Disabled: keepDisabled(s.pw.Disabled, u)}
 	if key != "" {
 		if next.APIKeySealed, err = s.st.Seal(key); err != nil {
 			s.mu.Unlock()
@@ -529,7 +571,7 @@ func (s *Service) handlePutTransmission(w http.ResponseWriter, r *http.Request) 
 		return err
 	}
 	s.mu.Lock()
-	next := transmissionSettings{URL: u, Username: strings.TrimSpace(in.Username), PasswordSealed: keepSecret(s.tr.URL, u, s.tr.PasswordSealed)}
+	next := transmissionSettings{URL: u, Username: strings.TrimSpace(in.Username), PasswordSealed: keepSecret(s.tr.URL, u, s.tr.PasswordSealed), Disabled: keepDisabled(s.tr.Disabled, u)}
 	if in.Password != nil && *in.Password != "" {
 		if next.PasswordSealed, err = s.st.Seal(*in.Password); err != nil {
 			s.mu.Unlock()
@@ -557,6 +599,91 @@ func (s *Service) save(ctx context.Context, key, u string, v any) error {
 	return s.st.Set(ctx, key, v)
 }
 
+// handlePutEnabled switches an integration on or off with PUT
+// /api/integrations/{name}/enabled {"enabled": bool}, keeping its saved
+// address and secret. It answers with the integration's status, as GET
+// /api/integrations reports it. One with nothing saved is already on and
+// cannot be switched off.
+func (s *Service) handlePutEnabled(w http.ResponseWriter, r *http.Request) error {
+	name := r.PathValue("name")
+	var in struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := httpx.Decode(r, &in); err != nil {
+		return err
+	}
+	if in.Enabled == nil {
+		return httpx.BadRequest("enabled is required")
+	}
+	on := *in.Enabled
+	s.mu.Lock()
+	var (
+		key, u, label string
+		flag          *bool
+		v             any
+	)
+	switch name {
+	case "prowlarr":
+		key, u, label, flag, v = keyProwlarr, s.pw.URL, "Prowlarr", &s.pw.Disabled, &s.pw
+	case "transmission":
+		key, u, label, flag, v = keyTransmission, s.tr.URL, "Transmission", &s.tr.Disabled, &s.tr
+	case "plex":
+		key, u, label, flag, v = keyPlex, s.px.URL, "Plex", &s.px.Disabled, &s.px
+	default:
+		s.mu.Unlock()
+		return httpx.ErrNotFound
+	}
+	if u == "" {
+		s.mu.Unlock()
+		if !on {
+			return httpx.Errorf(http.StatusConflict, "not_configured", label+" is not set up")
+		}
+		return s.writeStatus(w, r, name)
+	}
+	prev := *flag
+	if prev == !on {
+		// Already so: nothing to store or audit.
+		s.mu.Unlock()
+		return s.writeStatus(w, r, name)
+	}
+	*flag = !on
+	err := s.st.Set(r.Context(), key, v)
+	if err != nil {
+		*flag = prev
+	}
+	s.mu.Unlock()
+	action := "integrations." + name + ".disable"
+	if on {
+		action = "integrations." + name + ".enable"
+	}
+	s.audit.Record(r, action, u, err, nil)
+	if err != nil {
+		return err
+	}
+	if name == "transmission" && !on && s.hub != nil {
+		// Replace the sticky torrent list so open and new Torrents pages
+		// stop showing it.
+		s.hub.Publish(Topic, &Payload{Torrents: []TorrentView{}, Error: "Transmission is not configured", At: s.now()})
+	}
+	s.wakePoller()
+	return s.writeStatus(w, r, name)
+}
+
+// writeStatus answers with one integration's status, checked afresh.
+func (s *Service) writeStatus(w http.ResponseWriter, r *http.Request, name string) error {
+	switch name {
+	case "prowlarr":
+		httpx.OK(w, s.prowlarrStatus(r.Context(), true))
+	case "transmission":
+		httpx.OK(w, s.transmissionStatus(r.Context(), true))
+	case "plex":
+		httpx.OK(w, s.plexStatus(r.Context(), true))
+	default:
+		return httpx.ErrNotFound
+	}
+	return nil
+}
+
 // TestResult is returned by POST /api/integrations/{name}/test.
 type TestResult struct {
 	OK                    bool                         `json:"ok"`
@@ -578,7 +705,7 @@ func (s *Service) handleTest(w http.ResponseWriter, r *http.Request) error {
 				return err
 			}
 		}
-		saved := s.prowlarrSettings()
+		saved := s.savedProwlarr()
 		u := saved.URL
 		if in.URL != "" {
 			var err error
@@ -612,7 +739,7 @@ func (s *Service) handleTest(w http.ResponseWriter, r *http.Request) error {
 				return err
 			}
 		}
-		saved := s.transmissionSettings()
+		saved := s.savedTransmission()
 		u, user := saved.URL, saved.Username
 		if in.URL != "" {
 			var err error
@@ -746,15 +873,15 @@ func (s *Service) handleImportKey(w http.ResponseWriter, r *http.Request) error 
 		notDetected: "That path is not the /config mount of a detected Prowlarr container",
 		candidates:  func(d *Discovery) []Candidate { return d.Prowlarr },
 		parse:       parseAPIKey,
-		savedURL:    func() string { return s.prowlarrSettings().URL },
+		savedURL:    func() string { return s.savedProwlarr().URL },
 		apply: func(ctx context.Context, u, key string) error {
 			sealed, err := s.st.Seal(key)
 			if err != nil {
 				return err
 			}
-			next := prowlarrSettings{URL: u, APIKeySealed: sealed}
 			s.mu.Lock()
 			defer s.mu.Unlock()
+			next := prowlarrSettings{URL: u, APIKeySealed: sealed, Disabled: keepDisabled(s.pw.Disabled, u)}
 			if err := s.save(ctx, keyProwlarr, u, next); err != nil {
 				return err
 			}

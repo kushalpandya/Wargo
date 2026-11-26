@@ -103,6 +103,9 @@ export function SearchInput({
   );
 }
 
+/** The Switch's size at both pointer types, for placeholders standing in for one. */
+export const switchSize = "h-5 w-9 pointer-coarse:h-6 pointer-coarse:w-11";
+
 export function Switch({
   checked,
   onCheckedChange,
@@ -126,7 +129,7 @@ export function Switch({
       checked={checked}
       onCheckedChange={onCheckedChange}
       disabled={disabled}
-      className="relative h-5 w-9 shrink-0 rounded-full border border-border-strong bg-surface-3 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:opacity-50 pointer-coarse:h-6 pointer-coarse:w-11"
+      className={cn("relative shrink-0 rounded-full border border-border-strong bg-surface-3 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:opacity-50", switchSize)}
     >
       <S.Thumb className="block size-3.5 translate-x-0.5 rounded-full bg-fg shadow transition-transform data-[state=checked]:translate-x-[18px] data-[state=checked]:bg-accent-fg pointer-coarse:size-4.5 pointer-coarse:data-[state=checked]:translate-x-[22px]" />
     </S.Root>

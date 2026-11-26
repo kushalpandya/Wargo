@@ -98,9 +98,10 @@ type Files struct {
 
 type Docker struct {
 	Socket string `toml:"socket"`
-	// UpdateCheckInterval is how often container images are checked for
-	// newer versions in the background (read-only registry lookups).
-	// "0" disables background checks.
+	// UpdateCheckInterval was how often container images were checked in
+	// the background. Still parsed so old config files load, but the
+	// shared update-check setting (Settings → General) now decides; it
+	// only applies when the docker service runs without a store.
 	UpdateCheckInterval Duration `toml:"update_check_interval"`
 }
 

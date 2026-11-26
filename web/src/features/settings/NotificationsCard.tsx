@@ -16,7 +16,6 @@ import {
   useSetPush,
   type Category,
   type Mode,
-  type Settings,
 } from "@/features/notifications/api";
 import {
   deniedHint,
@@ -28,7 +27,7 @@ import {
   sessionEndsNote,
   type PushSupport,
 } from "@/features/notifications/push";
-import { SettingRow, SettingsList, usePatchSave } from "./shared";
+import { SettingRow, SettingsList } from "./shared";
 
 const categories: { id: Category; title: string; hint: string }[] = [
   { id: "download.started", title: "Download started", hint: "A torrent starts downloading." },
@@ -139,8 +138,8 @@ function PushRow() {
 /** Which notifications Wargo shows and pushes, and push for this device. */
 export function NotificationsCard() {
   const { data, isLoading, error } = useNotifications();
-  const save = useSaveNotificationSettings();
-  const [v, update] = usePatchSave<Settings>(data?.settings, save);
+  const update = useSaveNotificationSettings();
+  const v = data?.settings;
 
   // The panel's gear links to /settings/general#notifications: scroll here once
   // the card has its rows, and again on each new visit to that link.
@@ -155,7 +154,7 @@ export function NotificationsCard() {
 
   return (
     <Card id="notifications" className="scroll-mt-20">
-      <CardHeader title="Notifications" icon={<Bell />} tint="butter" />
+      <CardHeader title="Notifications" icon={<Bell />} tint="peach" />
       <CardBody>
         {isLoading ? (
           <Skeleton className="h-64" />

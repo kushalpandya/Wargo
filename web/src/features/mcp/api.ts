@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useSettingsSave } from "@/features/settings/save";
 
 /** What an agent may do; each level includes the ones before it. */
 export type Level = "read" | "operate" | "admin";
@@ -64,17 +65,14 @@ export function useMCPSettings() {
   return useQuery({ queryKey: settingsKey, queryFn: () => api.get<MCPSettings>("/api/mcp/settings") });
 }
 
+/** Saves changes to the MCP settings, shown at once (see useSettingsSave). */
 export function useSaveMCPSettings() {
   const qc = useQueryClient();
-  return useMutation({
-    // Saves run one at a time, so a quick switch after a field change can't
-    // land before it and be overwritten by the older whole-object PUT.
-    scope: { id: "mcp-settings" },
-    mutationFn: (s: MCPSettings) => api.put<MCPSettings>("/api/mcp/settings", s),
-    onSuccess: (s) => {
-      qc.setQueryData(settingsKey, s);
-      qc.invalidateQueries({ queryKey: ["capabilities"] });
-    },
+  return useSettingsSave<MCPSettings>({
+    queryKey: settingsKey,
+    scope: "mcp-settings",
+    put: (s) => api.put<MCPSettings>("/api/mcp/settings", s),
+    onSaved: () => qc.invalidateQueries({ queryKey: ["capabilities"] }),
   });
 }
 

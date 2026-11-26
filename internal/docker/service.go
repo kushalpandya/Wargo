@@ -106,7 +106,8 @@ type Options struct {
 	// Wargo without looking anywhere online.
 	OwnIcon []byte
 	// UpdateInterval is how often images are checked in the background
-	// (0 disables; the first check runs ~2 minutes after start).
+	// without a Store (0 disables; the first check runs ~2 minutes after
+	// start). With a Store the shared update-check setting decides.
 	UpdateInterval time.Duration
 	// Version is Wargo's own version, recorded around self updates.
 	Version string
@@ -114,14 +115,24 @@ type Options struct {
 	Notify *notify.Center
 }
 
-// Configure applies opts and loads persisted update results.
+// Configure applies opts and loads persisted update results. Call it
+// before Register and Run: it sets the schedule's Store unguarded.
 func (s *Service) Configure(o Options) *Service {
 	s.st = o.Store
-	s.checkInterval = o.UpdateInterval
 	s.sched.Store = o.Store
-	if h, ok := s.sched.Saved(context.Background()); ok {
-		s.checkInterval = time.Duration(h) * time.Hour
+	interval := o.UpdateInterval
+	if o.Store != nil {
+		ctx := context.Background()
+		// The containers' own setting joins the shared one, unless
+		// packages already saved theirs or it was off.
+		s.sched.Adopt(ctx, oldSettingsKey)
+		// 0 when the setting can't be read: checks start once it is saved
+		// again (or on the next start), never against a switched-off choice.
+		interval = time.Duration(s.sched.Load(ctx)) * time.Hour
 	}
+	s.mu.Lock()
+	s.checkInterval = interval
+	s.mu.Unlock()
 	if o.DataDir != "" {
 		s.icons = newIconStore(o.DataDir)
 	}
@@ -237,7 +248,9 @@ func (s *Service) Capabilities(ctx context.Context) (string, any) {
 		out["version"] = v.Version
 		out["apiVersion"] = s.c.APIVersion()
 		out["compose"] = s.composeAvailable()
+		s.mu.Lock()
 		out["updateCheckIntervalMs"] = s.checkInterval.Milliseconds()
+		s.mu.Unlock()
 		out["icons"] = s.icons != nil
 		out["selfUpdate"] = s.selfUpdatePossible(cctx)
 	}

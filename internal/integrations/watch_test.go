@@ -80,11 +80,16 @@ type fakeWatchSource struct {
 	pxOK    bool
 	stErr   error
 	stFetch int
+	// during runs inside fetchStreams, as if it happened mid-fetch.
+	during func()
 }
 
 func (f *fakeWatchSource) plexConfigured() bool { return f.pxOK }
 func (f *fakeWatchSource) fetchStreams(context.Context) ([]notify.Stream, error) {
 	f.stFetch++
+	if f.during != nil {
+		f.during()
+	}
 	return nil, f.stErr
 }
 
