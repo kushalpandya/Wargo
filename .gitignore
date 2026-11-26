@@ -17,3 +17,6 @@ web/test-results/
 .DS_Store
 web/*.tsbuildinfo
 /wargo
+
+# Superpowers specs and plans stay local
+docs/superpowers/
