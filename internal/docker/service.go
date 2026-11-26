@@ -168,7 +168,7 @@ func (s *Service) isSelf(ctx context.Context, id string) bool {
 	if strings.HasPrefix(s.selfID, id) {
 		return true
 	}
-	if !validRef(id) {
+	if !ValidRef(id) {
 		return false
 	}
 	var v struct {
@@ -287,7 +287,7 @@ func dockerErr(err error) error {
 
 func pathID(r *http.Request) (string, error) {
 	id := r.PathValue("id")
-	if !validRef(id) {
+	if !ValidRef(id) {
 		return "", httpx.BadRequest("invalid container id")
 	}
 	return id, nil

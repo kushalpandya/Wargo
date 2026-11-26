@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/kushalpandya/wargo/internal/httpx"
 )
 
 // privateSuffixes are DNS suffixes that public DNS never answers for, so an
@@ -69,17 +71,12 @@ func (s *Service) allOrigins() []string {
 	return append(out, s.cfg.Dev.Origins...)
 }
 
-// forwardedHeaders reveal a request that came through a proxy or tunnel.
-var forwardedHeaders = []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP", "Forwarded", "CF-Connecting-IP", "CF-Ray"}
-
 // bypassAllowed limits dev.auth_bypass to direct local requests: a
 // loopback listener can still be published by cloudflared or nginx on the
 // same host, which would otherwise expose an unauthenticated root shell.
 func (s *Service) bypassAllowed(r *http.Request) bool {
-	for _, h := range forwardedHeaders {
-		if r.Header.Get(h) != "" {
-			return false
-		}
+	if httpx.Forwarded(r) {
+		return false
 	}
 	h := requestHostname(r)
 	if ip := net.ParseIP(h); ip != nil {

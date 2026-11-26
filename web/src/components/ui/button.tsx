@@ -83,14 +83,22 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   variant?: Variant;
   /** Render the child element (e.g. a router Link) with icon button styling. */
   asChild?: boolean;
+  /** A 44px square, as tall as a title line with a line of detail under it. */
+  tall?: boolean;
 }
 
 /** Square icon-only button; `label` is required for accessibility. */
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { label, size = "md", variant = "ghost", className, children, type = "button", asChild, ...rest },
+  { label, size = "md", variant = "ghost", className, children, type = "button", asChild, tall, ...rest },
   ref,
 ) {
-  const dim = size === "xs" ? "size-7" : size === "sm" ? "size-8" : "size-9";
+  const dim = tall
+    ? "size-11"
+    : size === "xs"
+      ? "size-7"
+      : size === "sm"
+        ? "size-8"
+        : "size-9";
   const look = cn(
     "inline-flex shrink-0 items-center justify-center rounded-md border transition-colors",
     "disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-[1.125rem]",

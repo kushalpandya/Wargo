@@ -370,6 +370,22 @@ func do(t *testing.T, h http.Handler, method, path, body string) *httptest.Respo
 	return rec
 }
 
+func TestAgentApprovalCategory(t *testing.T) {
+	e := newTestCenter(t)
+	if AgentApproval != "agent.approval" || !AgentApproval.valid() {
+		t.Fatalf("category %q not known", AgentApproval)
+	}
+	if m := e.c.Mode(AgentApproval); m != ModePush {
+		t.Fatalf("defaults to %q", m)
+	}
+	if err := e.c.SetModes(t.Context(), map[Category]Mode{AgentApproval: ModeApp}); err != nil {
+		t.Fatal(err)
+	}
+	if m := e.c.Mode(AgentApproval); m != ModeApp {
+		t.Fatalf("mode not saved: %q", m)
+	}
+}
+
 func TestSettingsDefaultsAndValidation(t *testing.T) {
 	e := newTestCenter(t)
 	mux := http.NewServeMux()

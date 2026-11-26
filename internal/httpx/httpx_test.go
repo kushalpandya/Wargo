@@ -59,3 +59,23 @@ func TestIsSecure(t *testing.T) {
 		t.Fatal("untrusted X-Forwarded-Proto honoured")
 	}
 }
+
+func TestForwarded(t *testing.T) {
+	if Forwarded(httptest.NewRequest("GET", "/", nil)) {
+		t.Fatal("plain request seen as forwarded")
+	}
+	for _, h := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP", "Forwarded", "CF-Connecting-IP", "CF-Ray"} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set(h, "203.0.113.9")
+		if !Forwarded(r) {
+			t.Errorf("%s not seen as forwarding", h)
+		}
+	}
+	// An empty first value does not hide a second one.
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Add("CF-Connecting-IP", "")
+	r.Header.Add("CF-Connecting-IP", "203.0.113.9")
+	if !Forwarded(r) {
+		t.Error("second header value ignored")
+	}
+}

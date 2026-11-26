@@ -182,6 +182,41 @@ func TestRequireCSRFAndOrigin(t *testing.T) {
 	}
 }
 
+// Review Focus 2: an agent's bearer token is not a credential here. Alone
+// it is refused; next to a session cookie the request is that browser
+// session, nothing more.
+func TestRequireIgnoresBearer(t *testing.T) {
+	s, _ := newTestService(t)
+	s.cfg.Auth.RequireTOTP = false
+	c, sess := sessionCookies(t, s, MethodPasswordTOTP)
+	var seen *Session
+	h := s.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = FromContext(r.Context())
+		w.WriteHeader(204)
+	}))
+	do := func(cookie bool, method string) int {
+		r := httptest.NewRequest(method, "http://wargo.test/api/x", nil)
+		r.Header.Set("Authorization", "Bearer wargo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+		if cookie {
+			r.AddCookie(c)
+		}
+		rec := httptest.NewRecorder()
+		seen = nil
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if got := do(false, "GET"); got != http.StatusUnauthorized || seen != nil {
+		t.Fatalf("bearer only: %d", got)
+	}
+	if got := do(true, "GET"); got != 204 || seen == nil || seen.IDHash != sess.IDHash {
+		t.Fatalf("cookie plus bearer: %d %+v", got, seen)
+	}
+	// Still a browser session: a write without the CSRF token is refused.
+	if got := do(true, "POST"); got != http.StatusForbidden {
+		t.Fatalf("cookie plus bearer, POST without CSRF: %d", got)
+	}
+}
+
 func TestSessionIdleExpiry(t *testing.T) {
 	s, st := newTestService(t)
 	c, sess := sessionCookies(t, s, MethodPasswordTOTP)

@@ -27,6 +27,7 @@ const (
 	SourceUser   = "user"   // a request from a signed-in (or signing-in) browser
 	SourceSystem = "system" // Wargo itself: background checks, start and stop
 	SourceJob    = "job"    // the end of a long-running job started earlier
+	SourceAgent  = "agent"  // a tool call made by an authorized agent over MCP
 )
 
 // Results other than "ok" and "error: …".
@@ -52,6 +53,14 @@ type Entry struct {
 	DurationMs int64           `json:"durationMs,omitempty"`
 	HasOutput  bool            `json:"hasOutput,omitempty"`
 	Output     *Output         `json:"output,omitempty"`
+	Agent      *AgentRef       `json:"agent,omitempty"`
+}
+
+// AgentRef names the agent an entry was written for, and the tool it called.
+type AgentRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Tool string `json:"tool"`
 }
 
 // Output is what a failed command or crash printed: the lines that
@@ -176,7 +185,24 @@ func clip(s string, n int) string {
 type (
 	elevationKey struct{}
 	sessionKey   struct{}
+	agentKey     struct{}
+	refKey       struct{}
 )
+
+// now is the clock, a variable so tests can move it.
+var now = time.Now
+
+// WithAgent tags the request context as made on behalf of an agent: its
+// entries get source "agent" and name the agent and tool.
+func WithAgent(ctx context.Context, a AgentRef) context.Context {
+	return context.WithValue(ctx, agentKey{}, a)
+}
+
+// AgentFrom returns the agent given with WithAgent.
+func AgentFrom(ctx context.Context) (AgentRef, bool) {
+	a, ok := ctx.Value(agentKey{}).(AgentRef)
+	return a, ok
+}
 
 // WithElevation tags the request context with how it was elevated.
 func WithElevation(ctx context.Context, method string) context.Context {
@@ -186,6 +212,13 @@ func WithElevation(ctx context.Context, method string) context.Context {
 // WithSession tags the request context with the session's audit tag.
 func WithSession(ctx context.Context, tag string) context.Context {
 	return context.WithValue(ctx, sessionKey{}, tag)
+}
+
+// WithRef links the entries written for the request to entry id (an
+// approved action to its approval request), unless an event sets its own
+// Ref.
+func WithRef(ctx context.Context, id int64) context.Context {
+	return context.WithValue(ctx, refKey{}, id)
 }
 
 // SessionTag is the short, non-secret tag an entry shows for a session,
@@ -246,6 +279,8 @@ func route(r *http.Request) string {
 // context of an entry: who wrote it and from where.
 type origin struct {
 	source, ip, ua, elevation, session, request, route string
+	agent                                              *AgentRef
+	ref                                                int64
 }
 
 func (l *Log) originOf(r *http.Request) origin {
@@ -262,6 +297,11 @@ func (l *Log) originOf(r *http.Request) origin {
 	}
 	o.elevation, _ = ctx.Value(elevationKey{}).(string)
 	o.session, _ = ctx.Value(sessionKey{}).(string)
+	o.ref, _ = ctx.Value(refKey{}).(int64)
+	if a, ok := AgentFrom(ctx); ok {
+		o.source = SourceAgent
+		o.agent = &a
+	}
 	return o
 }
 
@@ -273,6 +313,52 @@ func (l *Log) Write(r *http.Request, ev Event) int64 {
 		return 0
 	}
 	return l.write(l.originOf(r), ev)
+}
+
+// WriteFolded records ev like Write, but folds repeats: when the newest
+// entry with the same source, agent, action and target is less than window
+// old, that entry's details.count goes up by one and its time moves to now
+// instead of a new entry being added (a new entry starts at count 1). It is
+// for read-only calls an agent makes again and again. ev.Details must be
+// nil or a JSON object.
+func (l *Log) WriteFolded(r *http.Request, ev Event, window time.Duration) int64 {
+	if l == nil {
+		return 0
+	}
+	o := l.originOf(r)
+	var agentID string
+	if o.agent != nil {
+		agentID = o.agent.ID
+	}
+	var id int64
+	var ts int64
+	var details sql.NullString
+	err := l.st.DB.QueryRow(`SELECT id, ts, details FROM audit_log
+		WHERE source = ? AND COALESCE(agent_id,'') = ? AND action = ? AND COALESCE(target,'') = ?
+		ORDER BY id DESC LIMIT 1`,
+		o.source, agentID, ev.Action, clip(Redact(ev.Target), maxTarget)).Scan(&id, &ts, &details)
+	if err == nil && now().Sub(time.Unix(ts, 0)) < window {
+		d := map[string]any{}
+		_ = json.Unmarshal([]byte(details.String), &d)
+		n, _ := d["count"].(float64)
+		d["count"] = int(n) + 1
+		b, _ := json.Marshal(d)
+		if _, err := l.st.DB.Exec(`UPDATE audit_log SET details = ?, ts = ? WHERE id = ?`,
+			string(b), now().Unix(), id); err != nil {
+			slog.Error("audit fold failed", "action", ev.Action, "err", err)
+		} else {
+			return id
+		}
+	}
+	d := map[string]any{}
+	if ev.Details != nil {
+		if b, err := json.Marshal(ev.Details); err == nil {
+			_ = json.Unmarshal(b, &d)
+		}
+	}
+	d["count"] = 1
+	ev.Details = d
+	return l.write(o, ev)
 }
 
 func resultOf(ev Event) string {
@@ -296,6 +382,9 @@ func (l *Log) write(o origin, ev Event) int64 {
 	if ev.Session != "" {
 		o.session = ev.Session
 	}
+	if ev.Ref == 0 {
+		ev.Ref = o.ref
+	}
 	var details, output []byte
 	if ev.Details != nil {
 		if d, err := json.Marshal(ev.Details); err == nil && string(d) != "null" {
@@ -314,13 +403,19 @@ func (l *Log) write(o origin, ev Event) int64 {
 	if ev.Duration > 0 {
 		dur = sql.NullInt64{Int64: ev.Duration.Milliseconds(), Valid: true}
 	}
+	var agentID, agentName, tool string
+	if o.agent != nil {
+		agentID, agentName, tool = o.agent.ID, o.agent.Name, o.agent.Tool
+	}
 	res, err := l.st.DB.Exec(
 		`INSERT INTO audit_log(ts, ip, ua, action, target, result, elevation, details,
-			source, code, ref, session, request, route, version, duration_ms, output)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		time.Now().Unix(), o.ip, nullStr(clip(o.ua, maxUA)), ev.Action, target, result, nullStr(o.elevation), nullStr(string(details)),
+			source, code, ref, session, request, route, version, duration_ms, output,
+			agent_id, agent_name, tool)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		now().Unix(), o.ip, nullStr(clip(o.ua, maxUA)), ev.Action, target, result, nullStr(o.elevation), nullStr(string(details)),
 		o.source, nullStr(code), nullInt(ev.Ref), nullStr(o.session), nullStr(o.request), nullStr(clip(o.route, maxTarget)),
-		nullStr(l.Version), dur, nullStr(string(output)))
+		nullStr(l.Version), dur, nullStr(string(output)),
+		nullStr(agentID), nullStr(agentName), nullStr(tool))
 	var id int64
 	if err != nil {
 		slog.Error("audit write failed", "action", ev.Action, "err", err)

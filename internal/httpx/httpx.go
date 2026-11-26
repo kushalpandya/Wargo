@@ -154,6 +154,24 @@ func (t *ProxyTrust) ClientIP(r *http.Request) string {
 	return host
 }
 
+// forwardedHeaders reveal a request that came through a proxy or tunnel.
+var forwardedHeaders = []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP", "Forwarded", "CF-Connecting-IP", "CF-Ray"}
+
+// Forwarded reports whether r carries any header a proxy or tunnel adds,
+// whether or not the proxy is trusted.
+func Forwarded(r *http.Request) bool {
+	for _, h := range forwardedHeaders {
+		// Every value, not just the first: an empty first header must not
+		// hide a second one.
+		for _, v := range r.Header.Values(h) {
+			if v != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsSecure reports whether the original request used TLS.
 func (t *ProxyTrust) IsSecure(r *http.Request) bool {
 	if r.TLS != nil {

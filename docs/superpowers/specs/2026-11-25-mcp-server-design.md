@@ -243,8 +243,9 @@ Everyday actions:
 - `container_action`: start, stop or restart (the self-container guard
   stays).
 - `torrent_add`: a magnet link or a search result id.
-- `torrent_action`: start, stop, or remove keeping files. Removing files is
-  not offered over MCP. *Claude's call.*
+- `torrent_action`: start, stop, or remove, optionally deleting the downloaded
+  files as the web app's "Remove and delete data" does (added after testing,
+  at the owner's request).
 - `check_updates`: run the update checks now, where that needs no admin
   rights.
 - `process_signal`: ask a process to stop (TERM), for processes Wargo can

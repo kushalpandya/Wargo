@@ -158,3 +158,16 @@ func TestNativeDefaultListenIsLoopback(t *testing.T) {
 		t.Fatalf("native default listen must stay loopback, got %s", c.Listen)
 	}
 }
+
+func TestMCPAllowedNetworksMustBeCIDRs(t *testing.T) {
+	c := Default()
+	c.Auth.User = "someone"
+	c.MCP.AllowedNetworks = []string{"10.0.0.0/8", "fd00::/8"}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c.MCP.AllowedNetworks = []string{"10.0.0.0/8", "nonsense"}
+	if err := c.Validate(); err == nil {
+		t.Fatal("a bad CIDR was accepted")
+	}
+}

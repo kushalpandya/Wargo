@@ -58,7 +58,8 @@ const entryColumns = `id, ts, COALESCE(ip,''), COALESCE(ua,''), action, COALESCE
 	COALESCE(elevation,''), COALESCE(details,''),
 	COALESCE(source, CASE WHEN ip = 'local' THEN 'system' ELSE 'user' END),
 	COALESCE(code,''), COALESCE(ref,0), COALESCE(session,''), COALESCE(request,''), COALESCE(route,''),
-	COALESCE(version,''), COALESCE(duration_ms,0)`
+	COALESCE(version,''), COALESCE(duration_ms,0),
+	COALESCE(agent_id,''), COALESCE(agent_name,''), COALESCE(tool,'')`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -67,11 +68,12 @@ type scanner interface{ Scan(dest ...any) error }
 func scanEntry(s scanner, withOutput bool) (Entry, error) {
 	var e Entry
 	var ts int64
-	var d string
+	var d, agentID, agentName, tool string
 	var out sql.NullString
 	var has bool
 	dest := []any{&e.ID, &ts, &e.IP, &e.UA, &e.Action, &e.Target, &e.Result, &e.Elevation, &d,
-		&e.Source, &e.Code, &e.Ref, &e.Session, &e.Request, &e.Route, &e.Version, &e.DurationMs}
+		&e.Source, &e.Code, &e.Ref, &e.Session, &e.Request, &e.Route, &e.Version, &e.DurationMs,
+		&agentID, &agentName, &tool}
 	if withOutput {
 		dest = append(dest, &out)
 	} else {
@@ -81,6 +83,9 @@ func scanEntry(s scanner, withOutput bool) (Entry, error) {
 		return e, err
 	}
 	e.TS = time.Unix(ts, 0)
+	if agentID != "" {
+		e.Agent = &AgentRef{ID: agentID, Name: agentName, Tool: tool}
+	}
 	if d != "" {
 		e.Details = json.RawMessage(d)
 	}
@@ -137,11 +142,15 @@ func (l *Log) handleList(w http.ResponseWriter, r *http.Request) error {
 	case "":
 	case SourceUser:
 		where = append(where, `COALESCE(source, CASE WHEN ip = 'local' THEN 'system' ELSE 'user' END) = 'user'`)
-	case SourceSystem, SourceJob:
+	case SourceSystem, SourceJob, SourceAgent:
 		where = append(where, `source = ?`)
 		args = append(args, src)
 	default:
 		return httpx.BadRequest("invalid source")
+	}
+	if id := r.URL.Query().Get("agent"); id != "" {
+		where = append(where, `agent_id = ?`)
+		args = append(args, id)
 	}
 	if ref := httpx.QueryInt(r, "ref", 0); ref > 0 {
 		where = append(where, `ref = ?`)

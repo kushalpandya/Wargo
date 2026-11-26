@@ -12,7 +12,8 @@ export type Category =
   | "container.failed"
   | "updates.found"
   | "download.error"
-  | "disk.full";
+  | "disk.full"
+  | "agent.approval";
 
 export type Mode = "off" | "app" | "push";
 

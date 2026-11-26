@@ -25,8 +25,10 @@ import (
 const (
 	plexActivityTTL = 10 * time.Second
 	plexAccountsTTL = 10 * time.Minute
-	plexHistoryN    = 8
-	plexRecentN     = 8
+	// plexHistoryN is how many plays and additions the page shows, and
+	// plexMaxN the most a caller may ask for.
+	plexHistoryN = 8
+	plexMaxN     = 50
 )
 
 var (
@@ -319,6 +321,9 @@ type PlexActivity struct {
 	Errors    map[string]string `json:"errors,omitempty"`
 	WebURL    string            `json:"webUrl,omitempty"`
 	UpdatedAt time.Time         `json:"updatedAt"`
+	// RecentTruncated is set when the search for additions in a date range
+	// stopped at its page limit: older ones in the range may be missing.
+	RecentTruncated bool `json:"recentTruncated,omitempty"`
 }
 
 // plexActivityCache keeps the last result, failures included, for
@@ -389,11 +394,7 @@ func (s *Service) plexActivity(ctx context.Context) (*PlexActivity, error) {
 	if f == nil || f.key != key {
 		f = &activityFetch{key: key, done: make(chan struct{})}
 		a.flight = f
-		acc := a.acc
-		if a.accKey != key {
-			acc = nil // another server: its account names don't apply
-		}
-		needAcc := a.accKey != key || s.now().Sub(a.accAt) > plexAccountsTTL
+		acc, needAcc := a.accounts(key, s.now())
 		go s.fetchPlexActivity(context.WithoutCancel(ctx), c, p.URL, f, acc, needAcc)
 	}
 	a.mu.Unlock()
@@ -408,12 +409,12 @@ func (s *Service) plexActivity(ctx context.Context) (*PlexActivity, error) {
 func (s *Service) fetchPlexActivity(ctx context.Context, c *plex.Client, base string, f *activityFetch, acc map[int64]string, needAcc bool) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, acc, err := s.loadPlexActivity(ctx, c, base, acc, needAcc)
+	out, acc, err := s.loadPlexActivity(ctx, c, base, acc, needAcc, plexWindow{n: plexHistoryN})
 	f.data, f.err = out, err
 	a := &s.plexAct
 	a.mu.Lock()
-	if needAcc && acc != nil {
-		a.acc, a.accAt, a.accKey = acc, s.now(), f.key
+	if needAcc {
+		a.storeAccounts(f.key, acc, s.now())
 	}
 	a.key, a.at, a.data, a.err = f.key, s.now(), out, err
 	if a.flight == f {
@@ -423,18 +424,26 @@ func (s *Service) fetchPlexActivity(ctx context.Context, c *plex.Client, base st
 	close(f.done)
 }
 
+// plexWindow asks for n plays and additions between from and to (a zero
+// time is no bound).
+type plexWindow struct {
+	n        int
+	from, to time.Time
+}
+
 // loadPlexActivity fetches activity; acc maps account ids to names and is
 // refreshed when needAcc.
-func (s *Service) loadPlexActivity(ctx context.Context, c *plex.Client, base string, acc map[int64]string, needAcc bool) (*PlexActivity, map[int64]string, error) {
+func (s *Service) loadPlexActivity(ctx context.Context, c *plex.Client, base string, acc map[int64]string, needAcc bool, win plexWindow) (*PlexActivity, map[int64]string, error) {
 	var (
 		wg                 sync.WaitGroup
 		ss, hs, rs         []plex.Metadata
 		ssErr, hsErr, rErr error
+		truncated          bool
 	)
 	wg.Add(3)
 	go func() { defer wg.Done(); ss, ssErr = c.Sessions(ctx) }()
-	go func() { defer wg.Done(); hs, hsErr = c.History(ctx, plexHistoryN) }()
-	go func() { defer wg.Done(); rs, rErr = c.RecentlyAdded(ctx, plexRecentN) }()
+	go func() { defer wg.Done(); hs, hsErr = c.History(ctx, win.n, win.from, win.to) }()
+	go func() { defer wg.Done(); rs, truncated, rErr = c.RecentlyAdded(ctx, win.n, win.from, win.to) }()
 	if needAcc {
 		wg.Add(1)
 		go func() {
@@ -449,7 +458,8 @@ func (s *Service) loadPlexActivity(ctx context.Context, c *plex.Client, base str
 		return nil, acc, ssErr
 	}
 
-	out := &PlexActivity{Sessions: []PlexSession{}, History: []PlexItem{}, Recent: []PlexItem{}, WebURL: webURL(base), UpdatedAt: s.now()}
+	out := &PlexActivity{Sessions: []PlexSession{}, History: []PlexItem{}, Recent: []PlexItem{}, WebURL: webURL(base), UpdatedAt: s.now(),
+		RecentTruncated: truncated}
 	errs := map[string]string{}
 	if ssErr != nil {
 		errs["sessions"] = plexErrString(ssErr)
@@ -512,13 +522,92 @@ func (s *Service) loadPlexActivity(ctx context.Context, c *plex.Client, base str
 	return out, acc, nil
 }
 
+// handlePlexActivity serves the page's activity or, given any of limit (1
+// to plexMaxN), from and to (RFC 3339), the plays and additions in that
+// window, fetched afresh.
 func (s *Service) handlePlexActivity(w http.ResponseWriter, r *http.Request) error {
-	act, err := s.plexActivity(r.Context())
+	q := r.URL.Query()
+	var act *PlexActivity
+	var err error
+	if q.Has("limit") || q.Has("from") || q.Has("to") {
+		win, werr := parsePlexWindow(q)
+		if werr != nil {
+			return werr
+		}
+		act, err = s.plexActivityIn(r.Context(), win)
+	} else {
+		act, err = s.plexActivity(r.Context())
+	}
 	if err != nil {
 		return upstream(err)
 	}
 	httpx.OK(w, act)
 	return nil
+}
+
+func parsePlexWindow(q url.Values) (plexWindow, error) {
+	win := plexWindow{n: plexHistoryN}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > plexMaxN {
+			return win, httpx.BadRequest("limit must be 1 to " + strconv.Itoa(plexMaxN))
+		}
+		win.n = n
+	}
+	for key, t := range map[string]*time.Time{"from": &win.from, "to": &win.to} {
+		if v := q.Get(key); v != "" {
+			p, err := time.Parse(time.RFC3339, v)
+			if err != nil {
+				return win, httpx.BadRequest(key + " must be an RFC 3339 time")
+			}
+			*t = p
+		}
+	}
+	if !win.from.IsZero() && !win.to.IsZero() && win.from.After(win.to) {
+		return win, httpx.BadRequest("from must not be after to")
+	}
+	return win, nil
+}
+
+// plexActivityIn fetches the activity for win, uncached, reusing the
+// cached account names while they are fresh.
+func (s *Service) plexActivityIn(ctx context.Context, win plexWindow) (*PlexActivity, error) {
+	p := s.plexSettings()
+	c, err := s.plexClient()
+	if err != nil {
+		return nil, err
+	}
+	key := p.URL + "\x00" + p.TokenSealed
+	a := &s.plexAct
+	a.mu.Lock()
+	acc, needAcc := a.accounts(key, s.now())
+	a.mu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	out, acc, err := s.loadPlexActivity(ctx, c, p.URL, acc, needAcc, win)
+	if needAcc {
+		a.mu.Lock()
+		a.storeAccounts(key, acc, s.now())
+		a.mu.Unlock()
+	}
+	return out, err
+}
+
+// accounts are the cached account names of server key and whether they
+// need fetching again. Call with a.mu held.
+func (a *plexActivityCache) accounts(key string, now time.Time) (map[int64]string, bool) {
+	if a.accKey != key {
+		return nil, true // another server: its account names don't apply
+	}
+	return a.acc, a.acc == nil || now.Sub(a.accAt) > plexAccountsTTL
+}
+
+// storeAccounts keeps acc as server key's account names (nil, a failed
+// fetch, keeps what was there). Call with a.mu held.
+func (a *plexActivityCache) storeAccounts(key string, acc map[int64]string, now time.Time) {
+	if acc != nil {
+		a.acc, a.accAt, a.accKey = acc, now, key
+	}
 }
 
 // thumbWidths are the poster widths served (the next one up is used).

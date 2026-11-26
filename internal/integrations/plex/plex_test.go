@@ -7,8 +7,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 const testToken = "plexTOKEN_0123456789"
@@ -53,6 +56,9 @@ func fakePlex(t *testing.T) *httptest.Server {
 		case "/status/sessions":
 			w.Write([]byte(sessionsJSON))
 		case "/status/sessions/history/all":
+			if strings.Contains(r.URL.RawQuery, "viewedAt>") || strings.Contains(r.URL.RawQuery, "viewedAt<") {
+				t.Errorf("history without a window sent bounds: %s", r.URL.RawQuery)
+			}
 			if r.URL.Query().Get("sort") != "viewedAt:desc" || r.Header.Get("X-Plex-Container-Size") != "5" || r.Header.Get("X-Plex-Container-Start") != "0" {
 				t.Errorf("history paging: %s %v", r.URL.RawQuery, r.Header)
 			}
@@ -104,11 +110,11 @@ func TestClient(t *testing.T) {
 		t.Fatalf("session b: %+v", b)
 	}
 
-	h, err := c.History(ctx, 5)
+	h, err := c.History(ctx, 5, time.Time{}, time.Time{})
 	if err != nil || len(h) != 2 || h[0].ViewedAt != 1793499294 || h[1].AccountID != 7 {
 		t.Fatal(h, err)
 	}
-	r, err := c.RecentlyAdded(ctx, 1)
+	r, _, err := c.RecentlyAdded(ctx, 1, time.Time{}, time.Time{})
 	if err != nil || len(r) != 1 || r[0].Title != "Resident Evil" || r[0].AddedAt != 1793639066 {
 		t.Fatal(r, err)
 	}
@@ -161,5 +167,103 @@ func TestNotPlex(t *testing.T) {
 	}
 	if _, _, err := c.Photo(context.Background(), "/library/metadata/1/thumb/2", 80, 120); !errors.Is(err, ErrNotImage) {
 		t.Fatalf("svg or html passed as an image: %v", err)
+	}
+}
+
+// Plex filters history by viewedAt itself (checked on a real server), so
+// the window travels as viewedAt>= and viewedAt<= in the query.
+func TestHistoryWindow(t *testing.T) {
+	var raw string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw = r.URL.RawQuery
+		if r.Header.Get("X-Plex-Container-Size") != "20" {
+			t.Errorf("page size %q", r.Header.Get("X-Plex-Container-Size"))
+		}
+		w.Write([]byte(historyJSON))
+	}))
+	t.Cleanup(srv.Close)
+	from := time.Date(2025, 11, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(30 * 24 * time.Hour)
+	if _, err := New(srv.URL, testToken).History(context.Background(), 20, from, to); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"sort=viewedAt%3Adesc", "viewedAt>=" + strconv.FormatInt(from.Unix(), 10), "viewedAt<=" + strconv.FormatInt(to.Unix(), 10)} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("query %q lacks %q", raw, want)
+		}
+	}
+	if _, err := New(srv.URL, testToken).History(context.Background(), 20, from, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, "viewedAt>=") || strings.Contains(raw, "viewedAt<=") {
+		t.Errorf("open-ended window: %q", raw)
+	}
+}
+
+// fakeRecent serves total items, newest first, one per hour back from
+// newest, and ignores addedAt bounds, like a Plex that does not filter.
+func fakeRecent(t *testing.T, total int, newest int64) (*httptest.Server, *[]string) {
+	var mu sync.Mutex
+	var reqs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start, _ := strconv.Atoi(r.Header.Get("X-Plex-Container-Start"))
+		size, _ := strconv.Atoi(r.Header.Get("X-Plex-Container-Size"))
+		mu.Lock()
+		reqs = append(reqs, r.URL.RawQuery+"|"+strconv.Itoa(start)+"|"+strconv.Itoa(size))
+		mu.Unlock()
+		var items []string
+		for i := start; i < min(start+size, total); i++ {
+			items = append(items, `{"ratingKey":"`+strconv.Itoa(i)+`","type":"movie","title":"M`+strconv.Itoa(i)+`","addedAt":`+strconv.FormatInt(newest-int64(i)*3600, 10)+`}`)
+		}
+		w.Write([]byte(`{"MediaContainer":{"Metadata":[` + strings.Join(items, ",") + `]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &reqs
+}
+
+func TestRecentlyAddedWindow(t *testing.T) {
+	newest := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC).Unix()
+	srv, reqs := fakeRecent(t, 1000, newest)
+	c := New(srv.URL, testToken)
+	// Items 150 to 300 hours old; the first 150 must be skipped, so the
+	// window lies past the first page.
+	to := time.Unix(newest-150*3600, 0)
+	from := time.Unix(newest-300*3600, 0)
+	got, truncated, err := c.RecentlyAdded(context.Background(), 10, from, to)
+	if err != nil || truncated {
+		t.Fatal(err, truncated)
+	}
+	if len(got) != 10 || got[0].Title != "M150" || got[9].Title != "M159" {
+		t.Fatalf("got %d items, first %+v", len(got), got)
+	}
+	for _, m := range got {
+		if at := time.Unix(int64(m.AddedAt), 0); at.Before(from) || at.After(to) {
+			t.Fatalf("item outside the window: %s at %s", m.Title, at)
+		}
+	}
+	if len(*reqs) < 2 {
+		t.Fatalf("did not page: %v", *reqs)
+	}
+	first := (*reqs)[0]
+	if !strings.Contains(first, "addedAt>="+strconv.FormatInt(from.Unix(), 10)) || !strings.Contains(first, "addedAt<="+strconv.FormatInt(to.Unix(), 10)) {
+		t.Fatalf("bounds not sent: %s", first)
+	}
+
+	// A window older than anything reachable stops after a bounded number
+	// of pages instead of walking the whole library.
+	*reqs = nil
+	// It says so.
+	got, truncated, err = c.RecentlyAdded(context.Background(), 10, time.Unix(newest-2000*3600, 0), time.Unix(newest-1900*3600, 0))
+	if err != nil || len(got) != 0 || !truncated {
+		t.Fatalf("%v %v truncated %v", got, err, truncated)
+	}
+	if n := len(*reqs); n == 0 || n > maxRecentPages {
+		t.Fatalf("%d requests", n)
+	}
+
+	// Without a window: one page of n, as before.
+	*reqs = nil
+	if got, _, err := c.RecentlyAdded(context.Background(), 8, time.Time{}, time.Time{}); err != nil || len(got) != 8 || len(*reqs) != 1 || strings.Contains((*reqs)[0], "addedAt") {
+		t.Fatalf("%d items, requests %v, %v", len(got), *reqs, err)
 	}
 }

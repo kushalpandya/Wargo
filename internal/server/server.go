@@ -49,6 +49,20 @@ type Capable interface {
 	Capabilities(ctx context.Context) (key string, value any)
 }
 
+// Mounter services serve an endpoint of their own at exactly path, outside
+// the browser session check: h authenticates its requests itself. The Host
+// check still applies and request bodies are capped (mountedBody).
+type Mounter interface {
+	Mount() (path string, h http.Handler)
+}
+
+// APIUser services call the private API in process. SetAPI hands them the
+// private mux once every feature has registered on it.
+type APIUser interface{ SetAPI(h http.Handler) }
+
+// mountedBody caps request bodies to mounted endpoints.
+const mountedBody = 1 << 20
+
 // Deps are shared building blocks handed to feature services.
 type Deps struct {
 	Cfg     config.Config
@@ -121,6 +135,8 @@ func New(cfg config.Config) (*Server, error) {
 	s.runners = append(s.runners, mc)
 	s.capable = append(s.capable, mc)
 
+	mounts := map[string]http.Handler{}
+	var apiUsers []APIUser
 	for _, f := range features {
 		svc, err := f(d)
 		if err != nil {
@@ -137,6 +153,13 @@ func New(cfg config.Config) (*Server, error) {
 		}
 		if c, ok := svc.(Capable); ok {
 			s.capable = append(s.capable, c)
+		}
+		if m, ok := svc.(Mounter); ok {
+			p, h := m.Mount()
+			mounts[p] = h
+		}
+		if u, ok := svc.(APIUser); ok {
+			apiUsers = append(apiUsers, u)
 		}
 	}
 
@@ -157,12 +180,22 @@ func New(cfg config.Config) (*Server, error) {
 		httpx.Fail(w, r, httpx.ErrNotFound)
 	})
 
+	for _, u := range apiUsers {
+		u.SetAPI(private)
+	}
+
 	protected := au.Require(private)
 	spa := spaHandler(web.Dist())
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		if !au.HostAllowed(r) {
 			rejectHost(w, r)
+			return
+		}
+		if h, ok := mounts[p]; ok {
+			// No read deadline: responses may stream for a long time.
+			r.Body = http.MaxBytesReader(w, r.Body, mountedBody)
+			h.ServeHTTP(w, r)
 			return
 		}
 		switch {

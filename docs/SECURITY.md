@@ -314,6 +314,78 @@ library image paths, so the browser never needs the Plex token.
   is used.
 - **Not available:** OS updates, System Events, sensors and `wargo-privd`.
 
+## Agents (MCP)
+
+Wargo can let AI agents use a small set of tools over MCP. It is **off by
+default**. See [MCP.md](MCP.md) for how to use it. The model, in short: an
+agent can look at the server, do a few everyday things, and ask for admin
+actions that only you can approve.
+
+- **Tokens** are 256-bit random values, stored only as SHA-256 hashes and
+  shown once when the agent is created. Each belongs to one agent with an
+  access level (read, operate or admin), and revoking it takes effect on the
+  next request. A token is accepted **only on `/mcp`**: it can't sign in to
+  the web app or reach any other route, and a signed-in session can't be
+  made from one.
+- **Throttling.** Wrong tokens are slowed down per client address like wrong
+  passwords, using the same style of failure budget (and while an address is
+  blocked even the right token waits). Tokens never appear in logs or in
+  errors. Behind a proxy, set `auth.trusted_proxies` so each client is seen by
+  its own address.
+- **Network rule.** By default only the local network (loopback, private and
+  link-local addresses, plus `mcp.allowed_networks`) can connect. A request
+  that carries any forwarding header from a peer that isn't a trusted proxy
+  is not treated as local. A proxy on the same machine that adds no
+  forwarding headers still looks local; the setting **Anywhere** removes the
+  rule altogether and leaves the token as the only gate. Known-hostname and
+  `Origin` checks apply as everywhere else.
+- **Tools only reach the private API through a fixed list.** Each tool names
+  the few routes it may call, and nothing else is reachable. Every call
+  checks the agent's level again, so a lowered level or a revoked agent stops
+  working at once.
+- **Approvals.** Admin actions (OS updates, Homebrew updates, container
+  updates) never run when the agent asks. Wargo stores the exact request and
+  waits for you in the web app, which replays that stored request only when
+  you approve it. A request can't be changed after it is made, expires after
+  the time limit (15 minutes by default), and is dropped if Wargo restarts
+  (its notification is then marked as dealt with). Revoking an agent denies
+  its waiting requests. It is checked again when you approve: if the agent
+  was revoked, MCP turned off or the agent's level lowered meanwhile, nothing
+  runs. An agent asking again for the same action while it waits gets the
+  same request back, and each agent may have at most 10 requests waiting (50
+  for all agents), so a looping agent can't flood your phone. Approving counts
+  as you doing the action, so the usual approval applies, a sudo password or a
+  passkey, and a plain click only where the web app asks for nothing. **Your
+  credentials never pass through the agent**: the password or passkey goes
+  from your browser to Wargo, and the approval endpoints refuse a request made
+  with an agent token.
+- **Text from tools is untrusted.** Container names, log lines, process
+  command lines, torrent names and notification text can be written by
+  someone else. Tools trim and cap them, mask secrets in logs, command
+  lines, events and job text (including `--token value` style flags and
+  `wargo_` tokens), and label them as data in their descriptions, but an agent that follows instructions
+  hidden in them can still be misled. That is why the actions an agent can
+  start are few, reversible where possible, and the dangerous ones wait for
+  you, with one exception: an operate agent can delete a torrent's files
+  without approval, as you can from the web app.
+- **Deleting torrent files.** Removing a torrent with its data deletes every
+  file its metadata names in Transmission's download directory, whether
+  Transmission downloaded it or it was already there. Since an operate agent
+  can also add torrents, a misled agent could add a crafted torrent that
+  names existing files and then delete them. Transmission keeps this inside
+  the download directory, so keep that directory for downloads only. The
+  tool takes the torrent's info hash, never its numeric id, because
+  Transmission renumbers torrents when it restarts.
+- **Never exposed:** the terminal, the file manager, power actions, removing
+  conflicting packages during an OS upgrade, updating or stopping Wargo's own
+  container, and Wargo's own settings, accounts and passkeys.
+- **Audit.** Every tool call is logged with the agent and tool as source
+  **agent**. Read calls are folded into one entry with a count. Refused calls
+  (a wrong or revoked token, with the client address and never the token; a
+  tool the agent's level or the host does not allow) are logged as
+  `mcp.refused`, folded the same way. An admin request is linked to its
+  action and to your approval or denial.
+
 ## Audit log
 
 Sign-ins and sign-outs, account changes, every approved admin action and every

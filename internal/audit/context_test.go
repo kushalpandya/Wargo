@@ -142,6 +142,10 @@ func TestRedaction(t *testing.T) {
 		"magnet:?xt=urn:btih:abc&dn=Ubuntu+24.04":          "magnet:?xt=urn:btih:abc&dn=Ubuntu+24.04",
 		"plasma-workspace and plasma-x11-session conflict": "plasma-workspace and plasma-x11-session conflict",
 		"helper --password=hunter2 --user bob":             "helper --password=[redacted] --user bob",
+		"cloudflared tunnel run --token eyJhIjoiYiJ9.x":    "cloudflared tunnel run --token [redacted]",
+		"WARGO_TOKEN=wargo_AAAAAAAAAAAAAAAAAAAAAAAA ./x":   "WARGO_TOKEN=wargo_[redacted] ./x",
+		"agent wargo_abcdefghijklmnopqrstuvwxyz0123456789": "agent wargo_[redacted]",
+		"wargo_client --verbose":                           "wargo_client --verbose",
 	} {
 		if got := Redact(in); got != want {
 			t.Errorf("Redact(%q)\n got %q\nwant %q", in, got, want)

@@ -4,22 +4,27 @@ import { Switch as S, Checkbox as C } from "radix-ui";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 
-const inputBase =
-  "h-9 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-ui text-fg placeholder:text-subtle " +
+// Field look without width or size, so callers pick those without two
+// classes for one property (cn() doesn't merge Tailwind classes).
+const fieldLook =
+  "min-w-0 rounded-md border border-border bg-surface text-fg placeholder:text-subtle " +
   "transition-colors hover:border-border-strong focus:border-focus focus:outline-none focus-visible:outline-none focus:ring-2 focus:ring-focus/25 " +
   "disabled:opacity-50";
+const fieldSize = "h-9 px-3 text-ui";
+/** Matches an xs Button's height and text, for rows of small controls. */
+const fieldSizeSmall = "h-7 px-2.5 text-xs";
+const inputBase = cn("w-full", fieldSize, fieldLook);
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...rest }, ref) {
   return <input ref={ref} className={cn(inputBase, className)} {...rest} />;
 });
 
-export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select(
-  { className, children, ...rest },
+export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement> & { small?: boolean }>(function Select(
+  { className, small, children, ...rest },
   ref,
 ) {
-  // A width passed in (e.g. w-auto) replaces the default w-full; cn()
-  // doesn't merge Tailwind classes, so both would apply otherwise.
-  const base = /(^|\s)w-/.test(className ?? "") ? inputBase.replace("w-full ", "") : inputBase;
+  // A width passed in (e.g. w-auto) replaces the default w-full.
+  const base = cn(!/(^|\s)w-/.test(className ?? "") && "w-full", small ? fieldSizeSmall : fieldSize, fieldLook);
   return (
     <select ref={ref} className={cn(base, "appearance-none bg-[length:12px] bg-[right_0.5rem_center] bg-no-repeat pr-7", className)} style={{ backgroundImage: chevron }} {...rest}>
       {children}

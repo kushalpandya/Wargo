@@ -38,12 +38,14 @@ const (
 	UpdatesFound       Category = "updates.found"
 	DownloadError      Category = "download.error"
 	DiskFull           Category = "disk.full"
+	// AgentApproval: an agent asks the owner to approve an admin action.
+	AgentApproval Category = "agent.approval"
 )
 
 // Categories lists every category in settings order.
 var Categories = []Category{
 	DownloadStarted, DownloadFinished, StreamStarted, ContainerUnhealthy,
-	ContainerFailed, UpdatesFound, DownloadError, DiskFull,
+	ContainerFailed, UpdatesFound, DownloadError, DiskFull, AgentApproval,
 }
 
 func (c Category) valid() bool {

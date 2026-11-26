@@ -30,6 +30,11 @@ var redactRules = []struct {
 	{regexp.MustCompile(`(?i)\b(x-(?:api-key|plex-token|transmission-session-id):\s*)[^\s"]+`), "${1}" + redacted},
 	// JSON-like "password": "..." inside free text.
 	{regexp.MustCompile(`(?i)("(?:password|passwd|token|api_?key|apikey|secret)"\s*:\s*")[^"]*`), "${1}" + redacted},
+	// Secret command-line flags given as a separate argument
+	// (cloudflared tunnel run --token eyJ...).
+	{regexp.MustCompile(`(?i)((?:^|\s)--?(?:token|password|passwd|secret|api-?key|client-secret)\s+)\S+`), "${1}" + redacted},
+	// Wargo's own agent tokens, wherever they appear.
+	{regexp.MustCompile(`\bwargo_[A-Za-z0-9_-]{20,}`), "wargo_" + redacted},
 }
 
 // Redact masks credentials in s.

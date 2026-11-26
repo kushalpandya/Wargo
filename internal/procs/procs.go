@@ -158,6 +158,9 @@ func (s *Service) Register(mux *http.ServeMux) {
 // Details is the payload of GET /api/procs/{pid}.
 type Details struct {
 	Proc
+	// StartTicks is the process's raw start time; a signal request that
+	// names it is refused if the pid has since been reused.
+	StartTicks    uint64   `json:"startTicks"`
 	Cmdline       string   `json:"cmdline"`
 	Args          []string `json:"args,omitempty"`
 	Exe           string   `json:"exe,omitempty"`
@@ -205,7 +208,7 @@ func (s *Service) Details(ctx context.Context, pid int) (*Details, error) {
 	for _, p := range l.Procs {
 		names[p.PID] = p.Name
 		if p.PID == pid {
-			d.Proc, found = p, true
+			d.Proc, d.StartTicks, found = p, p.startTicks, true
 		}
 	}
 	if !found {
@@ -230,6 +233,9 @@ func (s *Service) handleSignal(w http.ResponseWriter, r *http.Request) error {
 	}
 	var req struct {
 		Signal string `json:"signal"`
+		// StartTicks, when sent, is the start time of the process the
+		// caller means (an agent's request may wait for approval).
+		StartTicks *uint64 `json:"startTicks"`
 	}
 	if err := httpx.Decode(r, &req); err != nil {
 		return err
@@ -248,6 +254,9 @@ func (s *Service) handleSignal(w http.ResponseWriter, r *http.Request) error {
 	p, ok := s.find(pid)
 	if !ok {
 		return httpx.ErrNotFound
+	}
+	if req.StartTicks != nil && *req.StartTicks != p.startTicks {
+		return httpx.Errorf(http.StatusConflict, "process_changed", "The process has exited and its PID was reused")
 	}
 	target := fmt.Sprintf("SIG%s pid %d (%s, user %s)", name, pid, p.Name, p.User)
 	err = host.SignalVerified(pid, sig, func() error { return s.verifyTarget(p) })

@@ -44,6 +44,13 @@ type Config struct {
 	Docker       Docker       `toml:"docker"`
 	Integrations Integrations `toml:"integrations"`
 	Metrics      Metrics      `toml:"metrics"`
+	MCP          MCP          `toml:"mcp"`
+}
+
+type MCP struct {
+	// AllowedNetworks are CIDRs counted as the private network, in addition
+	// to the built-in private ranges, when MCP is limited to it.
+	AllowedNetworks []string `toml:"allowed_networks"`
 }
 
 type Auth struct {
@@ -338,6 +345,11 @@ func (c Config) Validate() error {
 	for _, p := range c.Auth.TrustedProxies {
 		if _, _, err := net.ParseCIDR(p); err != nil {
 			return fmt.Errorf("auth.trusted_proxies: %w", err)
+		}
+	}
+	for _, p := range c.MCP.AllowedNetworks {
+		if _, _, err := net.ParseCIDR(p); err != nil {
+			return fmt.Errorf("mcp.allowed_networks: %w", err)
 		}
 	}
 	for _, list := range []struct {

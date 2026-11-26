@@ -104,6 +104,13 @@ func New(st *store.Store, dockerSocket string) *Service {
 	return s
 }
 
+// Capabilities reports events as available. The service is registered only
+// where it works (Linux); elsewhere an unsupported stub answers for
+// "events".
+func (s *Service) Capabilities(context.Context) (string, any) {
+	return "events", map[string]any{"available": true, "supported": true}
+}
+
 func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/system/events", httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
 		rng := r.URL.Query().Get("range")

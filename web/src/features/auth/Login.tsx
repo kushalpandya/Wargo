@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Fingerprint, KeyRound, LifeBuoy } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { getAssertion, webauthnSupported } from "@/lib/webauthn";
 import { useAuthState } from "@/app/session";
+import { returnTo } from "@/app/returnTo";
 import { Logo } from "@/app/Logo";
 import { Button } from "@/components/ui/button";
 import { Checkbox, FormField, Input } from "@/components/ui/form";
@@ -38,6 +39,7 @@ export function AuthShell({ children, title, subtitle }: { children: React.React
 export function Login() {
   const { data: state } = useAuthState();
   const nav = useNavigate();
+  const from = returnTo(useLocation().state);
   const qc = useQueryClient();
   const [step, setStep] = useState<Step>({ kind: "password" });
   const [username, setUsername] = useState("");
@@ -56,7 +58,7 @@ export function Login() {
     // Nothing from a previous session should survive into this one.
     qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "auth" });
     await qc.invalidateQueries({ queryKey: ["auth"] });
-    nav(next === "totp-setup" ? "/setup/2fa" : "/", { replace: true });
+    nav(next === "totp-setup" ? "/setup/2fa" : from, { replace: true });
   };
 
   const run = async (fn: () => Promise<void>) => {

@@ -90,6 +90,16 @@ var migrations = []string{
 	CREATE INDEX audit_ref ON audit_log(ref);
 	CREATE INDEX audit_request ON audit_log(request);
 	CREATE INDEX audit_action ON audit_log(action, id);`,
+	// Entries written on behalf of an agent say which agent and which tool.
+	`ALTER TABLE audit_log ADD COLUMN agent_id TEXT;
+	ALTER TABLE audit_log ADD COLUMN agent_name TEXT;
+	ALTER TABLE audit_log ADD COLUMN tool TEXT;
+	CREATE INDEX audit_agent ON audit_log(agent_id, id);`,
+	// Agents that may use Wargo over MCP. Only the SHA-256 of a token is kept.
+	`CREATE TABLE mcp_agents (
+		id TEXT PRIMARY KEY, name TEXT NOT NULL, level TEXT NOT NULL,
+		token_hash TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL,
+		last_used_at INTEGER, last_ip TEXT);`,
 }
 
 // Open opens (and migrates) the database in dataDir.

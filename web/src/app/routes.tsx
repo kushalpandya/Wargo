@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { lazy, Suspense, useEffect } from "react";
-import { createBrowserRouter, Navigate, Outlet, useNavigate, useRouteError } from "react-router";
+import { createBrowserRouter, Navigate, Outlet, useLocation, useNavigate, useRouteError } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { isUnreachable, setUnauthorizedHandler } from "@/lib/api";
 import { events } from "@/lib/ws";
@@ -10,6 +10,7 @@ import { useAuthState, useMe, type AuthState } from "./session";
 import { Layout } from "./Layout";
 import { Unreachable, useAutoRetry } from "./Unreachable";
 import { AppSkeleton } from "./AppSkeleton";
+import { returnTo } from "./returnTo";
 
 // Sign-in screens are only needed when signed out; keep them out of the main bundle.
 const Login = lazy(() => import("@/features/auth/Login").then((m) => ({ default: m.Login })));
@@ -23,6 +24,7 @@ const Updates = lazy(() => import("@/features/updates/Updates"));
 const Torrents = lazy(() => import("@/features/torrents/Torrents"));
 const Settings = lazy(() => import("@/features/settings/Settings"));
 const About = lazy(() => import("@/features/about/About"));
+const Approve = lazy(() => import("@/features/mcp/Approve"));
 
 /** Errors thrown while rendering a route outside the app shell. */
 function RouteError() {
@@ -53,6 +55,7 @@ function RequireAuth() {
   const unreachable = useUnreachable(state);
   const me = useMe(!!state.data?.authenticated);
   const nav = useNavigate();
+  const loc = useLocation();
 
   const qc = useQueryClient();
   useEffect(() => {
@@ -76,7 +79,8 @@ function RequireAuth() {
 
   if (unreachable) return unreachable;
   if (state.isLoading || (authed && me.isLoading)) return <AppSkeleton />;
-  if (!authed) return <Navigate to="/login" replace />;
+  // Sign-in brings the browser back here (an approval link opened while signed out).
+  if (!authed) return <Navigate to="/login" replace state={{ from: loc.pathname + loc.search + loc.hash }} />;
   if (me.data?.totpSetupRequired) return <Navigate to="/setup/2fa" replace />;
   return <Outlet />;
 }
@@ -84,9 +88,10 @@ function RequireAuth() {
 function PublicOnly() {
   const state = useAuthState();
   const unreachable = useUnreachable(state);
+  const loc = useLocation();
   if (unreachable) return unreachable;
   if (state.isLoading) return <FullPageSpinner />;
-  if (state.data?.authenticated) return <Navigate to="/" replace />;
+  if (state.data?.authenticated) return <Navigate to={returnTo(loc.state)} replace />;
   return <Outlet />;
 }
 
@@ -114,6 +119,7 @@ export const router = createBrowserRouter([
           { path: "torrents", element: <Torrents /> },
           { path: "settings/*", element: <Settings /> },
           { path: "about", element: <About /> },
+          { path: "approve/:id", element: <Approve /> },
           { path: "*", element: <Navigate to="/" replace /> },
         ],
       },

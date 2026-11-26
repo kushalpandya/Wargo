@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { memo, useDeferredValue, useMemo, useState, type ReactNode } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Bot, ChevronRight, Copy, FileText, RefreshCw, ScrollText, Timer, User } from "lucide-react";
+import { Bot, BotMessageSquare, ChevronRight, Copy, FileText, RefreshCw, ScrollText, Timer, User } from "lucide-react";
 import { api, qs } from "@/lib/api";
 import { copyWithToast } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
@@ -15,8 +15,9 @@ import { FilterMenu, radioGroup } from "@/components/ui/filter-menu";
 import { Badge, EmptyState, ErrorNote, Field, OutputBlock, Skeleton, Spinner } from "@/components/ui/misc";
 import { StatStrip, type StatItem } from "@/components/ui/stat-strip";
 import { Table, Td, Th, THead, Tr } from "@/components/ui/table";
+import { useAgents } from "@/features/mcp/api";
 
-export type AuditSource = "user" | "system" | "job";
+export type AuditSource = "user" | "system" | "job" | "agent";
 
 export interface AuditOutput {
   lines?: string[];
@@ -34,8 +35,10 @@ export interface AuditEntry {
   result: string;
   elevation?: string;
   details?: unknown;
-  /** "user": a request from a browser; "system": Wargo itself; "job": the end of a job started earlier. */
+  /** "user": a request from a browser; "system": Wargo itself; "job": the end of a job started earlier; "agent": an agent's MCP tool call. */
   source: AuditSource;
+  /** The agent (its name at the time) and tool, for source "agent". */
+  agent?: { id: string; name: string; tool: string };
   code?: string;
   /** The entry this one belongs to (a job's end points at its start). */
   ref?: number;
@@ -50,7 +53,8 @@ export interface AuditEntry {
 }
 
 type ResultFilter = "all" | "ok" | "error";
-type SourceFilter = "all" | "user" | "wargo";
+/** "agents": any agent; "agent:<id>": one agent (both asked of the server, so older entries count too). */
+type SourceFilter = "all" | "user" | "wargo" | "agents" | `agent:${string}`;
 
 const PAGE = 100;
 
@@ -73,6 +77,7 @@ const AREAS: Record<string, string> = {
   jobs: "Wargo",
   wargo: "Wargo",
   server: "Wargo",
+  mcp: "Agents",
 };
 const areaOf = (action: string) => AREAS[action.split(".")[0]] ?? "Other";
 
@@ -90,15 +95,34 @@ function Result({ r }: { r: string }) {
   );
 }
 
-const SOURCES: Record<AuditSource, { label: string; icon: typeof User }> = {
-  user: { label: "Browser", icon: User },
-  system: { label: "Wargo", icon: Bot },
-  job: { label: "Job", icon: Timer },
+const SOURCES: Record<AuditSource, { label: string; icon: typeof User; title: string }> = {
+  user: { label: "Browser", icon: User, title: "Done from a browser" },
+  system: { label: "Wargo", icon: Bot, title: "Done by Wargo itself" },
+  job: { label: "Job", icon: Timer, title: "The end of a job started earlier" },
+  agent: { label: "Agent", icon: BotMessageSquare, title: "Done by an agent over MCP" },
 };
 
+/** How many identical read-only agent calls an mcp.read entry stands for. */
+function foldedCount(e: AuditEntry): number | undefined {
+  if (e.action !== "mcp.read") return undefined;
+  const n = (e.details as { count?: unknown } | null | undefined)?.count;
+  return typeof n === "number" ? n : undefined;
+}
+
+/** The agent and tool behind an agent entry, and how many calls it folds. */
+function AgentLine({ e }: { e: AuditEntry }) {
+  const n = foldedCount(e);
+  if (!e.agent) return null;
+  return (
+    <span className="text-xs font-normal text-muted">
+      {e.agent.name} · <span className="num">{e.agent.tool}</span>
+      {n && n > 1 ? <span className="num"> ×{n}</span> : null}
+    </span>
+  );
+}
+
 function Source({ s, withLabel }: { s: AuditSource; withLabel?: boolean }) {
-  const { label, icon: Icon } = SOURCES[s] ?? SOURCES.system;
-  const title = s === "job" ? "The end of a job started earlier" : s === "system" ? "Done by Wargo itself" : "Done from a browser";
+  const { label, icon: Icon, title } = SOURCES[s] ?? SOURCES.system;
   return (
     <span className="inline-flex items-center gap-1.5 text-muted" title={title}>
       <Icon className="size-3.5 shrink-0" aria-hidden />
@@ -270,6 +294,21 @@ function AuditSheet({ entry, onOpen, onClose }: { entry: AuditEntry | null; onOp
               <Field label="By">
                 <Source s={e.source} withLabel />
               </Field>
+              {e.agent && (
+                <>
+                  <Field label="Agent">
+                    <span title={e.agent.id}>{e.agent.name}</span>
+                  </Field>
+                  <Field label="Tool" mono>
+                    {e.agent.tool}
+                  </Field>
+                </>
+              )}
+              {foldedCount(e) !== undefined && (
+                <Field label="Calls" mono>
+                  {foldedCount(e)}
+                </Field>
+              )}
               <Field label="Duration" mono>
                 {durationMs(e.durationMs) ?? <None />}
               </Field>
@@ -364,24 +403,38 @@ export const AuditPanel = memo(function AuditPanel() {
   const [elevated, setElevated] = useState(false);
   const [open, setOpen] = useState<AuditEntry | null>(null);
   const dq = useDeferredValue(q.trim().toLowerCase());
+  // Agent filters go to the server: agent entries can be few among many.
+  const server = source === "agents" ? { source: "agent" } : source.startsWith("agent:") ? { agent: source.slice(6) } : {};
   const query = useInfiniteQuery({
-    queryKey: ["audit"],
-    queryFn: ({ pageParam }) => api.get<AuditEntry[]>(`/api/audit${qs({ limit: PAGE, before: pageParam || undefined })}`),
+    queryKey: ["audit", "list", server],
+    queryFn: ({ pageParam }) => api.get<AuditEntry[]>(`/api/audit${qs({ ...server, limit: PAGE, before: pageParam || undefined })}`),
     initialPageParam: 0,
     getNextPageParam: (last) => (last.length < PAGE ? undefined : last[last.length - 1].id),
   });
   const all = useMemo(() => query.data?.pages.flat() ?? [], [query.data]);
   const areas = useMemo(() => [...new Set(all.map((e) => areaOf(e.action)))].sort(), [all]);
+  // One choice per agent: the connected ones, and any others (revoked since) seen in the entries.
+  const agentList = useAgents().data;
+  const agentChoices = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const a of agentList ?? []) names.set(a.id, a.name);
+    for (const e of all) if (e.agent && !names.has(e.agent.id)) names.set(e.agent.id, e.agent.name);
+    return [...names].map(([id, name]) => ({ value: `agent:${id}` as const, label: name })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [agentList, all]);
   // Filters apply to the entries loaded so far; "Load more" fetches older ones.
   const rows = useMemo(
     () =>
       all.filter(
         (e) =>
           (result === "all" || (result === "ok" ? isOk(e.result) : !isOk(e.result) && !isCanceled(e.result))) &&
-          (source === "all" || (source === "user") === (e.source === "user")) &&
+          (source !== "user" || e.source === "user") &&
+          (source !== "wargo" || e.source === "system" || e.source === "job") &&
           (area === "all" || areaOf(e.action) === area) &&
           (!elevated || !!e.elevation) &&
-          (!dq || [e.action, e.target, e.result, e.ip, e.elevation ?? "", e.code ?? "", e.request ?? ""].some((v) => v.toLowerCase().includes(dq))),
+          (!dq ||
+            [e.action, e.target, e.result, e.ip, e.elevation ?? "", e.code ?? "", e.request ?? "", e.agent?.name ?? "", e.agent?.tool ?? ""].some((v) =>
+              v.toLowerCase().includes(dq),
+            )),
       ),
     [all, result, source, area, elevated, dq],
   );
@@ -421,6 +474,8 @@ export const AuditPanel = memo(function AuditPanel() {
                 { value: "all", label: "Anyone" },
                 { value: "user", label: "From a browser" },
                 { value: "wargo", label: "Wargo and jobs" },
+                { value: "agents", label: "Agents" },
+                ...agentChoices,
               ]),
               radioGroup("Area", area, setArea, [{ value: "all", label: "All areas" }, ...areas.map((a) => ({ value: a, label: a }))]),
               { kind: "check", title: "Only", items: [{ label: "Elevated actions", checked: elevated, onChange: setElevated }] },
@@ -484,7 +539,9 @@ export const AuditPanel = memo(function AuditPanel() {
                       <Td>
                         <Source s={e.source} />
                       </Td>
-                      <Td className="num whitespace-nowrap font-medium">{e.action}</Td>
+                      <Td className="font-medium">
+                        <span className="num whitespace-nowrap">{e.action}</span> <AgentLine e={e} />
+                      </Td>
                       <Td className="max-w-[18rem] truncate" title={e.target}>
                         {e.target}
                       </Td>
@@ -506,7 +563,9 @@ export const AuditPanel = memo(function AuditPanel() {
                     <button type="button" onClick={() => setOpen(e)} className="flex min-h-12 w-full items-center gap-3 border-b border-border px-4 py-2 text-left hover:bg-surface-2">
                       <Source s={e.source} />
                       <div className="min-w-0 flex-1">
-                        <div className="num truncate text-sm font-medium">{e.action}</div>
+                        <div className="truncate text-sm font-medium">
+                          <span className="num">{e.action}</span> <AgentLine e={e} />
+                        </div>
                         <div className="truncate text-xs text-subtle">{[e.target, e.ip].filter(Boolean).join(" · ")}</div>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">

@@ -500,7 +500,7 @@ func SelfUpdate(ctx context.Context, socket, target string, w io.Writer, timeout
 }
 
 func selfUpdate(ctx context.Context, socket, target string, log logger, timeout time.Duration) error {
-	if !validRef(target) {
+	if !ValidRef(target) {
 		return errors.New("invalid target container")
 	}
 	if timeout <= 0 {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { ReactNode } from "react";
 import { Link } from "react-router";
-import { AlertTriangle, ArrowDownToLine, Bell, CircleAlert, Clapperboard, HardDrive, PackageCheck, Settings, X } from "lucide-react";
+import { AlertTriangle, ArrowDownToLine, Bell, BotMessageSquare, CircleAlert, Clapperboard, HardDrive, PackageCheck, Settings, X } from "lucide-react";
 import { Button, IconButton } from "@/components/ui/button";
 import { IconChip, type Tint } from "@/components/ui/card";
 import { EmptyState, ErrorNote, Meter, Skeleton } from "@/components/ui/misc";
@@ -19,6 +19,7 @@ const look: Record<Category, [ReactNode, Tint]> = {
   "container.failed": [<CircleAlert key="i" />, "rose"],
   "updates.found": [<PackageCheck key="i" />, "mint"],
   "disk.full": [<HardDrive key="i" />, "peach"],
+  "agent.approval": [<BotMessageSquare key="i" />, "iris"],
 };
 
 function CategoryIcon({ category, muted }: { category: Category; muted?: boolean }) {

@@ -273,7 +273,7 @@ func (c *Client) stream(ctx context.Context, method, path string, in any) (io.Re
 
 // ContainerName resolves a container id (or prefix) to its name.
 func (c *Client) ContainerName(ctx context.Context, id string) (string, error) {
-	if !validRef(id) {
+	if !ValidRef(id) {
 		return "", errors.New("invalid id")
 	}
 	var v struct {

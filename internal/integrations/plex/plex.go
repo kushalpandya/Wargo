@@ -67,10 +67,12 @@ func stripURL(err error) error {
 	return err
 }
 
-func (c *Client) request(ctx context.Context, path string, q url.Values, withToken bool, page *[2]int) (*http.Response, error) {
+// request sends GET path. query is already encoded; it may hold Plex
+// filters such as viewedAt>=N, which url.Values would escape.
+func (c *Client) request(ctx context.Context, path, query string, withToken bool, page *[2]int) (*http.Response, error) {
 	u := c.BaseURL + path
-	if len(q) > 0 {
-		u += "?" + q.Encode()
+	if query != "" {
+		u += "?" + query
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -99,8 +101,8 @@ func (c *Client) request(ctx context.Context, path string, q url.Values, withTok
 	return res, nil
 }
 
-func (c *Client) get(ctx context.Context, path string, q url.Values, withToken bool, page *[2]int, out any) error {
-	res, err := c.request(ctx, path, q, withToken, page)
+func (c *Client) get(ctx context.Context, path, query string, withToken bool, page *[2]int, out any) error {
+	res, err := c.request(ctx, path, query, withToken, page)
 	if err != nil {
 		return err
 	}
@@ -152,7 +154,7 @@ func (c *Client) Identity(ctx context.Context) (string, error) {
 			Version           string `json:"version"`
 		} `json:"MediaContainer"`
 	}
-	if err := c.get(ctx, "/identity", nil, false, nil, &out); err != nil {
+	if err := c.get(ctx, "/identity", "", false, nil, &out); err != nil {
 		return "", err
 	}
 	if out.MediaContainer.MachineIdentifier == "" && out.MediaContainer.Version == "" {
@@ -281,29 +283,92 @@ type container struct {
 // Sessions lists active streams (GET /status/sessions).
 func (c *Client) Sessions(ctx context.Context) ([]Metadata, error) {
 	var out container
-	if err := c.get(ctx, "/status/sessions", nil, true, nil, &out); err != nil {
+	if err := c.get(ctx, "/status/sessions", "", true, nil, &out); err != nil {
 		return nil, err
 	}
 	return out.MediaContainer.Metadata, nil
 }
 
-// History lists the n most recent plays.
-func (c *Client) History(ctx context.Context, n int) ([]Metadata, error) {
+// History lists the n most recent plays, viewed between from and to (a
+// zero time is no bound). Plex filters history on its side.
+func (c *Client) History(ctx context.Context, n int, from, to time.Time) ([]Metadata, error) {
 	var out container
-	q := url.Values{"sort": {"viewedAt:desc"}}
+	q := join(url.Values{"sort": {"viewedAt:desc"}}.Encode(), window("viewedAt", from, to))
 	if err := c.get(ctx, "/status/sessions/history/all", q, true, &[2]int{0, n}, &out); err != nil {
 		return nil, err
 	}
 	return trim(out.MediaContainer.Metadata, n), nil
 }
 
-// RecentlyAdded lists the n newest library items.
-func (c *Client) RecentlyAdded(ctx context.Context, n int) ([]Metadata, error) {
+// maxRecentPages bounds how far RecentlyAdded pages into the library
+// looking for items in a window, and recentPage is its page size.
+const (
+	maxRecentPages = 10
+	recentPage     = 100
+)
+
+// RecentlyAdded lists the n newest library items added between from and to
+// (a zero time is no bound). The bounds are sent to Plex as addedAt>= and
+// addedAt<=, but whether Plex applies them is unconfirmed, so items are
+// also filtered here, paging up to maxRecentPages to fill n. The flag
+// reports that the search stopped at that limit, so items added earlier in
+// the window may be missing.
+func (c *Client) RecentlyAdded(ctx context.Context, n int, from, to time.Time) ([]Metadata, bool, error) {
 	var out container
-	if err := c.get(ctx, "/library/recentlyAdded", nil, true, &[2]int{0, n}, &out); err != nil {
-		return nil, err
+	if from.IsZero() && to.IsZero() {
+		if err := c.get(ctx, "/library/recentlyAdded", "", true, &[2]int{0, n}, &out); err != nil {
+			return nil, false, err
+		}
+		return trim(out.MediaContainer.Metadata, n), false, nil
 	}
-	return trim(out.MediaContainer.Metadata, n), nil
+	q := window("addedAt", from, to)
+	var got []Metadata
+	truncated := true
+	for page := range maxRecentPages {
+		out.MediaContainer.Metadata = nil
+		if err := c.get(ctx, "/library/recentlyAdded", q, true, &[2]int{page * recentPage, recentPage}, &out); err != nil {
+			return nil, false, err
+		}
+		items := out.MediaContainer.Metadata
+		older := 0
+		for _, m := range items {
+			at := time.Unix(int64(m.AddedAt), 0)
+			switch {
+			case !from.IsZero() && at.Before(from):
+				older++
+			case !to.IsZero() && at.After(to):
+			default:
+				got = append(got, m)
+			}
+		}
+		// Newest first: a page wholly before the window ends the search.
+		if len(got) >= n || len(items) < recentPage || older == len(items) {
+			truncated = false
+			break
+		}
+	}
+	return trim(got, n), truncated, nil
+}
+
+// window is the Plex filter for field between from and to, unescaped as
+// Plex expects it ("viewedAt>=1700000000&viewedAt<=1700086400").
+func window(field string, from, to time.Time) string {
+	var parts []string
+	if !from.IsZero() {
+		parts = append(parts, field+">="+strconv.FormatInt(from.Unix(), 10))
+	}
+	if !to.IsZero() {
+		parts = append(parts, field+"<="+strconv.FormatInt(to.Unix(), 10))
+	}
+	return strings.Join(parts, "&")
+}
+
+// join joins two encoded queries.
+func join(a, b string) string {
+	if a == "" || b == "" {
+		return a + b
+	}
+	return a + "&" + b
 }
 
 func trim(l []Metadata, n int) []Metadata {
@@ -316,7 +381,7 @@ func trim(l []Metadata, n int) []Metadata {
 // Accounts maps server account ids to names (GET /accounts).
 func (c *Client) Accounts(ctx context.Context) (map[int64]string, error) {
 	var out container
-	if err := c.get(ctx, "/accounts", nil, true, nil, &out); err != nil {
+	if err := c.get(ctx, "/accounts", "", true, nil, &out); err != nil {
 		return nil, err
 	}
 	m := make(map[int64]string, len(out.MediaContainer.Account))
@@ -338,7 +403,7 @@ func (c *Client) Photo(ctx context.Context, path string, width, height int) ([]b
 		"width": {strconv.Itoa(width)}, "height": {strconv.Itoa(height)},
 		"minSize": {"1"}, "upscale": {"1"}, "url": {path},
 	}
-	res, err := c.request(ctx, "/photo/:/transcode", q, true, nil)
+	res, err := c.request(ctx, "/photo/:/transcode", q.Encode(), true, nil)
 	if err != nil {
 		return nil, "", err
 	}

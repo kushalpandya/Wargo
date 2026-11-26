@@ -23,6 +23,7 @@
 - **Updates:** check for and install newer container images, OS updates and Homebrew formulae and casks, only when you choose.
 - **Torrents:** search all your Prowlarr indexers and manage Transmission downloads.
 - **Notifications:** a bell with recent events, and optional push to your phone or browser, set per category.
+- **Agents:** let AI agents (Claude Code and other MCP clients) check on your server and do everyday tasks, with admin actions waiting for your approval. Off by default, see [MCP.md](docs/MCP.md).
 - **Apps:** shortcuts to your other self-hosted services on Home, as large or small tiles, with online checks.
 
 Light and dark themes with a choice of accent colours, works on phones, and uses about 25 MB of memory.
@@ -61,7 +62,7 @@ welcome in [issues](https://github.com/kushalpandya/wargo/issues).
 
 ## Documentation
 
-[Install](docs/INSTALL.md) · [Docker](docs/DOCKER.md) · [Reverse proxy](docs/REVERSE_PROXY.md) · [Security](docs/SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[Install](docs/INSTALL.md) · [Docker](docs/DOCKER.md) · [Reverse proxy](docs/REVERSE_PROXY.md) · [Security](docs/SECURITY.md) · [Agents (MCP)](docs/MCP.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 

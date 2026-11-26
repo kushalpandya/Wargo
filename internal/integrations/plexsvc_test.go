@@ -21,6 +21,8 @@ type fakePlexServer struct {
 	sessions atomic.Int32
 	photos   atomic.Int32
 	lastW    atomic.Value
+	// history is the last history query and page size.
+	history atomic.Value
 }
 
 func newFakePlex(t *testing.T) *fakePlexServer {
@@ -46,6 +48,7 @@ func newFakePlex(t *testing.T) *fakePlexServer {
 			  "Player":{"title":"Living Room TV","product":"Plex for LG","state":"playing","local":true},"Media":[{"Part":[{"decision":"directplay"}]}]}
 			]}}`))
 		case "/status/sessions/history/all":
+			f.history.Store(r.URL.RawQuery + "|" + r.Header.Get("X-Plex-Container-Size"))
 			w.Write([]byte(`{"MediaContainer":{"Metadata":[
 			 {"historyKey":"/status/sessions/history/2","type":"episode","title":"Pilot","grandparentTitle":"Carrie","parentIndex":1,"index":1,"viewedAt":1793499294,"accountID":1,"grandparentThumb":"../../etc/passwd"}
 			]}}`))
@@ -313,5 +316,31 @@ func TestIsPlexServer(t *testing.T) {
 		if isPlexServer(img) != want {
 			t.Errorf("%s: want %v", img, want)
 		}
+	}
+}
+
+func TestPlexActivityWindow(t *testing.T) {
+	fp := newFakePlex(t)
+	cfg := config.Config{}
+	cfg.Integrations.Plex = config.Plex{URL: fp.URL, Token: plexTok}
+	h := newHarness(t, cfg)
+	for _, q := range []string{"limit=0", "limit=51", "limit=x", "from=yesterday", "to=2026-13-01T00:00:00Z",
+		"from=2026-11-02T00:00:00Z&to=2026-11-01T00:00:00Z"} {
+		if w, _ := h.do(t, "GET", "/api/plex/activity?"+q, nil); w.Code != 400 {
+			t.Errorf("%s: %d", q, w.Code)
+		}
+	}
+	w, out := h.do(t, "GET", "/api/plex/activity?limit=20&from=2025-11-01T00:00:00Z&to=2025-12-01T00:00:00Z", nil)
+	if w.Code != 200 || len(out["history"].([]any)) != 1 {
+		t.Fatalf("%d %v", w.Code, out)
+	}
+	got, _ := fp.history.Load().(string)
+	if !strings.Contains(got, "viewedAt>=1761955200") || !strings.Contains(got, "viewedAt<=1764547200") || !strings.HasSuffix(got, "|20") {
+		t.Fatalf("history request %q", got)
+	}
+	// Without parameters the page keeps its 8.
+	h.do(t, "GET", "/api/plex/activity", nil)
+	if got, _ := fp.history.Load().(string); strings.Contains(got, "viewedAt>") || !strings.HasSuffix(got, "|8") {
+		t.Fatalf("page request %q", got)
 	}
 }

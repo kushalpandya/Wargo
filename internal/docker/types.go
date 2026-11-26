@@ -15,8 +15,8 @@ var (
 	imageRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,511}$`)
 )
 
-// validRef accepts container ids, id prefixes and names.
-func validRef(s string) bool { return refRe.MatchString(s) }
+// ValidRef accepts container ids, id prefixes and names.
+func ValidRef(s string) bool { return refRe.MatchString(s) }
 
 // validImage accepts image references like "lscr.io/linuxserver/plex:latest".
 func validImage(s string) bool { return imageRe.MatchString(s) && !strings.Contains(s, "..") }

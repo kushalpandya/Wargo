@@ -10,6 +10,7 @@ import { ErrorNote, Skeleton } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
 import { containerUpdatesKey, useContainerUpdatesStatus } from "@/features/containers/api";
 import { useBrewStatus, usePkgStatus } from "@/features/updates/api";
+import { AgentsCard, PendingCard } from "./AgentsCard";
 import { NotificationsCard } from "./NotificationsCard";
 import { SettingRow, SettingsList, SettingsStack } from "./shared";
 
@@ -109,6 +110,8 @@ export default function General() {
   return (
     <SettingsStack>
       <UpdateChecksCard />
+      <AgentsCard />
+      <PendingCard />
       <NotificationsCard />
     </SettingsStack>
   );

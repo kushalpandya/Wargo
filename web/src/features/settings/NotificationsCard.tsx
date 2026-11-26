@@ -39,6 +39,7 @@ const categories: { id: Category; title: string; hint: string }[] = [
   { id: "updates.found", title: "Updates found", hint: "A background check finds new updates to install." },
   { id: "download.error", title: "Download error", hint: "A torrent stops because of a tracker or disk problem." },
   { id: "disk.full", title: "Disk nearly full", hint: "A disk is 90% full or more." },
+  { id: "agent.approval", title: "Agent approvals", hint: "An agent asks you to approve an admin action." },
 ];
 
 const modes: { value: Mode; label: string }[] = [

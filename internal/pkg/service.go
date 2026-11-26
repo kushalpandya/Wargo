@@ -350,14 +350,33 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireBackend(); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	if s.job != nil {
-		s.mu.Unlock()
-		return httpx.Errorf(http.StatusConflict, "upgrade_running", "An upgrade is in progress")
+	// busy is why a check cannot start now; call with s.mu held.
+	busy := func() error {
+		if s.job != nil {
+			return httpx.Errorf(http.StatusConflict, "upgrade_running", "An upgrade is in progress")
+		}
+		if s.checking {
+			return httpx.Errorf(http.StatusConflict, "check_running", "A check is already running")
+		}
+		return nil
 	}
-	if s.checking {
+	s.mu.Lock()
+	err := busy()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	// The credential is asked for before the check is claimed, so a
+	// request without one (the browser's first try, or an agent's approved
+	// request replayed) changes and publishes nothing.
+	needsRoot := s.be.CheckNeedsRoot()
+	if needsRoot && !elevate.Has(r) {
+		return s.d.Elevate.ErrRequired("pkg.refresh", "Refresh package databases")
+	}
+	s.mu.Lock()
+	if err := busy(); err != nil {
 		s.mu.Unlock()
-		return httpx.Errorf(http.StatusConflict, "check_running", "A check is already running")
+		return err
 	}
 	s.checking = true
 	s.mu.Unlock()
@@ -368,10 +387,7 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) error {
 		s.publish()
 	}()
 
-	if s.be.CheckNeedsRoot() {
-		if !elevate.Has(r) {
-			return s.d.Elevate.ErrRequired("pkg.refresh", "Refresh package databases")
-		}
+	if needsRoot {
 		s.publish()
 		if _, err := s.d.Elevate.Run(r, "pkg.refresh", "Refresh package databases", s.helperArgv(append([]string{"pkg-run", "--"}, s.be.RefreshArgv()...)...), nil); err != nil {
 			return err
@@ -455,8 +471,11 @@ type precheck struct {
 	Blocked string `json:"blocked,omitempty"`
 }
 
+// diskSpaceFn reads free space (a variable for tests).
+var diskSpaceFn = diskSpace
+
 func (s *Service) precheck() precheck {
-	p := precheck{Disk: diskSpace()}
+	p := precheck{Disk: diskSpaceFn()}
 	if s.be != nil {
 		p.Lock = checkLocks(s.be.LockFiles())
 	}

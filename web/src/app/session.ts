@@ -90,6 +90,8 @@ export interface Capabilities {
     /** Server-side bookmarks and hidden drives (GET /api/files/locations). */
     bookmarks?: boolean;
   };
+  /** Agents over MCP (Settings › Agents). */
+  mcp?: { enabled: boolean };
   terminal?: { available: boolean; shell: string; tmux: boolean; sudo?: boolean; docker?: boolean; maxSessions?: number };
 }
 
