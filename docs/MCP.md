@@ -200,7 +200,8 @@ when that feature is available. A higher level includes everything below it.
   network rates and pending updates.
 - `host_info`: hostname, model, CPU, memory, GPUs, OS and kernel, local IP,
   boot time, Wargo's version and mode.
-- `storage`: drives and filesystems, with sizes, free space and temperatures.
+- `storage`: drives and filesystems, with sizes, free space, temperatures,
+  drive health (SMART) and TRIM.
 - `list_processes`: top processes by CPU or memory, with secrets in command
   lines masked.
 - `list_containers`: Docker containers with state, health and available

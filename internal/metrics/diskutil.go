@@ -3,6 +3,7 @@
 package metrics
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 )
@@ -97,6 +98,10 @@ func parseDiskutil(list, physical any, info map[string]any) []Drive {
 			d.Rotational = !ss
 		}
 		d.Removable = plBool(in["RemovableMediaOrExternalDevice"]) || plBool(in["Removable"])
+		if in != nil {
+			h := verdict(diskutilFacts(in))
+			d.Health = &h
+		}
 		for _, p := range plArray(em["Partitions"]) {
 			ppm := plDict(p)
 			pn := plString(ppm["DeviceIdentifier"])
@@ -118,6 +123,96 @@ func parseDiskutil(list, physical any, info map[string]any) []Drive {
 	}
 	slices.SortFunc(out, func(a, b Drive) int { return natCmp(a.Name, b.Name) })
 	return out
+}
+
+// plNum reads a plist integer or real.
+func plNum(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case float64:
+		return n, true
+	}
+	return 0, false
+}
+
+// diskutilFacts reads SMARTStatus ("Verified", "Failing", "Not Supported")
+// and the NVMe health log keys from `diskutil info -plist`. The 128-bit
+// NVMe counters come split into _0 (low) and _1 (high) halves; the low
+// half is enough for hours and error counts.
+func diskutilFacts(info map[string]any) smartFacts {
+	var f smartFacts
+	switch plString(info["SMARTStatus"]) {
+	case "Verified":
+		f.Known, f.Passed = true, new(true)
+	case "Failing":
+		f.Known, f.Passed = true, new(false)
+	default:
+		return f
+	}
+	k := plDict(info["SMARTDeviceSpecificKeysMayVaryNotGuaranteed"])
+	num := func(key string) *float64 {
+		if v, ok := plNum(k[key]); ok {
+			return &v
+		}
+		return nil
+	}
+	f.Spare, f.SpareThreshold, f.WearPct = num("AVAILABLE_SPARE"), num("AVAILABLE_SPARE_THRESHOLD"), num("PERCENTAGE_USED")
+	if v := num("POWER_ON_HOURS_0"); v != nil {
+		f.PowerOnHours = uint64(*v)
+	}
+	if v := num("MEDIA_ERRORS_0"); v != nil {
+		f.MediaErrors = uint64(*v)
+	}
+	if v := num("CRITICAL_WARNING"); v != nil {
+		f.CriticalWarning = uint8(*v)
+	}
+	return f
+}
+
+// parseTrim reads `system_profiler SPNVMeDataType SPSerialATADataType
+// -json` into BSD disk name -> TRIM enabled. macOS reports "Yes" only when
+// TRIM is in use (third-party SATA SSDs need trimforce).
+func parseTrim(js []byte) map[string]bool {
+	var root map[string][]map[string]any
+	out := map[string]bool{}
+	if json.Unmarshal(js, &root) != nil {
+		return out
+	}
+	var walk func(m map[string]any)
+	walk = func(m map[string]any) {
+		if name, ok := m["bsd_name"].(string); ok {
+			for k, v := range m {
+				if strings.HasSuffix(k, "_trim_support") {
+					out[name] = v == "Yes"
+				}
+			}
+		}
+		if items, ok := m["_items"].([]any); ok {
+			for _, it := range items {
+				if im, ok := it.(map[string]any); ok {
+					walk(im)
+				}
+			}
+		}
+	}
+	for _, controllers := range root {
+		for _, c := range controllers {
+			walk(c)
+		}
+	}
+	return out
+}
+
+// applyTrim sets Trim on solid-state drives that system_profiler lists.
+func applyTrim(ds []Drive, trim map[string]bool) {
+	for i := range ds {
+		if on, ok := trim[ds[i].Name]; ok && !ds[i].Rotational {
+			ds[i].Trim = trimLabel(on)
+		}
+	}
 }
 
 func natCmp(a, b string) int {

@@ -286,7 +286,8 @@ func TestHostInfoIncludesDesktopAndSpecs(t *testing.T) {
 func TestStorage(t *testing.T) {
 	h := newReadHarness(t)
 	h.serve("GET /api/system/storage", metrics.Storage{
-		Drives: []metrics.Drive{{Name: "nvme0n1", Model: "Samsung 990 PRO", Size: 2 << 40, Transport: "nvme", Temp: 41, Used: 400, Total: 1000}},
+		Drives: []metrics.Drive{{Name: "nvme0n1", Model: "Samsung 990 PRO", Size: 2 << 40, Transport: "nvme", Temp: 41, Used: 400, Total: 1000,
+			Health: &metrics.DriveHealth{Status: "warn", Notes: []string{"2 media errors"}, PowerOnHours: 1204}, Trim: "on"}},
 		Filesystems: []metrics.Filesystem{
 			{Device: "/dev/nvme0n1p2", Mount: "/", FSType: "btrfs", Total: 1000, Used: 400, Free: 600, UsedPct: 40},
 			{Device: "/dev/sda1", Mount: "/mnt/media", FSType: "ext4", Total: 4000, Used: 3900, Free: 100, UsedPct: 97.5, ReadOnly: true},
@@ -294,10 +295,14 @@ func TestStorage(t *testing.T) {
 	})
 	var out struct {
 		Drives []struct {
-			Name      string  `json:"name"`
-			Model     string  `json:"model"`
-			SizeBytes uint64  `json:"sizeBytes"`
-			TempC     float64 `json:"tempC"`
+			Name      string   `json:"name"`
+			Model     string   `json:"model"`
+			SizeBytes uint64   `json:"sizeBytes"`
+			TempC     float64  `json:"tempC"`
+			Health    string   `json:"health"`
+			Notes     []string `json:"healthNotes"`
+			Hours     uint64   `json:"powerOnHours"`
+			Trim      string   `json:"trim"`
 		} `json:"drives"`
 		Filesystems []struct {
 			Mount       string  `json:"mount"`
@@ -309,6 +314,9 @@ func TestStorage(t *testing.T) {
 	h.call(t, "storage", nil, &out)
 	if len(out.Drives) != 1 || out.Drives[0].Model != "Samsung 990 PRO" || out.Drives[0].SizeBytes != 2<<40 || out.Drives[0].TempC != 41 {
 		t.Fatalf("drives %+v", out.Drives)
+	}
+	if d := out.Drives[0]; d.Health != "warn" || len(d.Notes) != 1 || d.Hours != 1204 || d.Trim != "on" {
+		t.Fatalf("drive health %+v", d)
 	}
 	if len(out.Filesystems) != 2 || out.Filesystems[1].Mount != "/mnt/media" || out.Filesystems[1].FreeBytes != 100 || !out.Filesystems[1].ReadOnly {
 		t.Fatalf("filesystems %+v", out.Filesystems)

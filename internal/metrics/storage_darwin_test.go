@@ -27,6 +27,10 @@ func TestStorageDarwin(t *testing.T) {
 	if len(st.Drives) == 0 || st.Drives[0].Used == 0 {
 		t.Fatalf("%+v", st.Drives)
 	}
+	// The internal SSD reports SMART and TRIM.
+	if h := st.Drives[0].Health; h == nil || h.Status == HealthUnknown || st.Drives[0].Trim == "" {
+		t.Fatalf("health %+v trim %q", h, st.Drives[0].Trim)
+	}
 	// The root filesystem shows under the drive's APFS partition.
 	if !slices.ContainsFunc(st.Drives[0].Partitions, func(p Partition) bool { return slices.Contains(p.Mounts, "/") }) {
 		t.Fatalf("%+v", st.Drives[0])

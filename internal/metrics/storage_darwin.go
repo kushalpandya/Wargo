@@ -158,7 +158,14 @@ func readDiskutil() (ds []Drive, ok bool) {
 			info[name] = v
 		}
 	}
-	return parseDiskutil(list, physical, info), true
+	ds = parseDiskutil(list, physical, info)
+	// Its own timeout: the diskutil calls above may have used most of ctx.
+	spCtx, spCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer spCancel()
+	if js, err := host.Command(spCtx, "/usr/sbin/system_profiler", "SPNVMeDataType", "SPSerialATADataType", "-json").Output(); err == nil {
+		applyTrim(ds, parseTrim(js))
+	}
+	return ds, true
 }
 
 func diskutilPlist(ctx context.Context, args ...string) (any, error) {
@@ -168,3 +175,7 @@ func diskutilPlist(ctx context.Context, args ...string) (any, error) {
 	}
 	return decodePlist(bytes.NewReader(out))
 }
+
+// addHealth is a no-op on macOS: health and TRIM come from diskutil and
+// system_profiler with the rest of the drive (see parseDiskutil).
+func addHealth(context.Context, []Drive) {}

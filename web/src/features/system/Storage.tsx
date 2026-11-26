@@ -4,9 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import { HardDrive, Thermometer } from "lucide-react";
 import { api } from "@/lib/api";
 import { bytes, level, pct, temp } from "@/lib/format";
+import { healthFacts, type DriveHealth } from "./health";
 import { cn } from "@/lib/cn";
 import { Card, CardHeader } from "@/components/ui/card";
-import { Badge, Meter, Skeleton } from "@/components/ui/misc";
+import { Badge, Meter, Skeleton, StatusDot, type Tone } from "@/components/ui/misc";
+import { Tooltip } from "@/components/ui/menu";
 
 export interface Filesystem {
   device: string;
@@ -34,6 +36,10 @@ export interface Drive {
   partitions: { name: string; size: number; label?: string; mounts?: string[] }[];
   used: number;
   total: number;
+  /** Absent for virtual disks and memory cards, and from older servers. */
+  health?: DriveHealth;
+  /** "on" when the SSD supports TRIM and something runs it, "off" when nothing does. */
+  trim?: "on" | "off";
 }
 
 export function useStorage() {
@@ -51,6 +57,55 @@ function driveKind(d: Drive) {
   if (d.transport === "virtio") return "Virtual disk";
   if (d.transport === "other") return d.rotational ? "HDD" : "SSD";
   return d.rotational ? "HDD" : "SATA SSD";
+}
+
+const healthBadge: Record<DriveHealth["status"], { label: string; tone: Tone; text: string }> = {
+  ok: { label: "Healthy", tone: "ok", text: "text-subtle" },
+  warn: { label: "Warning", tone: "warn", text: "text-warn" },
+  fail: { label: "Failing", tone: "crit", text: "text-crit" },
+  unknown: { label: "Health unknown", tone: "neutral", text: "text-subtle" },
+};
+
+/** A badge whose explanation shows in a tooltip (hover or keyboard focus). */
+function TipBadge({ tip, tone, className, children }: { tip?: string; tone?: Tone; className?: string; children: React.ReactNode }) {
+  return (
+    <Tooltip content={tip}>
+      <span className={cn("inline-flex", tip && "cursor-help")} tabIndex={tip ? 0 : undefined}>
+        <Badge tone={tone} className={className}>
+          {children}
+        </Badge>
+      </span>
+    </Tooltip>
+  );
+}
+
+function DriveBadges({ d }: { d: Drive }) {
+  const h = d.health;
+  const b = h && (healthBadge[h.status] ?? healthBadge.unknown);
+  return (
+    <>
+      {h && b && (
+        <TipBadge tone={b.tone} tip={[h.reason, ...(h.notes ?? [])].filter(Boolean).join(", ") || undefined}>
+          {b.label}
+        </TipBadge>
+      )}
+      {d.trim && (
+        <TipBadge
+          className="gap-1.5"
+          tip={d.trim === "on" ? "TRIM is on: the drive supports it and it runs" : "TRIM is off: the drive supports it, but no periodic trim or discard mount runs it"}
+        >
+          <StatusDot tone={d.trim === "on" ? "ok" : "warn"} />
+          {d.trim === "on" ? "TRIM" : "TRIM off"}
+        </TipBadge>
+      )}
+    </>
+  );
+}
+
+function HealthFacts({ h }: { h: DriveHealth }) {
+  const facts = healthFacts(h);
+  if (!facts.length) return null;
+  return <div className={cn("num mt-0.5 text-xs", (healthBadge[h.status] ?? healthBadge.unknown).text)}>{facts.join(" · ")}</div>;
 }
 
 interface PartRow {
@@ -182,6 +237,7 @@ export const StorageCard = memo(function StorageCard() {
                       <span className="min-w-0 truncate font-medium">{d.model || d.name}</span>
                       <Badge>{driveKind(d)}</Badge>
                       {d.removable && <Badge tone="frost">Removable</Badge>}
+                      <DriveBadges d={d} />
                       {d.temp ? (
                         <span className="num ml-auto inline-flex items-center gap-1 text-xs text-muted">
                           <Thermometer className="size-3" />
@@ -192,6 +248,7 @@ export const StorageCard = memo(function StorageCard() {
                     <div className="num mt-0.5 text-xs text-subtle">
                       /dev/{d.name} · {bytes(d.size)} · {parts.length} partition{parts.length === 1 ? "" : "s"}
                     </div>
+                    {d.health && <HealthFacts h={d.health} />}
                     {d.total > 0 ? (
                       <div className="mt-2 flex items-center gap-3">
                         <Meter value={usedPct} tone={usageTone(usedPct, "accent")} className="h-2" label={`${d.name} used`} />

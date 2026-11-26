@@ -313,7 +313,7 @@ func (s *Service) hostInfo(ctx context.Context, _ *sdk.CallToolRequest, _ none) 
 // --- storage ---
 
 var storageSpec = readSpec("storage",
-	"Drives and filesystems on this host: sizes, free space, how full each one is, temperatures.",
+	"Drives and filesystems on this host: sizes, free space, how full each one is, temperatures, drive health (SMART) and TRIM.",
 	"", "GET /api/system/storage")
 
 type driveOut struct {
@@ -326,6 +326,13 @@ type driveOut struct {
 	TempC      float64 `json:"tempC,omitempty"`
 	UsedBytes  uint64  `json:"usedBytes"`
 	TotalBytes uint64  `json:"totalBytes"`
+	// Health is ok, warn, fail or unknown; empty for virtual disks.
+	Health       string   `json:"health,omitempty"`
+	HealthReason string   `json:"healthReason,omitempty"`
+	HealthNotes  []string `json:"healthNotes,omitempty"`
+	WearPercent  *float64 `json:"wearPercent,omitempty"`
+	PowerOnHours uint64   `json:"powerOnHours,omitempty"`
+	Trim         string   `json:"trim,omitempty"`
 }
 
 type filesystemOut struct {
@@ -352,8 +359,12 @@ func (s *Service) storage(ctx context.Context, _ *sdk.CallToolRequest, _ none) (
 		return nil, out, err
 	}
 	for _, d := range st.Drives {
-		out.Drives = append(out.Drives, driveOut{Name: d.Name, Model: d.Model, SizeBytes: d.Size, Transport: d.Transport,
-			Rotational: d.Rotational, Removable: d.Removable, TempC: d.Temp, UsedBytes: d.Used, TotalBytes: d.Total})
+		do := driveOut{Name: d.Name, Model: d.Model, SizeBytes: d.Size, Transport: d.Transport,
+			Rotational: d.Rotational, Removable: d.Removable, TempC: d.Temp, UsedBytes: d.Used, TotalBytes: d.Total, Trim: d.Trim}
+		if h := d.Health; h != nil {
+			do.Health, do.HealthReason, do.HealthNotes, do.WearPercent, do.PowerOnHours = h.Status, h.Reason, h.Notes, h.WearPct, h.PowerOnHours
+		}
+		out.Drives = append(out.Drives, do)
 	}
 	for _, f := range st.Filesystems {
 		out.Filesystems = append(out.Filesystems, filesystemOut{Mount: f.Mount, Device: f.Device, FSType: f.FSType, Label: f.Label,

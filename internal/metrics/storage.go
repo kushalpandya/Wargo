@@ -40,6 +40,12 @@ type Drive struct {
 	Partitions []Partition `json:"partitions"`
 	Used       uint64      `json:"used"`  // sum of mounted filesystems on this drive
 	Total      uint64      `json:"total"` // sum of mounted filesystem sizes
+	// Health is what SMART or the OS reports; nil for virtual and memory
+	// card devices, which have none.
+	Health *DriveHealth `json:"health,omitempty"`
+	// Trim is "on" when the SSD supports TRIM and something runs it, "off"
+	// when it supports TRIM but nothing does, and empty otherwise.
+	Trim string `json:"trim,omitempty"`
 }
 
 type Storage struct {
@@ -47,7 +53,8 @@ type Storage struct {
 	Filesystems []Filesystem `json:"filesystems"`
 }
 
-// Storage returns drives and mounted filesystems, cached for 15 s.
+// Storage returns drives and mounted filesystems, cached for 15 s, with
+// each drive's health (cached longer, see addHealth).
 func (c *Collector) Storage(ctx context.Context) Storage {
 	c.mu.RLock()
 	fresh := time.Since(c.fsAt) < 15*time.Second && c.fs != nil
@@ -63,7 +70,9 @@ func (c *Collector) Storage(ctx context.Context) Storage {
 		c.fs, c.fsAt = fs, time.Now()
 		c.mu.Unlock()
 	}
-	return newStorage(drives(fs, temps), fs)
+	ds := drives(fs, temps)
+	addHealth(ctx, ds)
+	return newStorage(ds, fs)
 }
 
 // newStorage keeps both lists non-nil so they encode as [] and never null:

@@ -3,8 +3,8 @@
 package metrics
 
 import (
+	"bytes"
 	"encoding/json"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -12,12 +12,7 @@ import (
 
 func loadPlist(t *testing.T, name string) any {
 	t.Helper()
-	f, err := os.Open("testdata/" + name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	v, err := decodePlist(f)
+	v, err := decodePlist(bytes.NewReader(readFixture(t, name)))
 	if err != nil {
 		t.Fatal(name, err)
 	}
@@ -109,5 +104,35 @@ func TestTransportOf(t *testing.T) {
 		if got := transportOf(in); got != want {
 			t.Errorf("transportOf(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestDiskutilHealth(t *testing.T) {
+	info := loadPlist(t, "diskutil-info-disk0.plist")
+	ds := parseDiskutil(loadPlist(t, "diskutil-list.plist"), loadPlist(t, "diskutil-list-physical.plist"), map[string]any{"disk0": info})
+	h := ds[0].Health
+	// Apple reports a spare threshold of 99 with 100 spare: still healthy.
+	if h == nil || h.Status != HealthOK || h.SparePct == nil || *h.SparePct != 100 || h.WearPct == nil || h.PowerOnHours == 0 {
+		t.Fatalf("health = %+v", h)
+	}
+	for status, want := range map[string]string{"Failing": HealthFail, "Not Supported": HealthUnknown, "": HealthUnknown} {
+		if got := verdict(diskutilFacts(map[string]any{"SMARTStatus": status})).Status; got != want {
+			t.Errorf("SMARTStatus %q = %s, want %s", status, got, want)
+		}
+	}
+}
+
+func TestParseTrim(t *testing.T) {
+	js := `{"SPNVMeDataType":[{"_name":"Apple SSD Controller","_items":[{"bsd_name":"disk0","spnvme_trim_support":"Yes"}]}],
+	"SPSerialATADataType":[{"_name":"SATA","_items":[{"bsd_name":"disk4","spsata_trim_support":"No"}]}]}`
+	trim := parseTrim([]byte(js))
+	if !trim["disk0"] || trim["disk4"] || len(trim) != 2 {
+		t.Fatalf("parseTrim = %v", trim)
+	}
+	ds := []Drive{{Name: "disk0"}, {Name: "disk4"}, {Name: "disk6"}, {Name: "disk7", Rotational: true}}
+	trim["disk7"] = true
+	applyTrim(ds, trim)
+	if ds[0].Trim != "on" || ds[1].Trim != "off" || ds[2].Trim != "" || ds[3].Trim != "" {
+		t.Fatalf("trims = %q %q %q %q", ds[0].Trim, ds[1].Trim, ds[2].Trim, ds[3].Trim)
 	}
 }
